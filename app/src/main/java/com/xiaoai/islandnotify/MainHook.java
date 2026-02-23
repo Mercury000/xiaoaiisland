@@ -3,8 +3,12 @@ package com.xiaoai.islandnotify;
 import android.app.Notification;
 import android.os.Bundle;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -168,98 +172,232 @@ public class MainHook implements IXposedHookLoadPackage {
             notification.extras = extras;
         }
 
-        // 读取原始通知内容
-        String title   = extras.getString(Notification.EXTRA_TITLE, "课程提醒");
-        String content = extras.getString(Notification.EXTRA_TEXT, "");
-        if (content == null || content.isEmpty()) {
-            CharSequence[] lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
-            if (lines != null && lines.length > 0) {
-                StringBuilder sb = new StringBuilder();
-                for (CharSequence line : lines) {
-                    if (sb.length() > 0) sb.append("\n");
-                    sb.append(line);
-                }
-                content = sb.toString();
-            }
-        }
-
         try {
-            String islandJson = buildIslandParams(title, content);
+            CourseInfo info = extractCourseInfo(extras);
+            XposedBridge.log(TAG + ": 解析结果 → 课程=" + info.courseName
+                    + " 时间=" + info.startTime + " 教室=" + info.classroom);
+            String islandJson = buildIslandParams(info);
             extras.putString(KEY_FOCUS_PARAM, islandJson);
-            XposedBridge.log(TAG + ": 注入成功 → " + islandJson);
+            XposedBridge.log(TAG + ": 注入成功");
         } catch (JSONException e) {
             XposedBridge.log(TAG + ": 构建 JSON 失败 → " + e.getMessage());
         }
     }
 
     /**
-     * 构建完整的超级岛通知 JSON 参数（param_v2 格式）。
+     * 从通知 extras 中提取结构化课程信息。
      *
-     * 参数说明（根据小米超级岛开发文档）：
-     * ┌─ param_v2
-     * │   ├─ protocol          协议版本，固定 1
-     * │   ├─ business          业务场景标识
-     * │   ├─ enableFloat       通知更新时是否自动展开
-     * │   ├─ islandFirstFloat  首次显示时是否展开
-     * │   ├─ updatable         是否为持续性通知
-     * │   ├─ ticker            状态栏焦点文案（OS2）
-     * │   ├─ aodTitle          息屏显示文案
-     * │   ├─ param_island      岛体数据
-     * │   │   ├─ islandProperty  1=信息展示为主
-     * │   │   ├─ bigIslandArea   大岛（展开态）内容
-     * │   │   └─ smallIslandArea 小岛（摘要态）内容
-     * │   └─ baseInfo          焦点通知/展开态内容
+     * <p>通知内容格式（com.miui.voiceassist 课程表提醒）示例：
+     * <pre>
+     *   title:   "上课提醒"（或直接为课程名）
+     *   text:    "[高等数学]课快到了，提前准备一下吧"
+     *   lines[]: ["10:20", "教1-201"]  或合并在 text / subText 中
+     * </pre>
      */
-    private String buildIslandParams(String title, String content) throws JSONException {
-        String safeTitle   = title   != null ? title   : "课程提醒";
-        String safeContent = content != null ? content : "";
+    private CourseInfo extractCourseInfo(Bundle extras) {
+        // ── 1. 收集所有文本字段 ────────────────────────────────────
+        String title    = safeStr(extras.getString(Notification.EXTRA_TITLE));
+        String text     = safeStr(extras.getString(Notification.EXTRA_TEXT));
+        String bigText  = safeStr(extras.getString(Notification.EXTRA_BIG_TEXT));
+        String subText  = safeStr(extras.getString(Notification.EXTRA_SUB_TEXT));
+        String infoText = safeStr(extras.getString(Notification.EXTRA_INFO_TEXT));
 
-        // ── 大岛（展开态）左侧图文区 ──────────────────────────────
-        JSONObject textInfo = new JSONObject();
-        textInfo.put("title", safeTitle);
-        textInfo.put("content", safeContent);
+        StringBuilder allBuilder = new StringBuilder();
+        allBuilder.append(title).append(" ")
+                  .append(text).append(" ")
+                  .append(bigText).append(" ")
+                  .append(subText).append(" ")
+                  .append(infoText);
+
+        CharSequence[] lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
+        if (lines != null) {
+            for (CharSequence line : lines) {
+                allBuilder.append(" ").append(line);
+            }
+        }
+        String all = allBuilder.toString();
+
+        // ── 2. 提取课程名 ──────────────────────────────────────────
+        // 优先：[高等数学]课快到了 → 取中括号内容
+        String courseName = "";
+        Matcher bracketM = Pattern.compile("\\[([^\\]]+)\\]").matcher(all);
+        if (bracketM.find()) {
+            courseName = bracketM.group(1).trim();
+        }
+        // 次选：高等数学课快到了 → 取"课快到了"前的中文串
+        if (courseName.isEmpty()) {
+            Matcher suffixM = Pattern.compile("([\\u4e00-\\u9fa5\\w]+)课快到了").matcher(all);
+            if (suffixM.find()) {
+                courseName = suffixM.group(1).trim();
+            }
+        }
+        // 兜底：title 去掉"提醒/通知/课程表/上课"等后缀
+        if (courseName.isEmpty() && !title.isEmpty()) {
+            courseName = title.replaceAll("(提醒|通知|课程表|上课).*", "").trim();
+            if (courseName.isEmpty()) courseName = title;
+        }
+        if (courseName.isEmpty()) courseName = "课程提醒";
+
+        // ── 3. 提取上课时间（H:MM 或 HH:MM）──────────────────────────
+        String startTime = "";
+        Matcher timeM = Pattern.compile("\\b(\\d{1,2}:\\d{2})\\b").matcher(all);
+        if (timeM.find()) {
+            startTime = timeM.group(1);
+        }
+
+        // ── 4. 提取教室 ────────────────────────────────────────────
+        // 覆盖常见格式：教1-201 / 体育馆 / 东A101 / 实验楼302 / 图书馆 等
+        String classroom = "";
+        Matcher roomM = Pattern.compile(
+                "(教\\d+[-_]\\d+|[东南西北][A-Za-z]?\\d{2,4}|" +
+                "[\\u4e00-\\u9fa5]{2,5}(?:馆|楼|室|场|厅|中心)\\d*|" +
+                "(?:实验|图书|体育|综合|教学)[\\u4e00-\\u9fa5]*\\d*)"
+        ).matcher(all);
+        while (roomM.find()) {
+            String candidate = roomM.group(1).trim();
+            if (!candidate.equals(courseName)
+                    && !candidate.contains("提醒")
+                    && !candidate.contains("通知")
+                    && candidate.length() >= 2) {
+                classroom = candidate;
+                break;
+            }
+        }
+
+        return new CourseInfo(courseName, startTime, classroom);
+    }
+
+    private static String safeStr(String s) {
+        return s != null ? s : "";
+    }
+
+    /**
+     * 构建超级岛 JSON 参数（param_v2 格式）。
+     *
+     * <p>对应模板：文字信息展示类 — 主要文本1 + 次要文本（前置文本 + 主要小文本）
+     * <pre>
+     * 大岛（展开态）：
+     * ┌─────────────────────────────────┐
+     * │  主要文本1:  高等数学            │  ← imageTextInfoLeft.textInfo.title
+     * │  时间        10:20              │  ← subTextInfoList[0] frontTitle/title
+     * │  教室        教1-201            │  ← subTextInfoList[1] frontTitle/title
+     * └─────────────────────────────────┘
+     *
+     * 小岛（摘要态）：
+     * ┌──────────────────────┐
+     * │  高等数学   10:20    │  ← smallIslandArea.textInfo title/content
+     * └──────────────────────┘
+     * </pre>
+     */
+    private String buildIslandParams(CourseInfo info) throws JSONException {
+        // ── 大岛 A 区：主要文本1 = 课程名 ─────────────────────────
+        JSONObject mainTextInfo = new JSONObject();
+        mainTextInfo.put("title", info.courseName);
 
         JSONObject imageTextInfoLeft = new JSONObject();
         imageTextInfoLeft.put("type", 1);
-        imageTextInfoLeft.put("textInfo", textInfo);
+        imageTextInfoLeft.put("textInfo", mainTextInfo);
+
+        // ── 大岛 次要文本行：[前置文本 + 主要小文本] × N ────────────
+        // 每项对应模板中一组"前置文本 + 主要小文本"
+        JSONArray subTextInfoList = new JSONArray();
+        if (!info.startTime.isEmpty()) {
+            JSONObject timeRow = new JSONObject();
+            timeRow.put("frontTitle", "时间");          // 前置文本1
+            timeRow.put("title",      info.startTime);  // 主要小文本1
+            subTextInfoList.put(timeRow);
+        }
+        if (!info.classroom.isEmpty()) {
+            JSONObject roomRow = new JSONObject();
+            roomRow.put("frontTitle", "教室");           // 前置文本2
+            roomRow.put("title",      info.classroom);   // 主要小文本2
+            subTextInfoList.put(roomRow);
+        }
 
         JSONObject bigIslandArea = new JSONObject();
         bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
+        if (subTextInfoList.length() > 0) {
+            bigIslandArea.put("subTextInfoList", subTextInfoList);
+        }
 
-        // ── 小岛（摘要态）文字区 ──────────────────────────────────
+        // ── 小岛：课程名（主要文本）+ 时间（次要文本）────────────────
         JSONObject smallTextInfo = new JSONObject();
-        smallTextInfo.put("title", safeTitle);
-
+        smallTextInfo.put("title", info.courseName);
+        if (!info.startTime.isEmpty()) {
+            smallTextInfo.put("content", info.startTime);
+        }
         JSONObject smallIslandArea = new JSONObject();
         smallIslandArea.put("textInfo", smallTextInfo);
 
         // ── 岛属性 ────────────────────────────────────────────────
         JSONObject paramIsland = new JSONObject();
-        paramIsland.put("islandProperty", 1);       // 1 = 信息展示为主
+        paramIsland.put("islandProperty", 1); // 1 = 信息展示为主
         paramIsland.put("bigIslandArea",   bigIslandArea);
         paramIsland.put("smallIslandArea", smallIslandArea);
 
-        // ── 焦点通知基础内容 ──────────────────────────────────────
+        // ── 焦点通知基础内容（悬浮展示）──────────────────────────────
+        String baseContent = buildBaseContent(info);
         JSONObject baseInfo = new JSONObject();
-        baseInfo.put("title",   safeTitle);
-        baseInfo.put("content", safeContent);
+        baseInfo.put("title",   info.courseName);
+        baseInfo.put("content", baseContent);
         baseInfo.put("type", 1);
+
+        // ── 状态栏 / 息屏文案：课程名 + 时间 ─────────────────────────
+        String tickerText = info.startTime.isEmpty()
+                ? info.courseName
+                : info.courseName + "  " + info.startTime;
 
         // ── 组合 param_v2 ─────────────────────────────────────────
         JSONObject paramV2 = new JSONObject();
-        paramV2.put("protocol",        1);
-        paramV2.put("business",        "course_schedule"); // 业务场景标识
-        paramV2.put("enableFloat",     false);             // 更新时不自动展开
-        paramV2.put("islandFirstFloat", true);             // 首次显示时展开
-        paramV2.put("updatable",       false);
-        paramV2.put("ticker",          safeTitle);         // OS2 状态栏文案
-        paramV2.put("aodTitle",        safeTitle);         // 息屏文案
-        paramV2.put("param_island",    paramIsland);
-        paramV2.put("baseInfo",        baseInfo);
+        paramV2.put("protocol",         1);
+        paramV2.put("business",         "course_schedule");
+        paramV2.put("islandFirstFloat",  true);  // 首次出现时展开大岛
+        paramV2.put("enableFloat",       false); // 更新时不自动展开
+        paramV2.put("updatable",         false);
+        paramV2.put("ticker",            tickerText); // OS2 状态栏文案
+        paramV2.put("aodTitle",          tickerText); // 息屏文案
+        paramV2.put("param_island",      paramIsland);
+        paramV2.put("baseInfo",          baseInfo);
 
         JSONObject root = new JSONObject();
         root.put("param_v2", paramV2);
-
         return root.toString();
+    }
+
+    /** 拼接焦点通知副文本，格式：时间 10:20  教室 教1-201 */
+    private String buildBaseContent(CourseInfo info) {
+        StringBuilder sb = new StringBuilder();
+        if (!info.startTime.isEmpty()) {
+            sb.append("时间 ").append(info.startTime);
+        }
+        if (!info.classroom.isEmpty()) {
+            if (sb.length() > 0) sb.append("  ");
+            sb.append("教室 ").append(info.classroom);
+        }
+        return sb.toString();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 数据结构
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * 从通知中提取的结构化课程信息，对应模板字段：
+     * <ul>
+     *   <li>courseName → 主要文本1（课程名）</li>
+     *   <li>startTime  → 次要文本·主要小文本1（前置文本="时间"）</li>
+     *   <li>classroom  → 次要文本·主要小文本2（前置文本="教室"）</li>
+     * </ul>
+     */
+    private static class CourseInfo {
+        final String courseName;
+        final String startTime;
+        final String classroom;
+
+        CourseInfo(String courseName, String startTime, String classroom) {
+            this.courseName = courseName;
+            this.startTime  = startTime;
+            this.classroom  = classroom;
+        }
     }
 }

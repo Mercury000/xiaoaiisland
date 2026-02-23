@@ -35,7 +35,7 @@ import java.net.URL;
  */
 public class TestActivity extends Activity {
 
-    private static final String TEST_CHANNEL_ID = "island_notify_test";
+    private static final String TEST_CHANNEL_ID = "COURSE_SCHEDULER_REMINDER_test";
     private static final int    NOTIF_ID        = 99901;
 
     private static final String COURSE_ICON_URL =
@@ -165,7 +165,6 @@ public class TestActivity extends Activity {
         if (course.isEmpty()) { toast("请输入课程名称"); return; }
 
         if (sCourseBitmap == null) {
-            toast("图标下载中，稍后自动发送...");
             new Thread(() -> {
                 // 同步阵射下载
                 HttpURLConnection conn = null;
@@ -221,7 +220,7 @@ public class TestActivity extends Activity {
             } catch (Exception ignored) {}
 
             getSystemService(NotificationManager.class).notify(NOTIF_ID, notif);
-            toast("已发送超级岛通知 " + (sCourseBitmap != null ? "(含图标)" : "(无图标)") + " ✓");
+            toast("已发送超级岛通知 ✓");
 
             // ── 延迟到开课时刻切换为正计时 ─────────────────────────────
             long startMs = computeClassStartMs(time);
@@ -262,18 +261,39 @@ public class TestActivity extends Activity {
     // ─────────────────────────────────────────────────────────────
 
     private void sendRawNotification() {
-        String course = etCourse.getText().toString().trim();
-        String time   = etTime.getText().toString().trim();
-        String room   = etRoom.getText().toString().trim();
+        String course   = etCourse.getText().toString().trim();
+        String time     = etTime.getText().toString().trim();
+        String endTime  = etEndTime.getText().toString().trim();
+        String room     = etRoom.getText().toString().trim();
         if (course.isEmpty()) { toast("请输入课程名称"); return; }
 
-        // 完全模拟 com.miui.voiceassist 的通知格式（来自 logcat）
+        // ① 先打一条模拟 VA_PushReceiver 格式的 Log.d，让 Hook 解析 endDateTime 写入缓存
+        try {
+            org.json.JSONObject fakeCourse = new org.json.JSONObject();
+            fakeCourse.put("name",          course);
+            fakeCourse.put("location",      room);
+            fakeCourse.put("startDateTime", time);
+            fakeCourse.put("endDateTime",   endTime);
+            org.json.JSONArray courses = new org.json.JSONArray();
+            courses.put(fakeCourse);
+            org.json.JSONObject courseCard = new org.json.JSONObject();
+            courseCard.put("courses", courses);
+            org.json.JSONObject payloadItem = new org.json.JSONObject();
+            payloadItem.put("courseCard", courseCard);
+            org.json.JSONArray payload = new org.json.JSONArray();
+            payload.put(payloadItem);
+            org.json.JSONObject fakeJson = new org.json.JSONObject();
+            fakeJson.put("msgType", "COURSE_SCHEDULER_REMINDER");
+            fakeJson.put("payload", payload);
+            android.util.Log.d("VA_PushReceiver",
+                    "NotificationReceiver  message: " + fakeJson);
+        } catch (Exception ignored) {}
+
+        // ② 完全模拟 com.miui.voiceassist 的通知格式（来自 logcat）
         String fakeTitle = "[" + course + "]快到了，提前准备一下吧";
         String fakeBody  = time + (room.isEmpty() ? "" : " | " + room);
         tvJson.setText("原始通知格式（Hook 将自动转换）\n\ntitle: " + fakeTitle
-                + "\ntext:  " + fakeBody
-                + "\n\n注意：Hook 仅在 com.miui.voiceassist\n进程内生效，"
-                + "此按钮从本模块进程发出，\n仅用于验证通知格式是否正确。");
+                + "\ntext:  " + fakeBody);
 
         Notification notif = new Notification.Builder(this, TEST_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)

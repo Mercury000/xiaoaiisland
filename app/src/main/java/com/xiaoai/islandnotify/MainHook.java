@@ -36,6 +36,8 @@ public class MainHook implements IXposedHookLoadPackage {
 
     /** 目标应用包名（小爱同学） */
     private static final String TARGET_PACKAGE = "com.miui.voiceassist";
+    /** 测试用包名（本模块自身，供 TestActivity sendRawNotification 走完整 Hook 链路） */
+    private static final String TEST_PACKAGE   = "com.xiaoai.islandnotify";
 
     /** 课程图标 URL（来自原始通知 payload.icon 字段） */
     private static final String COURSE_ICON_URL =
@@ -84,11 +86,12 @@ public class MainHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        // 只注入目标进程
-        if (!TARGET_PACKAGE.equals(lpparam.packageName)) {
+        // 只注入目标进程（或测试进程）
+        if (!TARGET_PACKAGE.equals(lpparam.packageName)
+                && !TEST_PACKAGE.equals(lpparam.packageName)) {
             return;
         }
-        XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
+        XposedBridge.log(TAG + ": 已注入进程 → " + lpparam.packageName);
         ensureIconDownloaded(); // 提前异步下载图标，避免通知触发时还未准备好
         hookPushLog(lpparam);   // 拦截原始 push JSON，缓存 endDateTime
         hookNotifyMethods(lpparam);
@@ -118,7 +121,12 @@ public class MainHook implements IXposedHookLoadPackage {
                             int jsonStart = msg.indexOf('{');
                             if (jsonStart < 0) return;
                             try {
-                                org.json.JSONObject root = new org.json.JSONObject(msg.substring(jsonStart));
+                                // 用 JSONTokener 只读第一个完整 JSON 对象，
+                                // 忽略真实日志末尾的 " isPassThrough: true isClicked: false"
+                                Object token = new org.json.JSONTokener(
+                                        msg.substring(jsonStart)).nextValue();
+                                if (!(token instanceof org.json.JSONObject)) return;
+                                org.json.JSONObject root = (org.json.JSONObject) token;
                                 org.json.JSONArray payload = root.optJSONArray("payload");
                                 if (payload == null) return;
                                 for (int i = 0; i < payload.length(); i++) {

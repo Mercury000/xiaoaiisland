@@ -134,41 +134,62 @@ public class TestActivity extends Activity {
             }
         }
         createChannel();
-        downloadIconAsync();
-    }
-
-    /** 异步下载课程图标并缓存 */
-    private void downloadIconAsync() {
-        if (sCourseBitmap != null) return;
+        // 预导热图标，如果用户开启 app 后稍等再发按钮可直接命中
         new Thread(() -> {
+            if (sCourseBitmap != null) return;
             HttpURLConnection conn = null;
             try {
                 conn = (HttpURLConnection) new URL(COURSE_ICON_URL).openConnection();
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
+                conn.setConnectTimeout(5000); conn.setReadTimeout(5000);
                 conn.connect();
                 if (conn.getResponseCode() == 200) {
                     Bitmap bmp = BitmapFactory.decodeStream(conn.getInputStream());
                     if (bmp != null) sCourseBitmap = bmp;
                 }
             } catch (Exception ignored) {
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
-        }, "TestIconFetch").start();
+            } finally { if (conn != null) conn.disconnect(); }
+        }, "PreloadIcon").start();
     }
+
+    // ─────────────────────────────────────────────────────────────
 
     // ─────────────────────────────────────────────────────────────
     // 发送超级岛通知（已注入 miui.focus.param）
     // ─────────────────────────────────────────────────────────────
 
     private void sendIslandNotification() {
-        String course  = etCourse.getText().toString().trim();
-        String time    = etTime.getText().toString().trim();
-        String endTime = etEndTime.getText().toString().trim();
-        String room    = etRoom.getText().toString().trim();
+        final String course  = etCourse.getText().toString().trim();
+        final String time    = etTime.getText().toString().trim();
+        final String endTime = etEndTime.getText().toString().trim();
+        final String room    = etRoom.getText().toString().trim();
         if (course.isEmpty()) { toast("请输入课程名称"); return; }
 
+        if (sCourseBitmap == null) {
+            toast("图标下载中，稍后自动发送...");
+            new Thread(() -> {
+                // 同步阵射下载
+                HttpURLConnection conn = null;
+                try {
+                    conn = (HttpURLConnection) new URL(COURSE_ICON_URL).openConnection();
+                    conn.setConnectTimeout(8000);
+                    conn.setReadTimeout(8000);
+                    conn.connect();
+                    if (conn.getResponseCode() == 200) {
+                        Bitmap bmp = BitmapFactory.decodeStream(conn.getInputStream());
+                        if (bmp != null) sCourseBitmap = bmp;
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+                runOnUiThread(() -> doSendIslandNotification(course, time, endTime, room));
+            }, "TestIconFetch").start();
+            return;
+        }
+        doSendIslandNotification(course, time, endTime, room);
+    }
+
+    private void doSendIslandNotification(String course, String time, String endTime, String room) {
         try {
             String json = buildIslandJson(course, time, endTime, room);
             tvJson.setText(prettyJson(json));
@@ -183,24 +204,16 @@ public class TestActivity extends Activity {
             Notification notif = builder.build();
             notif.extras.putString("miui.focus.param", json);
 
-            // ── 图标 Bundle（miui.focus.pics，直接存 Bitmap）─────────────────
+            // miui.focus.pics: 直接存 Bitmap Parcelable
             if (sCourseBitmap != null) {
-                android.os.Bundle picsBundle = new android.os.Bundle();
+                Bundle picsBundle = new Bundle();
                 picsBundle.putParcelable("miui.focus.pic_course", sCourseBitmap);
                 notif.extras.putBundle("miui.focus.pics", picsBundle);
             }
 
-            // ── Action Bundle（miui.focus.actions）────────────────────
-            Intent muteIntent = new Intent(MUTE_ACTION);
-            muteIntent.setPackage(getPackageName());
-            PendingIntent mutePi = PendingIntent.getBroadcast(
-                    this, 0, muteIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            android.os.Bundle actionsBundle = new android.os.Bundle();
-            actionsBundle.putParcelable("miui.focus.action_mute", mutePi);
-            notif.extras.putBundle("miui.focus.actions", actionsBundle);
+            // textButton 已改用 inline actionIntentType=2，无需 miui.focus.actions Bundle
 
-            // ── 整体点击 → 课表页 contentIntent─────────────────
+            // 整体点击 → 课表页
             try {
                 Intent tableIntent = Intent.parseUri(
                         COURSE_TABLE_INTENT, Intent.URI_INTENT_SCHEME);
@@ -210,7 +223,7 @@ public class TestActivity extends Activity {
             } catch (Exception ignored) {}
 
             getSystemService(NotificationManager.class).notify(NOTIF_ID, notif);
-            toast("已发送超级岛通知 " + (sCourseBitmap != null ? "(含图标)" : "(图标加载中)") + " ✓");
+            toast("已发送超级岛通知 " + (sCourseBitmap != null ? "(含图标)" : "(无图标)") + " ✓");
         } catch (JSONException e) {
             toast("JSON 构建失败：" + e.getMessage());
         }
@@ -273,20 +286,26 @@ public class TestActivity extends Activity {
         JSONObject bTextInfo = new JSONObject();
         bTextInfo.put("title", room.isEmpty() ? "—" : room);
 
-        // 上课静音按钮
+        // 上课静音按钮（Method 2 inline，actionIntentType=2 → 广播，无需 Bundle PendingIntent）
         JSONObject muteBtn = new JSONObject();
-        muteBtn.put("actionTitle", "上课静音");
-        muteBtn.put("action", "miui.focus.action_mute");
+        muteBtn.put("actionTitle",     "上课静音");
+        muteBtn.put("actionIntentType", 2);
+        muteBtn.put("actionIntent",
+                "intent:#Intent;action=com.xiaoai.islandnotify.ACTION_MUTE;package=com.xiaoai.islandnotify;end");
         org.json.JSONArray textButton = new org.json.JSONArray();
         textButton.put(muteBtn);
 
         JSONObject bigIslandArea = new JSONObject();
         bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
-        bigIslandArea.put("textInfo", bTextInfo);
-        bigIslandArea.put("textButton", textButton);
+        bigIslandArea.put("textInfo",          bTextInfo);
+        bigIslandArea.put("textButton",        textButton);
 
-        // 小岛：空对象 → 系统自动兜底 App 图标
+        // 小岛：显式指定图标（防止兜底 App 图标）
+        JSONObject smallPicInfo = new JSONObject();
+        smallPicInfo.put("type", 1);
+        smallPicInfo.put("pic",  "miui.focus.pic_course");
         JSONObject smallIslandArea = new JSONObject();
+        smallIslandArea.put("picInfo", smallPicInfo);
 
         JSONObject paramIsland = new JSONObject();
         paramIsland.put("islandProperty", 1);

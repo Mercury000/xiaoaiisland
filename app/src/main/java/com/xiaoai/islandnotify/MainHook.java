@@ -46,6 +46,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String ACTION_KEY_MUTE  = "miui.focus.action_mute";
     /** 触发上课静音的广播 Action */
     private static final String MUTE_ACTION      = "com.xiaoai.islandnotify.ACTION_MUTE";
+    /** 上课静音按钮 inline Intent URI（actionIntentType=2，系统直接发广播，无需 PendingIntent Bundle） */
+    private static final String MUTE_ACTION_URI  =
+            "intent:#Intent;action=com.xiaoai.islandnotify.ACTION_MUTE;package=com.xiaoai.islandnotify;end";
 
     /** 点击课程卡片整体 → 跳转课表页的 Intent URI */
     private static final String COURSE_TABLE_INTENT =
@@ -229,16 +232,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 ctx = (Context) XposedHelpers.getObjectField(nmInstance, "mContext");
             } catch (Throwable ignored) {}
             if (ctx != null) {
-                // 上课静音：广播到 MuteReceiver
-                Intent muteIntent = new Intent(MUTE_ACTION);
-                muteIntent.setPackage("com.xiaoai.islandnotify");
-                PendingIntent mutePi = PendingIntent.getBroadcast(
-                        ctx, 0, muteIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-                );
-                Bundle actionsBundle = new Bundle();
-                actionsBundle.putParcelable(ACTION_KEY_MUTE, mutePi);
-                extras.putBundle("miui.focus.actions", actionsBundle);
+                // textButton 已改用 inline actionIntentType=2，无需 miui.focus.actions Bundle
 
                 // 整体点击 → 课表页
                 try {
@@ -367,20 +361,25 @@ public class MainHook implements IXposedHookLoadPackage {
         JSONObject bTextInfo = new JSONObject();
         bTextInfo.put("title", info.classroom.isEmpty() ? "—" : info.classroom);
 
-        // ── 按钮：上课静音 ─────────────────────────────────────────
+        // ── 按钮：上课静音（Method 2 inline，actionIntentType=2 → 广播）────
         JSONObject muteBtn = new JSONObject();
-        muteBtn.put("actionTitle", "上课静音");
-        muteBtn.put("action", ACTION_KEY_MUTE);
+        muteBtn.put("actionTitle",    "上课静音");
+        muteBtn.put("actionIntentType", 2);          // 2 = broadcast
+        muteBtn.put("actionIntent",   MUTE_ACTION_URI);
         org.json.JSONArray textButton = new org.json.JSONArray();
         textButton.put(muteBtn);
 
         JSONObject bigIslandArea = new JSONObject();
         bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
-        bigIslandArea.put("textInfo", bTextInfo);
-        bigIslandArea.put("textButton", textButton);
+        bigIslandArea.put("textInfo",          bTextInfo);
+        bigIslandArea.put("textButton",        textButton);
 
-        // ── 小岛摘要态：空对象 → 系统兜底 App 图标 ─────────────────
+        // ── 小岛摘要态：显式指定图标（防止兜底到 App 图标）────────────
+        JSONObject smallPicInfo = new JSONObject();
+        smallPicInfo.put("type", 1);
+        smallPicInfo.put("pic",  PIC_KEY_COURSE);
         JSONObject smallIslandArea = new JSONObject();
+        smallIslandArea.put("picInfo", smallPicInfo);
 
         JSONObject paramIsland = new JSONObject();
         paramIsland.put("islandProperty", 1);

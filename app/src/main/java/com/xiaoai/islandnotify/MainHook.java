@@ -471,17 +471,11 @@ public class MainHook implements IXposedHookLoadPackage {
         shareData.put("pic",   COURSE_ICON_URL);
         shareData.put("title", info.courseName);
         shareData.put("content", info.classroom.isEmpty() ? "" : info.classroom);
-        String shareContent;
-        if (startMs > 0 && startMs > System.currentTimeMillis()) {
-            long shareMins = (startMs - System.currentTimeMillis()) / 60000L;
-            shareContent = info.courseName
-                    + (info.classroom.isEmpty() ? "" : " " + info.classroom)
-                    + " " + Math.max(1, shareMins) + "分钟后开始";
-        } else {
-            shareContent = info.courseName
-                    + (info.classroom.isEmpty() ? "" : " " + info.classroom)
-                    + " 已开始" + computeElapsed(info.startTime);
-        }
+        String timeRange = info.startTime
+                + (info.endTime.isEmpty() ? "" : "-" + info.endTime);
+        String shareContent = info.courseName
+                + (info.classroom.isEmpty() ? "" : " " + info.classroom)
+                + (timeRange.isEmpty() ? "" : " " + timeRange);
         shareData.put("shareContent", shareContent);
 
         JSONObject paramIsland = new JSONObject();
@@ -570,9 +564,11 @@ public class MainHook implements IXposedHookLoadPackage {
         shareDataE.put("pic",          COURSE_ICON_URL);
         shareDataE.put("title",        info.courseName);
         shareDataE.put("content",      info.classroom.isEmpty() ? "" : info.classroom);
+        String timeRangeE = info.startTime
+                + (info.endTime.isEmpty() ? "" : "-" + info.endTime);
         shareDataE.put("shareContent", info.courseName
                 + (info.classroom.isEmpty() ? "" : " " + info.classroom)
-                + " 已开始" + computeElapsed(info.startTime));
+                + (timeRangeE.isEmpty() ? "" : " " + timeRangeE));
 
         JSONObject paramIsland = new JSONObject();
         paramIsland.put("islandProperty",  1);

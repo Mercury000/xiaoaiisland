@@ -389,17 +389,11 @@ public class TestActivity extends Activity {
         shareData.put("pic",   COURSE_ICON_URL);
         shareData.put("title", course);
         shareData.put("content", (room == null || room.isEmpty()) ? "" : room);
-        String shareContent;
-        if (startMs > 0 && startMs > System.currentTimeMillis()) {
-            long shareMins = (startMs - System.currentTimeMillis()) / 60000L;
-            shareContent = course
-                    + ((room == null || room.isEmpty()) ? "" : " " + room)
-                    + " " + Math.max(1, shareMins) + "分钟后开始";
-        } else {
-            shareContent = course
-                    + ((room == null || room.isEmpty()) ? "" : " " + room)
-                    + " 已开始" + computeElapsed(time);
-        }
+        String timeRange = (time == null || time.isEmpty()) ? ""
+                : time + ((endTime == null || endTime.isEmpty()) ? "" : "-" + endTime);
+        String shareContent = course
+                + ((room == null || room.isEmpty()) ? "" : " " + room)
+                + (timeRange.isEmpty() ? "" : " " + timeRange);
         shareData.put("shareContent", shareContent);
 
         JSONObject paramIsland = new JSONObject();

@@ -191,7 +191,7 @@ public class TestActivity extends Activity {
 
     private void doSendIslandNotification(String course, String time, String endTime, String room) {
         try {
-            String json = buildIslandJson(course, time, endTime, room);
+            String json = buildIslandJson(course, time, endTime, room, false);
             tvJson.setText(prettyJson(json));
 
             Notification.Builder builder = new Notification.Builder(this, TEST_CHANNEL_ID)
@@ -233,7 +233,7 @@ public class TestActivity extends Activity {
                 new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
                     try {
                         // startMs 此时已是过去，buildIslandJson 自动使用 timerType=1 + "已经上课"
-                        String elapsedJson = buildIslandJson(fCourse, fTime, fEndTime, fRoom);
+                        String elapsedJson = buildIslandJson(fCourse, fTime, fEndTime, fRoom, true);
                         Notification updated = new Notification.Builder(appCtx, TEST_CHANNEL_ID)
                                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                                 .setContentTitle(fCourse)
@@ -251,7 +251,6 @@ public class TestActivity extends Activity {
                         appCtx.getSystemService(NotificationManager.class).notify(NOTIF_ID, updated);
                     } catch (JSONException ignored) {}
                 }, delay);
-                toast("将在 " + (delay / 1000) + " 秒后自动切换为正计时");
             }
         } catch (JSONException e) {
             toast("JSON 构建失败：" + e.getMessage());
@@ -306,7 +305,8 @@ public class TestActivity extends Activity {
      * └──────────────────────────────────────────────┘
      * </pre>
      */
-    private String buildIslandJson(String course, String time, String endTime, String room)
+    private String buildIslandJson(String course, String time, String endTime, String room,
+                                       boolean enableFloat)
             throws JSONException {
         // 自定义 URI scheme，绕过 Super Island 安全限制（会丢弃 component=）
         final String MUTE_URI = "xiaoaimute://mute";
@@ -414,7 +414,7 @@ public class TestActivity extends Activity {
         paramV2.put("protocol",        1);
         paramV2.put("business",        "course_schedule");
         paramV2.put("islandFirstFloat", true);
-        paramV2.put("enableFloat",      false);
+        paramV2.put("enableFloat",      enableFloat);
         paramV2.put("updatable",        true);
         paramV2.put("ticker",           ticker);
         paramV2.put("aodTitle",         ticker);

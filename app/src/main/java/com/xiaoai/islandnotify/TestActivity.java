@@ -211,8 +211,6 @@ public class TestActivity extends Activity {
                 notif.extras.putBundle("miui.focus.pics", picsBundle);
             }
 
-            // textButton 已改用 inline actionIntentType=2，无需 miui.focus.actions Bundle
-
             // 整体点击 → 课表页
             try {
                 Intent tableIntent = Intent.parseUri(
@@ -285,10 +283,13 @@ public class TestActivity extends Activity {
         // ── 1. 文本组件2（baseInfo type=2）──────────────────────────────
         // 主要文本1=课程名，次要文本1=开始时间，次要文本2=结束时间
         JSONObject baseInfo = new JSONObject();
-        baseInfo.put("type",  2);
-        baseInfo.put("title", course);
+        baseInfo.put("type",        2);
+        baseInfo.put("title",       course);
+        baseInfo.put("showDivider", true);
         if (time != null && !time.isEmpty())       baseInfo.put("content",    time);
-        if (endTime != null && !endTime.isEmpty())  baseInfo.put("subContent", "| " + endTime);
+        if (endTime != null && !endTime.isEmpty()) baseInfo.put("subContent", endTime);
+        // 计算 startMs（后续 hintInfo/bigIslandArea 共用）
+        long startMs = computeClassStartMs(time);
 
         // ── 2. 识别图形组件1（picInfo type=1，使用 App 图标）────────────
         JSONObject notifPicInfo = new JSONObject();
@@ -296,28 +297,26 @@ public class TestActivity extends Activity {
 
         // ── 3. 按钮组件2（hintInfo type=2）──────────────────────────────
         // content=前置文本1，title/timerInfo=主要小文本1，subContent=前置文本2，subTitle=主要小文本2
+        // 按钮：ActionInfo 自定义 Action（actionIntentType=2 sendBroadcast + 显式 component）
         JSONObject actionInfo = new JSONObject();
-        actionInfo.put("actionTitle",      "上课静音");
-        actionInfo.put("actionIntentType", 1);         // 1=startActivity
-        actionInfo.put("actionIntent",     MUTE_URI);
+        actionInfo.put("actionIntentType", 2);
+        actionInfo.put("actionIntent",
+                "intent:#Intent;action=" + MUTE_ACTION
+                + ";component=com.xiaoai.islandnotify/.MuteReceiver"
+                + ";launchFlags=0x10000000;end");
+        actionInfo.put("actionTitle", "上课静音");
 
         JSONObject hintInfo = new JSONObject();
         hintInfo.put("type",       2);
-        hintInfo.put("content",    "时间");      // 前置文本1
-        hintInfo.put("subContent", "地点");      // 前置文本2
-        hintInfo.put("subTitle",   (room == null || room.isEmpty()) ? "—" : room); // 主要小文本2=教室
+        hintInfo.put("content",    "时间");   // 前置文本1
+        hintInfo.put("subContent", "地点");   // 前置文本2
+        hintInfo.put("subTitle",   (room == null || room.isEmpty()) ? "—" : room);
         hintInfo.put("actionInfo", actionInfo);
-        // 主要小文本1：timerInfo 倒计时（PDF 确认仅支持 4 个标准字段，无法拼接前后缀）
-        long startMs = computeClassStartMs(time);
-        if (startMs > System.currentTimeMillis()) {
-            JSONObject timerInfo = new JSONObject();
-            timerInfo.put("timerType",          -1);   // -1=倒计时开始
-            timerInfo.put("timerWhen",          startMs);
-            timerInfo.put("timerTotal",         0);
-            timerInfo.put("timerSystemCurrent", System.currentTimeMillis());
-            hintInfo.put("timerInfo", timerInfo);
+        if (startMs > 0 && startMs > System.currentTimeMillis()) {
+            long mins = (startMs - System.currentTimeMillis()) / 60000L;
+            hintInfo.put("title", Math.max(1, mins) + "分钟后开始");
         } else {
-            hintInfo.put("title", computeMinutesUntil(time));
+            hintInfo.put("title", "已开始" + computeElapsed(time));
         }
 
         // ── 4. 大岛摘要态（param_island）────────────────────────────────
@@ -327,14 +326,10 @@ public class TestActivity extends Activity {
         JSONObject aTextInfo = new JSONObject();
         aTextInfo.put("title", course);
         if (startMs > System.currentTimeMillis()) {
-            JSONObject aTimerInfo = new JSONObject();
-            aTimerInfo.put("timerType",          -1);
-            aTimerInfo.put("timerWhen",          startMs);
-            aTimerInfo.put("timerTotal",         0);
-            aTimerInfo.put("timerSystemCurrent", System.currentTimeMillis());
-            aTextInfo.put("timerInfo", aTimerInfo);
+            long mins = (startMs - System.currentTimeMillis()) / 60000L;
+            aTextInfo.put("content", Math.max(1, mins) + "分钟后开始");
         } else {
-            aTextInfo.put("content", computeElapsed(time));
+            aTextInfo.put("content", "已开始" + computeElapsed(time));
         }
         JSONObject imageTextInfoLeft = new JSONObject();
         imageTextInfoLeft.put("type",     1);
@@ -365,7 +360,7 @@ public class TestActivity extends Activity {
         paramV2.put("business",        "course_schedule");
         paramV2.put("islandFirstFloat", true);
         paramV2.put("enableFloat",      false);
-        paramV2.put("updatable",        false);
+        paramV2.put("updatable",        true);
         paramV2.put("ticker",           ticker);
         paramV2.put("aodTitle",         ticker);
         paramV2.put("baseInfo",         baseInfo);      // 文本组件2

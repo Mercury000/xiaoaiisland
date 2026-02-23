@@ -235,16 +235,13 @@ public class MainHook implements IXposedHookLoadPackage {
                 ctx = (Context) XposedHelpers.getObjectField(nmInstance, "mContext");
             } catch (Throwable ignored) {}
             if (ctx != null) {
-                // textButton 已改用 inline actionIntentType=2，无需 miui.focus.actions Bundle
-
                 // 整体点击 → 课表页
                 try {
                     Intent tableIntent = Intent.parseUri(
                             COURSE_TABLE_INTENT, Intent.URI_INTENT_SCHEME);
                     PendingIntent tablePi = PendingIntent.getActivity(
                             ctx, 1, tableIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-                    );
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
                     notification.contentIntent = tablePi;
                 } catch (Exception e) {
                     XposedBridge.log(TAG + ": 课表 intent 解析失败 → " + e.getMessage());
@@ -340,10 +337,12 @@ public class MainHook implements IXposedHookLoadPackage {
         // ── 1. 文本组件2（baseInfo type=2）────────────────────────────
         // 主要文本1=课程名，次要文本1=开始时间，次要文本2=结束时间
         JSONObject baseInfo = new JSONObject();
-        baseInfo.put("type",  2);
-        baseInfo.put("title", info.courseName);
+        baseInfo.put("type",        2);
+        baseInfo.put("title",       info.courseName);
         if (!info.startTime.isEmpty()) baseInfo.put("content",    info.startTime);
         if (!info.endTime.isEmpty())   baseInfo.put("subContent", "| " + info.endTime);
+        // 计算 startMs（后续 hintInfo/bigIslandArea 共用）
+        long startMs = computeClassStartMs(info.startTime);
 
         // ── 2. 识别图形组件1（picInfo type=1，App图标）─────────────
         // type=1 = 直接使用应用自身图标，无需自定义 pic
@@ -354,28 +353,29 @@ public class MainHook implements IXposedHookLoadPackage {
         // 前置文本1="时间"，主要小文本1=倒计时（timerInfo）
         // 前置文本2="地点"，主要小文本2=教室
         // 圆头图文按钮 = 上课静音
+        // 按钮：ActionInfo 自定义 Action（actionIntentType=2 sendBroadcast + 显式 component）
+        // 显式广播不受 Android 13+ 隐式广播限制，不需要 miui.focus.actions Bundle
         JSONObject actionInfo = new JSONObject();
-        actionInfo.put("actionTitle",      "上课静音");
-        actionInfo.put("actionIntentType", 1);  // 1=startActivity（比广播更可靠）
-        actionInfo.put("actionIntent",     MUTE_ACTION_URI);
+        actionInfo.put("actionIntentType", 2); // 2 = sendBroadcast
+        actionInfo.put("actionIntent",
+                "intent:#Intent;action=" + MUTE_ACTION
+                + ";component=com.xiaoai.islandnotify/.MuteReceiver"
+                + ";launchFlags=0x10000000;end"); // FLAG_RECEIVER_FOREGROUND
+        actionInfo.put("actionTitle", "上课静音");
 
+        // 主要小文本1 = 静态文本：发通知时计算一次，无需实时倒计时
+        // 倒计时："XX分钟后开始"，已开始："已开始X分钟"
         JSONObject hintInfo = new JSONObject();
         hintInfo.put("type",       2);
-        hintInfo.put("content",    "时间");    // 前置文本1
-        hintInfo.put("subContent", "地点");    // 前置文本2
-        hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom); // 主要小文本2=教室
+        hintInfo.put("content",    "时间");   // 前置文本1（必传）
+        hintInfo.put("subContent", "地点");   // 前置文本2
+        hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom); // 主要小文本2
         hintInfo.put("actionInfo", actionInfo);
-        // 主要小文本1：timerInfo 倒计时（PDF确认仅支持 4 个标准字段，无法拼接前后缀文本）
-        long startMs = computeClassStartMs(info.startTime);
-        if (startMs > System.currentTimeMillis()) {
-            JSONObject timerInfo = new JSONObject();
-            timerInfo.put("timerType",          -1);   // -1=倒计时开始
-            timerInfo.put("timerWhen",          startMs);
-            timerInfo.put("timerTotal",         0);
-            timerInfo.put("timerSystemCurrent", System.currentTimeMillis());
-            hintInfo.put("timerInfo", timerInfo);
+        if (startMs > 0 && startMs > System.currentTimeMillis()) {
+            long mins = (startMs - System.currentTimeMillis()) / 60000L;
+            hintInfo.put("title", Math.max(1, mins) + "分钟后开始");
         } else {
-            hintInfo.put("title", computeMinutesUntil(info.startTime));
+            hintInfo.put("title", "已开始" + computeElapsed(info.startTime));
         }
 
         // ── 4. 大岛摘要态（param_island）─────────────────────────────
@@ -384,15 +384,11 @@ public class MainHook implements IXposedHookLoadPackage {
         aPicInfo.put("type", 1);  // type=1：App图标
         JSONObject aTextInfo = new JSONObject();
         aTextInfo.put("title", info.courseName);
-        if (startMs > System.currentTimeMillis()) {
-            JSONObject aTimerInfo = new JSONObject();
-            aTimerInfo.put("timerType",          -1);
-            aTimerInfo.put("timerWhen",          startMs);
-            aTimerInfo.put("timerTotal",         0);
-            aTimerInfo.put("timerSystemCurrent", System.currentTimeMillis());
-            aTextInfo.put("timerInfo", aTimerInfo);
+        if (startMs > 0 && startMs > System.currentTimeMillis()) {
+            long mins = (startMs - System.currentTimeMillis()) / 60000L;
+            aTextInfo.put("content", Math.max(1, mins) + "分钟后开始");
         } else {
-            aTextInfo.put("content", computeElapsed(info.startTime));
+            aTextInfo.put("content", "已开始" + computeElapsed(info.startTime));
         }
         JSONObject imageTextInfoLeft = new JSONObject();
         imageTextInfoLeft.put("type",     1);
@@ -423,7 +419,7 @@ public class MainHook implements IXposedHookLoadPackage {
         paramV2.put("business",        "course_schedule");
         paramV2.put("islandFirstFloat", true);
         paramV2.put("enableFloat",      false);
-        paramV2.put("updatable",        false);
+        paramV2.put("updatable",        true);
         paramV2.put("ticker",           tickerText);
         paramV2.put("aodTitle",         tickerText);
         paramV2.put("baseInfo",         baseInfo);      // 文本组件2

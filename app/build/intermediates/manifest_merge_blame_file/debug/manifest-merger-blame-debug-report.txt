@@ -16,131 +16,150 @@
 14    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 14-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:7:5-80
 14-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:7:22-77
-15
-16    <application
-16-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:9:5-78:19
-17        android:allowBackup="false"
-17-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:13:9-36
-18        android:debuggable="true"
-19        android:description="@string/app_description"
-19-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:11:9-54
-20        android:extractNativeLibs="false"
-21        android:icon="@mipmap/ic_launcher"
-21-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:12:9-43
-22        android:label="@string/app_name" >
-22-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:10:9-41
-23
-24        <!-- 声明这是一个 Xposed/LSPosed 模块 -->
-25        <meta-data
-25-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:16:9-18:36
-26            android:name="xposedmodule"
-26-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:17:13-40
-27            android:value="true" />
-27-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:18:13-33
-28
-29        <!-- 模块描述 -->
-30        <meta-data
-30-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:21:9-23:53
-31            android:name="xposeddescription"
-31-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:22:13-45
-32            android:value="将小爱同学课程表提醒通知转为小米超级岛通知" />
-32-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:23:13-50
-33
-34        <!-- 最低 Xposed API 版本 -->
-35        <meta-data
-35-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:26:9-28:34
-36            android:name="xposedminversion"
-36-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:27:13-44
-37            android:value="82" />
-37-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:28:13-31
-38
-39        <!--
-40            LSPosed 作用域声明（仅注入目标包名进程）
-41            也可在 LSPosed 管理器中手动勾选作用域
-42        -->
-43        <meta-data
-43-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:34:9-36:52
-44            android:name="xposedscope"
-44-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:35:13-39
-45            android:value="com.miui.voiceassist" />
-45-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:36:13-49
-46
-47        <!-- 测试用 Activity：直接发送超级岛通知，验证 JSON 渲染效果 -->
-48        <activity
-48-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:39:9-47:20
-49            android:name="com.xiaoai.islandnotify.TestActivity"
-49-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:40:13-41
-50            android:exported="true"
-50-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:42:13-36
-51            android:label="超级岛测试" >
-51-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:41:13-34
-52            <intent-filter>
-52-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:43:13-46:29
-53                <action android:name="android.intent.action.MAIN" />
-53-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:44:17-69
-53-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:44:25-66
-54
-55                <category android:name="android.intent.category.LAUNCHER" />
-55-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:45:17-77
-55-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:45:27-74
-56            </intent-filter>
-57        </activity>
-58
-59        <!-- 上课静音广播接收器 -->
-60        <receiver
-60-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:50:9-56:20
-61            android:name="com.xiaoai.islandnotify.MuteReceiver"
-61-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:51:13-41
-62            android:exported="true" >
-62-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:52:13-36
-63            <intent-filter>
-63-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:53:13-55:29
-64                <action android:name="com.xiaoai.islandnotify.ACTION_MUTE" />
-64-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:54:17-78
-64-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:54:25-75
-65            </intent-filter>
-66        </receiver>
-67
-68        <!-- 上课静音无界面 Activity（被 Super Island 按钮 actionIntentType=1 调用） -->
-69        <activity
-69-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:59:9-76:20
-70            android:name="com.xiaoai.islandnotify.MuteActivity"
-70-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:60:13-41
-71            android:excludeFromRecents="true"
-71-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:63:13-46
-72            android:exported="true"
-72-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:64:13-36
-73            android:noHistory="true"
-73-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:62:13-37
-74            android:theme="@android:style/Theme.NoDisplay" >
-74-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:61:13-59
-75
-76            <!--
-77                自定义 URI scheme：xiaoaimute://mute
-78                Super Island 丢弃 component= 参数（安全限制），改用 URI scheme 路由，
-79                系统通过 intent-filter 解析，精准匹配到本 Activity，不会打开主界面。
-80            -->
-81            <intent-filter>
-81-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:70:13-75:29
-82                <action android:name="android.intent.action.VIEW" />
-82-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:71:17-69
-82-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:71:25-66
-83
-84                <category android:name="android.intent.category.DEFAULT" />
-84-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:72:17-76
-84-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:72:27-73
-85                <category android:name="android.intent.category.BROWSABLE" />
-85-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:73:17-78
-85-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:73:27-75
+15    <!-- 上课静音：Android 6+ 切换静音需要「勿扰」权限声明（用户需在设置中手动授权） -->
+16    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+16-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:9:5-85
+16-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:9:22-82
+17
+18    <application
+18-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:11:5-89:19
+19        android:allowBackup="false"
+19-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:15:9-36
+20        android:debuggable="true"
+21        android:description="@string/app_description"
+21-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:13:9-54
+22        android:extractNativeLibs="false"
+23        android:icon="@mipmap/ic_launcher"
+23-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:14:9-43
+24        android:label="@string/app_name" >
+24-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:12:9-41
+25
+26        <!-- 声明这是一个 Xposed/LSPosed 模块 -->
+27        <meta-data
+27-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:18:9-20:36
+28            android:name="xposedmodule"
+28-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:19:13-40
+29            android:value="true" />
+29-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:20:13-33
+30
+31        <!-- 模块描述 -->
+32        <meta-data
+32-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:23:9-25:53
+33            android:name="xposeddescription"
+33-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:24:13-45
+34            android:value="将小爱同学课程表提醒通知转为小米超级岛通知" />
+34-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:25:13-50
+35
+36        <!-- 最低 Xposed API 版本 -->
+37        <meta-data
+37-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:28:9-30:34
+38            android:name="xposedminversion"
+38-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:29:13-44
+39            android:value="82" />
+39-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:30:13-31
+40
+41        <!--
+42            LSPosed 作用域声明（仅注入目标包名进程）
+43            也可在 LSPosed 管理器中手动勾选作用域
+44        -->
+45        <meta-data
+45-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:36:9-38:52
+46            android:name="xposedscope"
+46-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:37:13-39
+47            android:value="com.miui.voiceassist" />
+47-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:38:13-49
+48
+49        <!-- 测试用 Activity：直接发送超级岛通知，验证 JSON 渲染效果 -->
+50        <activity
+50-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:41:9-49:20
+51            android:name="com.xiaoai.islandnotify.TestActivity"
+51-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:42:13-41
+52            android:exported="true"
+52-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:44:13-36
+53            android:label="超级岛测试" >
+53-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:43:13-34
+54            <intent-filter>
+54-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:45:13-48:29
+55                <action android:name="android.intent.action.MAIN" />
+55-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:46:17-69
+55-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:46:25-66
+56
+57                <category android:name="android.intent.category.LAUNCHER" />
+57-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:47:17-77
+57-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:47:27-74
+58            </intent-filter>
+59        </activity>
+60
+61        <!-- 上课静音广播接收器（备用） -->
+62        <receiver
+62-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:52:9-58:20
+63            android:name="com.xiaoai.islandnotify.MuteReceiver"
+63-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:53:13-41
+64            android:exported="true" >
+64-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:54:13-36
+65            <intent-filter>
+65-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:55:13-57:29
+66                <action android:name="com.xiaoai.islandnotify.ACTION_MUTE" />
+66-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:56:17-78
+66-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:56:25-75
+67            </intent-filter>
+68        </receiver>
+69
+70        <!-- 上课静音 Service（Super Island actionIntentType=3 调用，比广播更可靠） -->
+71        <service
+71-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:61:9-67:19
+72            android:name="com.xiaoai.islandnotify.MuteService"
+72-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:62:13-40
+73            android:exported="true" >
+73-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:63:13-36
+74            <intent-filter>
+74-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:55:13-57:29
+75                <action android:name="com.xiaoai.islandnotify.ACTION_MUTE" />
+75-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:56:17-78
+75-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:56:25-75
+76            </intent-filter>
+77        </service>
+78
+79        <!-- 上课静音无界面 Activity（被 Super Island 按钮 actionIntentType=1 调用） -->
+80        <activity
+80-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:70:9-87:20
+81            android:name="com.xiaoai.islandnotify.MuteActivity"
+81-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:71:13-41
+82            android:excludeFromRecents="true"
+82-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:74:13-46
+83            android:exported="true"
+83-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:75:13-36
+84            android:noHistory="true"
+84-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:73:13-37
+85            android:theme="@android:style/Theme.NoDisplay" >
+85-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:72:13-59
 86
-87                <data
-87-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:74:17-73
-88                    android:host="mute"
-88-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:74:51-70
-89                    android:scheme="xiaoaimute" />
-89-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:74:23-50
-90            </intent-filter>
-91        </activity>
-92    </application>
-93
-94</manifest>
+87            <!--
+88                自定义 URI scheme：xiaoaimute://mute
+89                Super Island 丢弃 component= 参数（安全限制），改用 URI scheme 路由，
+90                系统通过 intent-filter 解析，精准匹配到本 Activity，不会打开主界面。
+91            -->
+92            <intent-filter>
+92-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:81:13-86:29
+93                <action android:name="android.intent.action.VIEW" />
+93-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:82:17-69
+93-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:82:25-66
+94
+95                <category android:name="android.intent.category.DEFAULT" />
+95-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:83:17-76
+95-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:83:27-73
+96                <category android:name="android.intent.category.BROWSABLE" />
+96-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:84:17-78
+96-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:84:27-75
+97
+98                <data
+98-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:85:17-73
+99                    android:host="mute"
+99-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:85:51-70
+100                    android:scheme="xiaoaimute" />
+100-->D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:85:23-50
+101            </intent-filter>
+102        </activity>
+103    </application>
+104
+105</manifest>

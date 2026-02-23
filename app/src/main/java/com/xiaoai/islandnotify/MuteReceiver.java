@@ -12,12 +12,12 @@ import android.media.AudioManager;
 public class MuteReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
+        AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return;
         try {
-            AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-            if (am != null) {
-                am.setRingerMode(AudioManager.RINGER_MODE_SILENT);
-            }
-        } catch (Exception ignored) {
+            am.setRingerMode(AudioManager.RINGER_MODE_SILENT);
+        } catch (SecurityException e) {
+            try { am.setRingerMode(AudioManager.RINGER_MODE_VIBRATE); } catch (Exception ignored) {}
         }
     }
 }

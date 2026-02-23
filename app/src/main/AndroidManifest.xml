@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 上课静音：修改铃声模式 -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 上课静音：Android 6+ 切换静音需要「勿扰」权限声明（用户需在设置中手动授权） -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
     <application
         android:label="@string/app_name"
@@ -46,7 +48,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 上课静音广播接收器 -->
+        <!-- 上课静音广播接收器（备用） -->
         <receiver
             android:name=".MuteReceiver"
             android:exported="true">
@@ -54,6 +56,15 @@
                 <action android:name="com.xiaoai.islandnotify.ACTION_MUTE" />
             </intent-filter>
         </receiver>
+
+        <!-- 上课静音 Service（Super Island actionIntentType=3 调用，比广播更可靠） -->
+        <service
+            android:name=".MuteService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xiaoai.islandnotify.ACTION_MUTE" />
+            </intent-filter>
+        </service>
 
         <!-- 上课静音无界面 Activity（被 Super Island 按钮 actionIntentType=1 调用） -->
         <activity

@@ -222,6 +222,37 @@ public class TestActivity extends Activity {
 
             getSystemService(NotificationManager.class).notify(NOTIF_ID, notif);
             toast("已发送超级岛通知 " + (sCourseBitmap != null ? "(含图标)" : "(无图标)") + " ✓");
+
+            // ── 延迟到开课时刻切换为正计时 ─────────────────────────────
+            long startMs = computeClassStartMs(time);
+            long delay = startMs - System.currentTimeMillis();
+            if (delay > 0 && delay <= 6 * 3600 * 1000L) {
+                final android.content.Context appCtx = getApplicationContext();
+                final String fCourse = course, fTime = time, fEndTime = endTime, fRoom = room;
+                final android.app.PendingIntent savedPi = notif.contentIntent;
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                    try {
+                        // startMs 此时已是过去，buildIslandJson 自动使用 timerType=1 + "已经上课"
+                        String elapsedJson = buildIslandJson(fCourse, fTime, fEndTime, fRoom);
+                        Notification updated = new Notification.Builder(appCtx, TEST_CHANNEL_ID)
+                                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                                .setContentTitle(fCourse)
+                                .setContentText((fEndTime.isEmpty() ? fTime : fTime + "-" + fEndTime)
+                                        + (fRoom.isEmpty() ? "" : " | " + fRoom))
+                                .setAutoCancel(true)
+                                .build();
+                        updated.extras.putString("miui.focus.param", elapsedJson);
+                        if (sCourseBitmap != null) {
+                            Bundle pics = new Bundle();
+                            pics.putParcelable("miui.focus.pic_course", sCourseBitmap);
+                            updated.extras.putBundle("miui.focus.pics", pics);
+                        }
+                        updated.contentIntent = savedPi;
+                        appCtx.getSystemService(NotificationManager.class).notify(NOTIF_ID, updated);
+                    } catch (JSONException ignored) {}
+                }, delay);
+                toast("将在 " + (delay / 1000) + " 秒后自动切换为正计时");
+            }
         } catch (JSONException e) {
             toast("JSON 构建失败：" + e.getMessage());
         }

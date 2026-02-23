@@ -139,12 +139,25 @@ public class MainHook implements IXposedHookLoadPackage {
             Notification notification = (Notification) param.args[notifArgIndex];
             if (notification == null) return;
 
-            // 防止重复处理（同一通知被两个 Hook 各触发一次时的保护）
+            // 正计时更新通知直接放行，不再重入注入逻辑
+            if (notification.extras != null
+                    && notification.extras.getBoolean("islandElapsedUpdate", false)) return;
+
+            // 防止重复处理
             if (isAlreadyIsland(notification)) return;
 
             if (isScheduleNotification(notification)) {
                 XposedBridge.log(TAG + ": 检测到课程表提醒，开始注入超级岛参数");
-                injectIslandParams(notification, param.thisObject);
+                int notifId;
+                String notifTag;
+                if (notifArgIndex == 1) {
+                    notifId  = (int) param.args[0];
+                    notifTag = null;
+                } else {
+                    notifTag = (String) param.args[0];
+                    notifId  = (int)   param.args[1];
+                }
+                injectIslandParams(notification, param.thisObject, notifId, notifTag);
             }
         }
     }
@@ -204,7 +217,8 @@ public class MainHook implements IXposedHookLoadPackage {
      * 向通知的 extras 中注入 miui.focus.param（及图标/Action Bundle），
      * 使其变为超级岛通知，并设置整体点击事件跳转到课表页。
      */
-    private void injectIslandParams(Notification notification, Object nmInstance) {
+    private void injectIslandParams(Notification notification, Object nmInstance,
+                                     int notifId, String notifTag) {
         Bundle extras = notification.extras;
         if (extras == null) {
             extras = new Bundle();
@@ -218,6 +232,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     + " 教室=" + info.classroom);
 
             // ── 1. 构建超级岛 JSON ─────────────────────────────────────
+            long startMs = computeClassStartMs(info.startTime);
             String islandJson = buildIslandParams(info);
             extras.putString(KEY_FOCUS_PARAM, islandJson);
 
@@ -245,6 +260,43 @@ public class MainHook implements IXposedHookLoadPackage {
                     notification.contentIntent = tablePi;
                 } catch (Exception e) {
                     XposedBridge.log(TAG + ": 课表 intent 解析失败 → " + e.getMessage());
+                }
+
+                // ── 4. 延迟到开课时刻更新为正计时 ─────────────────────────
+                long delay = startMs - System.currentTimeMillis();
+                if (delay > 0 && delay <= 6 * 3600 * 1000L) {
+                    final Context finalCtx    = ctx;
+                    final CourseInfo savedInfo = info;
+                    final String channelId    = safeStr(notification.getChannelId());
+                    final android.app.NotificationManager nm =
+                            finalCtx.getSystemService(android.app.NotificationManager.class);
+                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                        try {
+                            String elapsedJson = buildIslandParamsElapsed(savedInfo);
+                            Notification.Builder b = new Notification.Builder(finalCtx, channelId)
+                                    .setSmallIcon(notification.getSmallIcon())
+                                    .setContentTitle(savedInfo.courseName)
+                                    .setContentText(savedInfo.startTime
+                                            + (savedInfo.endTime.isEmpty() ? "" : " | " + savedInfo.endTime)
+                                            + (savedInfo.classroom.isEmpty() ? "" : " " + savedInfo.classroom))
+                                    .setAutoCancel(true);
+                            Notification updated = b.build();
+                            updated.extras.putString(KEY_FOCUS_PARAM, elapsedJson);
+                            updated.extras.putBoolean("islandElapsedUpdate", true); // 跳过重复注入检测
+                            if (cachedCourseBitmap != null) {
+                                Bundle pics = new Bundle();
+                                pics.putParcelable(PIC_KEY_COURSE, cachedCourseBitmap);
+                                updated.extras.putBundle("miui.focus.pics", pics);
+                            }
+                            updated.contentIntent = notification.contentIntent;
+                            if (notifTag != null) nm.notify(notifTag, notifId, updated);
+                            else                  nm.notify(notifId, updated);
+                            XposedBridge.log(TAG + ": 正计时更新通知已重发 id=" + notifId);
+                        } catch (Exception e) {
+                            XposedBridge.log(TAG + ": 延迟更新失败 → " + e.getMessage());
+                        }
+                    }, delay);
+                    XposedBridge.log(TAG + ": 已安排正计时更新，延迟 " + (delay / 1000) + "秒");
                 }
             }
 
@@ -432,6 +484,88 @@ public class MainHook implements IXposedHookLoadPackage {
         paramV2.put("baseInfo",         baseInfo);      // 文本组件2
         paramV2.put("picInfo",          notifPicInfo);  // 识别图形组件1
         paramV2.put("hintInfo",         hintInfo);      // 按钮组件2
+        paramV2.put("param_island",     paramIsland);
+
+        JSONObject root = new JSONObject();
+        root.put("param_v2", paramV2);
+        return root.toString();
+    }
+
+    /**
+     * 构建正计时状态的岛 JSON（开课后由 Handler 延迟重发时调用）。
+     * 与 buildIslandParams 相同结构，区别仅在于 timerType=1 + content="已经上课"。
+     */
+    private String buildIslandParamsElapsed(CourseInfo info) throws JSONException {
+        long startMs = computeClassStartMs(info.startTime);
+
+        JSONObject baseInfo = new JSONObject();
+        baseInfo.put("type",        2);
+        baseInfo.put("title",       info.courseName);
+        baseInfo.put("showDivider", true);
+        if (!info.startTime.isEmpty()) baseInfo.put("content",    info.startTime);
+        if (!info.endTime.isEmpty())   baseInfo.put("subContent", "| " + info.endTime);
+
+        JSONObject notifPicInfo = new JSONObject();
+        notifPicInfo.put("type", 1);
+
+        JSONObject actionInfo = new JSONObject();
+        actionInfo.put("actionIntentType", 2);
+        actionInfo.put("actionIntent",
+                "intent:#Intent;action=" + MUTE_ACTION
+                + ";component=com.xiaoai.islandnotify/.MuteReceiver"
+                + ";launchFlags=0x10000000;end");
+        actionInfo.put("actionTitle", "上课静音");
+
+        JSONObject hintInfo = new JSONObject();
+        hintInfo.put("type",       2);
+        hintInfo.put("content",    "已经上课");  // 正计时固定前置文本
+        hintInfo.put("subContent", "地点");
+        hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom);
+        hintInfo.put("actionInfo", actionInfo);
+        if (startMs > 0) {
+            JSONObject timerInfo = new JSONObject();
+            timerInfo.put("timerType",          1);   // 1 = 正计时开始
+            timerInfo.put("timerWhen",          startMs);
+            timerInfo.put("timerSystemCurrent", System.currentTimeMillis());
+            hintInfo.put("timerInfo", timerInfo);
+        } else {
+            hintInfo.put("title", "已经上课");
+        }
+
+        JSONObject aPicInfo  = new JSONObject(); aPicInfo.put("type", 1);
+        JSONObject aTextInfo = new JSONObject();
+        aTextInfo.put("title",   info.courseName);
+        aTextInfo.put("content", "已开始" + computeElapsed(info.startTime));
+        JSONObject imageTextInfoLeft = new JSONObject();
+        imageTextInfoLeft.put("type",     1);
+        imageTextInfoLeft.put("picInfo",  aPicInfo);
+        imageTextInfoLeft.put("textInfo", aTextInfo);
+        JSONObject bTextInfo = new JSONObject();
+        bTextInfo.put("title", info.classroom.isEmpty() ? "—" : info.classroom);
+        JSONObject bigIslandArea = new JSONObject();
+        bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
+        bigIslandArea.put("textInfo",          bTextInfo);
+
+        JSONObject smallPicInfo = new JSONObject(); smallPicInfo.put("type", 1);
+        JSONObject smallIslandArea = new JSONObject(); smallIslandArea.put("picInfo", smallPicInfo);
+
+        JSONObject paramIsland = new JSONObject();
+        paramIsland.put("islandProperty",  1);
+        paramIsland.put("bigIslandArea",   bigIslandArea);
+        paramIsland.put("smallIslandArea", smallIslandArea);
+
+        String tickerText = buildTickerText(info);
+        JSONObject paramV2 = new JSONObject();
+        paramV2.put("protocol",        1);
+        paramV2.put("business",        "course_schedule");
+        paramV2.put("islandFirstFloat", false);
+        paramV2.put("enableFloat",      false);
+        paramV2.put("updatable",        true);
+        paramV2.put("ticker",           tickerText);
+        paramV2.put("aodTitle",         tickerText);
+        paramV2.put("baseInfo",         baseInfo);
+        paramV2.put("picInfo",          notifPicInfo);
+        paramV2.put("hintInfo",         hintInfo);
         paramV2.put("param_island",     paramIsland);
 
         JSONObject root = new JSONObject();

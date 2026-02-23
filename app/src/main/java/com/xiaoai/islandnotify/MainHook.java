@@ -340,7 +340,7 @@ public class MainHook implements IXposedHookLoadPackage {
         baseInfo.put("type",        2);
         baseInfo.put("title",       info.courseName);
         if (!info.startTime.isEmpty()) baseInfo.put("content",    info.startTime);
-        if (!info.endTime.isEmpty())   baseInfo.put("subContent", info.endTime);
+        if (!info.endTime.isEmpty())   baseInfo.put("subContent", "| " + info.endTime);
         // 计算 startMs（后续 hintInfo/bigIslandArea 共用）
         long startMs = computeClassStartMs(info.startTime);
 
@@ -367,15 +367,22 @@ public class MainHook implements IXposedHookLoadPackage {
         // 倒计时："XX分钟后开始"，已开始："已开始X分钟"
         JSONObject hintInfo = new JSONObject();
         hintInfo.put("type",       2);
-        hintInfo.put("content",    "时间");   // 前置文本1（必传）
-        hintInfo.put("subContent", "地点");   // 前置文本2
+        hintInfo.put("subContent", "地点");   // 前缀文本2
         hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom); // 主要小文本2
         hintInfo.put("actionInfo", actionInfo);
-        if (startMs > 0 && startMs > System.currentTimeMillis()) {
-            long mins = (startMs - System.currentTimeMillis()) / 60000L;
-            hintInfo.put("title", Math.max(1, mins) + "分钟后开始");
+        // 前缀文本1 + 主要小文本1：根据是否已上课动态切换
+        if (startMs > 0) {
+            JSONObject timerInfo = new JSONObject();
+            boolean countdown = startMs > System.currentTimeMillis();
+            timerInfo.put("timerType",          countdown ? -1 : 1); // -1=倒计时开始, 1=正计时开始
+            timerInfo.put("timerWhen",          startMs);              // 毫秒时间戳
+            timerInfo.put("timerSystemCurrent", System.currentTimeMillis()); // 发通知时的当前时间
+            hintInfo.put("timerInfo", timerInfo);
+            hintInfo.put("content", countdown ? "即将上课" : "已经上课");
         } else {
-            hintInfo.put("title", "已开始" + computeElapsed(info.startTime));
+            // 无法解析时间，退化为静态文本
+            hintInfo.put("content", "时间");
+            if (!info.startTime.isEmpty()) hintInfo.put("title", info.startTime);
         }
 
         // ── 4. 大岛摘要态（param_island）─────────────────────────────

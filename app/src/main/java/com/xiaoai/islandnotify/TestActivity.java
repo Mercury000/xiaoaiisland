@@ -287,7 +287,7 @@ public class TestActivity extends Activity {
         baseInfo.put("title",       course);
         baseInfo.put("showDivider", true);
         if (time != null && !time.isEmpty())       baseInfo.put("content",    time);
-        if (endTime != null && !endTime.isEmpty()) baseInfo.put("subContent", endTime);
+        if (endTime != null && !endTime.isEmpty()) baseInfo.put("subContent", "| " + endTime);
         // 计算 startMs（后续 hintInfo/bigIslandArea 共用）
         long startMs = computeClassStartMs(time);
 
@@ -308,15 +308,21 @@ public class TestActivity extends Activity {
 
         JSONObject hintInfo = new JSONObject();
         hintInfo.put("type",       2);
-        hintInfo.put("content",    "时间");   // 前置文本1
-        hintInfo.put("subContent", "地点");   // 前置文本2
+        hintInfo.put("subContent", "地点");   // 前缀文本2
         hintInfo.put("subTitle",   (room == null || room.isEmpty()) ? "—" : room);
         hintInfo.put("actionInfo", actionInfo);
-        if (startMs > 0 && startMs > System.currentTimeMillis()) {
-            long mins = (startMs - System.currentTimeMillis()) / 60000L;
-            hintInfo.put("title", Math.max(1, mins) + "分钟后开始");
+        // 前缀文本1 + 主要小文本1：根据是否已上课动态切换
+        if (startMs > 0) {
+            JSONObject timerInfo = new JSONObject();
+            boolean countdown = startMs > System.currentTimeMillis();
+            timerInfo.put("timerType",          countdown ? -1 : 1);
+            timerInfo.put("timerWhen",          startMs);
+            timerInfo.put("timerSystemCurrent", System.currentTimeMillis());
+            hintInfo.put("timerInfo", timerInfo);
+            hintInfo.put("content", countdown ? "即将上课" : "已经上课");
         } else {
-            hintInfo.put("title", "已开始" + computeElapsed(time));
+            hintInfo.put("content", "时间");
+            if (time != null && !time.isEmpty()) hintInfo.put("title", time);
         }
 
         // ── 4. 大岛摘要态（param_island）────────────────────────────────

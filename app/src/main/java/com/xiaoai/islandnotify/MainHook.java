@@ -1,17 +1,25 @@
 package com.xiaoai.islandnotify;
 
 import android.app.Notification;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
+import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 import static de.robv.android.xposed.XposedHelpers.findAndHookMethod;
@@ -28,21 +36,34 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 目标应用包名（小爱同学） */
     private static final String TARGET_PACKAGE = "com.miui.voiceassist";
 
-    /**
-     * 用于识别"课程表提醒"通知的关键词列表。
-     * 匹配通知标题、正文或 Channel ID 中任意一处包含以下词汇即触发转换。
-     */
+    /** 课程图标 URL（来自原始通知 payload.icon 字段） */
+    private static final String COURSE_ICON_URL =
+            "https://cdn.cnbj1.fds.api.mi-img.com/xiaoailite-ios/XiaoAiSuggestion/MsgSettingIconCourse.png";
+
+    /** 课程图标在 miui.focus.pics Bundle 中的 key */
+    private static final String PIC_KEY_COURSE   = "miui.focus.pic_course";
+    /** 上课静音 Action 在 miui.focus.actions Bundle 中的 key */
+    private static final String ACTION_KEY_MUTE  = "miui.focus.action_mute";
+    /** 触发上课静音的广播 Action */
+    private static final String MUTE_ACTION      = "com.xiaoai.islandnotify.ACTION_MUTE";
+
+    /** 点击课程卡片整体 → 跳转课表页的 Intent URI */
+    private static final String COURSE_TABLE_INTENT =
+            "intent://aiweb?url=https%3A%2F%2Fi.ai.mi.com%2Fh5%2Fprecache%2Fai-schedule%2F%23%2FtodayLesson" +
+            "&flag=805339136&noBack=false&statusBarColor=FFFFFF&statusBarTextBlack=true" +
+            "&navigationBarColor=FFFFFF#Intent;scheme=voiceassist;package=com.miui.voiceassist;end";
+
+    /** 关键词兜底识别列表 */
     private static final String[] SCHEDULE_KEYWORDS = {
             "课程", "课表", "上课", "选课", "schedule", "class reminder"
     };
 
-    // ─────────────────────────────────────────────────────────────
-    // 超级岛通知的参数 Key（均为小米私有扩展）
-    // ─────────────────────────────────────────────────────────────
-    /** 岛通知主参数 Key（JSON 字符串） */
+    /** 岛通知主参数 Key */
     private static final String KEY_FOCUS_PARAM = "miui.focus.param";
-    /** 图片 Bundle Key */
-    private static final String KEY_FOCUS_PICS  = "miui.focus.pics";
+
+    /** 课程图标 Bitmap 缓存（后台线程异步下载后填充） */
+    private static volatile Bitmap cachedCourseBitmap = null;
+    private static volatile boolean iconFetchAttempted = false;
 
     // ─────────────────────────────────────────────────────────────
 
@@ -53,6 +74,7 @@ public class MainHook implements IXposedHookLoadPackage {
             return;
         }
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
+        ensureIconDownloaded(); // 提前异步下载图标，避免通知触发时还未准备好
         hookNotifyMethods(lpparam);
     }
 
@@ -116,7 +138,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
             if (isScheduleNotification(notification)) {
                 XposedBridge.log(TAG + ": 检测到课程表提醒，开始注入超级岛参数");
-                injectIslandParams(notification);
+                injectIslandParams(notification, param.thisObject);
             }
         }
     }
@@ -154,8 +176,10 @@ public class MainHook implements IXposedHookLoadPackage {
         // ② 关键词兜底（防止 channelId 未来变更）
         Bundle extras = notification.extras;
         if (extras == null) return false;
-        String title = safeStr(extras.getString(Notification.EXTRA_TITLE));
-        String text  = safeStr(extras.getString(Notification.EXTRA_TEXT));
+        CharSequence titleCs2 = extras.getCharSequence(Notification.EXTRA_TITLE);
+        CharSequence textCs2  = extras.getCharSequence(Notification.EXTRA_TEXT);
+        String title = titleCs2 != null ? titleCs2.toString() : "";
+        String text  = textCs2  != null ? textCs2.toString()  : "";
         String combined = (title + " " + text).toLowerCase();
         for (String kw : SCHEDULE_KEYWORDS) {
             if (combined.contains(kw.toLowerCase())) {
@@ -171,9 +195,10 @@ public class MainHook implements IXposedHookLoadPackage {
     // ─────────────────────────────────────────────────────────────
 
     /**
-     * 向通知的 extras 中注入 miui.focus.param，使其变为超级岛通知。
+     * 向通知的 extras 中注入 miui.focus.param（及图标/Action Bundle），
+     * 使其变为超级岛通知，并设置整体点击事件跳转到课表页。
      */
-    private void injectIslandParams(Notification notification) {
+    private void injectIslandParams(Notification notification, Object nmInstance) {
         Bundle extras = notification.extras;
         if (extras == null) {
             extras = new Bundle();
@@ -183,10 +208,53 @@ public class MainHook implements IXposedHookLoadPackage {
         try {
             CourseInfo info = extractCourseInfo(extras);
             XposedBridge.log(TAG + ": 解析结果 → 课程=" + info.courseName
-                    + " 时间=" + info.startTime + " 教室=" + info.classroom);
+                    + " 时间=" + info.startTime + " 结束=" + info.endTime
+                    + " 教室=" + info.classroom);
+
+            // ── 1. 构建超级岛 JSON ─────────────────────────────────────
             String islandJson = buildIslandParams(info);
             extras.putString(KEY_FOCUS_PARAM, islandJson);
-            XposedBridge.log(TAG + ": 注入成功");
+
+            // ── 2. 注入课程图标（miui.focus.pics 存 Bitmap Parcelable）────
+            ensureIconDownloaded();
+            if (cachedCourseBitmap != null) {
+                Bundle picsBundle = new Bundle();
+                picsBundle.putParcelable(PIC_KEY_COURSE, cachedCourseBitmap);
+                extras.putBundle("miui.focus.pics", picsBundle);
+            }
+
+            // ── 3. 注入 Action 及点击 Intent ──────────────────────────
+            Context ctx = null;
+            try {
+                ctx = (Context) XposedHelpers.getObjectField(nmInstance, "mContext");
+            } catch (Throwable ignored) {}
+            if (ctx != null) {
+                // 上课静音：广播到 MuteReceiver
+                Intent muteIntent = new Intent(MUTE_ACTION);
+                muteIntent.setPackage("com.xiaoai.islandnotify");
+                PendingIntent mutePi = PendingIntent.getBroadcast(
+                        ctx, 0, muteIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                );
+                Bundle actionsBundle = new Bundle();
+                actionsBundle.putParcelable(ACTION_KEY_MUTE, mutePi);
+                extras.putBundle("miui.focus.actions", actionsBundle);
+
+                // 整体点击 → 课表页
+                try {
+                    Intent tableIntent = Intent.parseUri(
+                            COURSE_TABLE_INTENT, Intent.URI_INTENT_SCHEME);
+                    PendingIntent tablePi = PendingIntent.getActivity(
+                            ctx, 1, tableIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                    );
+                    notification.contentIntent = tablePi;
+                } catch (Exception e) {
+                    XposedBridge.log(TAG + ": 课表 intent 解析失败 → " + e.getMessage());
+                }
+            }
+
+            XposedBridge.log(TAG + ": 注入成功 hasPic=" + (cachedCourseBitmap != null));
         } catch (JSONException e) {
             XposedBridge.log(TAG + ": 构建 JSON 失败 → " + e.getMessage());
         }
@@ -198,12 +266,12 @@ public class MainHook implements IXposedHookLoadPackage {
      * <p>实测 logcat 确认的固定格式（com.miui.voiceassist 课程表提醒）：
      * <pre>
      *   EXTRA_TITLE = "[高等数学]快到了，提前准备一下吧"
-     *   EXTRA_TEXT  = "19:50 | 教1-201"         ← 固定格式：时间 + " | " + 教室
+     *   EXTRA_TEXT  = "19:50 | 教1-201"   ← 固定格式：startTime + " | " + 教室
+     *   EXTRA_SUB_TEXT / 自定义字段 可能含 endTime（如 "20:35"）
      * </pre>
      */
     private CourseInfo extractCourseInfo(Bundle extras) {
         // 通知 title/text 存的是 CharSequence（Spanned），getString() 对此类型返回 null
-        // 必须用 getCharSequence() 再 toString()
         CharSequence titleCs = extras.getCharSequence(Notification.EXTRA_TITLE);
         CharSequence bodyCs  = extras.getCharSequence(Notification.EXTRA_TEXT);
         String title = titleCs != null ? titleCs.toString() : "";
@@ -215,23 +283,39 @@ public class MainHook implements IXposedHookLoadPackage {
         if (m.find()) {
             courseName = m.group(1).trim();
         }
-        // 兜底：去掉"快到了"及后续所有文字
         if (courseName.isEmpty()) {
             courseName = title.replaceAll("(快到了|提醒|通知|课程表).*", "").trim();
         }
         if (courseName.isEmpty()) courseName = "课程提醒";
 
         // ── 时间 + 教室：body 固定格式 "19:50 | 教1-201" ─────────────
-        // 按 " | " 分割（兼容前后空格数量不一致的情况）
         String startTime = "";
         String classroom = "";
         String[] parts = body.split("\\s*\\|\\s*", 2);
         if (parts.length >= 1) startTime = parts[0].trim();
         if (parts.length >= 2) classroom  = parts[1].trim();
 
+        // ── 结束时间：从 EXTRA_SUB_TEXT 或其他自定义 extra 中尝试读取 ──
+        // endDateTime 字段只存在于原始 payload JSON 中，
+        // 这里扫描所有字符串型 extra，找符合 HH:mm 格式的第二个时间值
+        String endTime = "";
+        for (String key : extras.keySet()) {
+            if (key.equals(Notification.EXTRA_TITLE) || key.equals(Notification.EXTRA_TEXT)) continue;
+            Object val = extras.get(key);
+            if (val instanceof String || val instanceof CharSequence) {
+                String sv = val.toString().trim();
+                if (sv.matches("\\d{1,2}:\\d{2}") && !sv.equals(startTime)) {
+                    endTime = sv;
+                    XposedBridge.log(TAG + ": 从 extra[" + key + "] 找到结束时间=" + endTime);
+                    break;
+                }
+            }
+        }
+
         XposedBridge.log(TAG + ": 解析 title=[" + title + "] body=[" + body + "]"
-                + " → 课程=" + courseName + " 时间=" + startTime + " 教室=" + classroom);
-        return new CourseInfo(courseName, startTime, classroom);
+                + " → 课程=" + courseName + " 开始=" + startTime
+                + " 结束=" + endTime + " 教室=" + classroom);
+        return new CourseInfo(courseName, startTime, endTime, classroom);
     }
 
     private static String safeStr(String s) {
@@ -241,126 +325,150 @@ public class MainHook implements IXposedHookLoadPackage {
     /**
      * 构建超级岛 JSON 参数（param_v2 格式）。
      *
-     * <p>字段来源：小米超级岛模板库 hintInfo 组件（按钮组件 3）
-     *
+     * <p>大岛展开态结构：
      * <pre>
-     * 大岛 / 焦点通知展开态：
-     * ┌──────────────────────────────────────┐
-     * │  教1-201（前置小字 frontTitle）        │
-     * │  高等数学（大字 title）                │
-     * │  10:20  （后置小字 content）           │
-     * └──────────────────────────────────────┘
-     *
-     * 小岛摘要态：
-     * ┌────────────────────────┐
-     * │  高等数学   10:20      │ ← smallIslandArea.textInfo.title / .content
-     * └────────────────────────┘
-     *
-     * hintInfo 字段映射（来自 PDF 模板库 P55/P57）：
-     *   content    = 前置文本1  → "时间"（标签）
-     *   title      = 主要小文本1 → 实际时间值（如 19:50）
-     *   subContent = 前置文本2  → "地点"（标签）
-     *   subTitle   = 主要小文本2 → 实际教室值（如 教1-201）
-     *
-     * bigIslandArea 模板2（PDF P77）：imageTextInfoLeft(A区) + textInfo(B区)
-     *   A区 imageTextInfoLeft（PDF P95）：
-     *     无 picInfo → 系统兜底取小爱同学 App 图标
-     *     textInfo.title   = 课程名（大字）
-     *     textInfo.content = 开始时间（后置小字）
-     *   B区 textInfo（PDF P104）：
-     *     title = 教室名（直接显示值，无标签前缀）
-     *
-     * smallIslandArea = 空对象 → 系统取A区图标 → 兜底 App 图标（PDF P93）
-     *
-     * baseInfo（焦点通知内容区）：
-     *   title   = 课程名
-     *   content = "19:50 | 教1-201"（与原始 EXTRA_TEXT 保持一致）
-     *   不用 hintInfo，避免 label-value 对造成"时间"/"地点"标签冗余显示
+     * ┌──────────────────────────────────────────────┐
+     * │ [课程图标]  高等数学          教1-201（B区）  │
+     * │             19:50-20:35                       │
+     * │                         [上课静音]            │
+     * └──────────────────────────────────────────────┘
      * </pre>
+     *
+     * <ul>
+     *   <li>A区 imageTextInfoLeft：picInfo(图标) + textInfo(课程名/时间)</li>
+     *   <li>B区 textInfo：教室名</li>
+     *   <li>textButton：上课静音按钮，action → miui.focus.actions Bundle</li>
+     *   <li>notification.contentIntent：整体点击 → 课表页</li>
+     * </ul>
      */
     private String buildIslandParams(CourseInfo info) throws JSONException {
-        // ── 大岛 A 区：imageTextInfoLeft（图文组件1, type=1）──────────
-        // 无 picInfo → 系统自动兜底小爱同学 App 图标
+        // 时间显示：有结束时间 → "19:50-20:35"，否则仅 "19:50"
+        String timeDisplay = info.startTime;
+        if (!info.endTime.isEmpty()) {
+            timeDisplay = info.startTime + "-" + info.endTime;
+        }
+
+        // ── A 区：imageTextInfoLeft（type=1）──────────────────────────
+        // picInfo.pic 引用 miui.focus.pics Bundle 中对应 key 的 Icon 对象
+        JSONObject picInfo = new JSONObject();
+        picInfo.put("type", 1);
+        picInfo.put("pic", PIC_KEY_COURSE);
+
         JSONObject aTextInfo = new JSONObject();
         aTextInfo.put("title", info.courseName);
-        if (!info.startTime.isEmpty()) aTextInfo.put("content", info.startTime);
+        if (!timeDisplay.isEmpty()) aTextInfo.put("content", timeDisplay);
 
         JSONObject imageTextInfoLeft = new JSONObject();
         imageTextInfoLeft.put("type", 1);
+        imageTextInfoLeft.put("picInfo", picInfo);
         imageTextInfoLeft.put("textInfo", aTextInfo);
 
-        // ── 大岛 B 区：textInfo（文本组件，只放教室值，不加标签前缀）──
+        // ── B 区：textInfo（教室，直接显示值，不加标签前缀）──────────
         JSONObject bTextInfo = new JSONObject();
         bTextInfo.put("title", info.classroom.isEmpty() ? "—" : info.classroom);
 
+        // ── 按钮：上课静音 ─────────────────────────────────────────
+        JSONObject muteBtn = new JSONObject();
+        muteBtn.put("actionTitle", "上课静音");
+        muteBtn.put("action", ACTION_KEY_MUTE);
+        org.json.JSONArray textButton = new org.json.JSONArray();
+        textButton.put(muteBtn);
+
         JSONObject bigIslandArea = new JSONObject();
-        bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft); // A区（必传）
-        bigIslandArea.put("textInfo",          bTextInfo);         // B区
+        bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
+        bigIslandArea.put("textInfo", bTextInfo);
+        bigIslandArea.put("textButton", textButton);
 
         // ── 小岛摘要态：空对象 → 系统兜底 App 图标 ─────────────────
         JSONObject smallIslandArea = new JSONObject();
 
-        // ── 岛属性 ────────────────────────────────────────────────
         JSONObject paramIsland = new JSONObject();
         paramIsland.put("islandProperty", 1);
-        paramIsland.put("bigIslandArea",   bigIslandArea);
+        paramIsland.put("bigIslandArea", bigIslandArea);
         paramIsland.put("smallIslandArea", smallIslandArea);
 
-        // ── 焦点通知内容（baseInfo）──────────────────────────────────
-        // 直接映射原始通知：title=课程名, content="时间 | 教室"
-        String bodyContent = info.startTime
+        // ── 焦点通知（baseInfo）─────────────────────────────────────
+        String bodyContent = timeDisplay
                 + (info.classroom.isEmpty() ? "" : " | " + info.classroom);
         JSONObject baseInfo = new JSONObject();
         baseInfo.put("title",   info.courseName);
         baseInfo.put("content", bodyContent.isEmpty() ? info.courseName : bodyContent);
         baseInfo.put("type", 1);
 
-        // ── 状态栏 / 息屏文案 ─────────────────────────────────────
+        // ── 状态栏 / 息屏文案 ────────────────────────────────────────
         String tickerText = buildTickerText(info);
 
         // ── 组合 param_v2 ─────────────────────────────────────────
         JSONObject paramV2 = new JSONObject();
-        paramV2.put("protocol",         1);
-        paramV2.put("business",         "course_schedule");
-        paramV2.put("islandFirstFloat",  true);
-        paramV2.put("enableFloat",       false);
-        paramV2.put("updatable",         false);
-        paramV2.put("ticker",            tickerText);
-        paramV2.put("aodTitle",          tickerText);
-        paramV2.put("param_island",      paramIsland);
-        paramV2.put("baseInfo",          baseInfo);
+        paramV2.put("protocol",        1);
+        paramV2.put("business",        "course_schedule");
+        paramV2.put("islandFirstFloat", true);
+        paramV2.put("enableFloat",      false);
+        paramV2.put("updatable",        false);
+        paramV2.put("ticker",           tickerText);
+        paramV2.put("aodTitle",         tickerText);
+        paramV2.put("param_island",     paramIsland);
+        paramV2.put("baseInfo",         baseInfo);
 
         JSONObject root = new JSONObject();
         root.put("param_v2", paramV2);
         return root.toString();
     }
 
-    /** 拼接状态栏 / 息屏文案，格式：高等数学  10:20 */
+    /** 状态栏 / 息屏文案：格式 "高等数学  19:50" */
     private String buildTickerText(CourseInfo info) {
         if (info.startTime.isEmpty()) return info.courseName;
         return info.courseName + "  " + info.startTime;
+    }
+
+    /**
+     * 异步下载课程图标并缓存到 {@link #cachedCourseBitmap}。
+     * 若已尝试过（无论成功与否）则直接返回，避免重复网络请求。
+     * 下载在后台线程进行，不阻塞通知注入。
+     */
+    private static void ensureIconDownloaded() {
+        if (iconFetchAttempted) return;
+        iconFetchAttempted = true;
+
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                conn = (HttpURLConnection) new URL(COURSE_ICON_URL).openConnection();
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.connect();
+                if (conn.getResponseCode() == 200) {
+                    Bitmap bmp = BitmapFactory.decodeStream(conn.getInputStream());
+                    if (bmp != null) {
+                        cachedCourseBitmap = bmp;
+                        XposedBridge.log(TAG + ": 课程图标下载成功 "
+                                + bmp.getWidth() + "x" + bmp.getHeight());
+                    }
+                } else {
+                    XposedBridge.log(TAG + ": 课程图标下载失败 HTTP " + conn.getResponseCode());
+                }
+            } catch (Exception e) {
+                XposedBridge.log(TAG + ": 课程图标下载异常 → " + e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }, "IslandIconFetch").start();
     }
 
     // ─────────────────────────────────────────────────────────────
     // 数据结构
     // ─────────────────────────────────────────────────────────────
 
-    /**
-     * 从通知中提取的结构化课程信息，对应模板字段：
-     * <ul>
-     *   <li>courseName → 主要文本1（课程名）</li>
-     *   <li>startTime  → 次要文本·主要小文本1（前置文本="时间"）</li>
-     *   <li>classroom  → 次要文本·主要小文本2（前置文本="教室"）</li>
-     * </ul>
-     */
     private static class CourseInfo {
         final String courseName;
         final String startTime;
+        final String endTime;
         final String classroom;
 
-        CourseInfo(String courseName, String startTime, String classroom) {
+        CourseInfo(String courseName, String startTime, String endTime, String classroom) {
             this.courseName = courseName;
             this.startTime  = startTime;
+            this.endTime    = endTime;
             this.classroom  = classroom;
         }
     }

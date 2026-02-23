@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-48:12
-INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-48:12
-INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-48:12
-INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-48:12
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-59:12
+INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-59:12
+INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-59:12
+INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:2:1-59:12
 	package
 		INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml
 	android:versionName
@@ -16,59 +16,75 @@ uses-permission#android.permission.POST_NOTIFICATIONS
 ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:5:5-77
 	android:name
 		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:5:22-74
+uses-permission#android.permission.MODIFY_AUDIO_SETTINGS
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:7:5-80
+	android:name
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:7:22-77
 application
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:7:5-46:19
-INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:7:5-46:19
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:9:5-57:19
+INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:9:5-57:19
 	android:extractNativeLibs
 		INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml
 	android:label
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:8:9-41
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:10:9-41
 	android:allowBackup
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:10:9-36
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:12:9-36
 	android:description
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:9:9-54
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:11:9-54
 meta-data#xposedmodule
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:13:9-15:36
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:15:9-17:36
 	android:value
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:15:13-33
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:17:13-33
 	android:name
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:14:13-40
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:16:13-40
 meta-data#xposeddescription
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:18:9-20:53
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:20:9-22:53
 	android:value
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:20:13-50
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:22:13-50
 	android:name
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:19:13-45
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:21:13-45
 meta-data#xposedminversion
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:23:9-25:34
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:25:9-27:34
 	android:value
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:25:13-31
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:27:13-31
 	android:name
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:24:13-44
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:26:13-44
 meta-data#xposedscope
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:31:9-33:52
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:33:9-35:52
 	android:value
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:33:13-49
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:35:13-49
 	android:name
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:32:13-39
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:34:13-39
 activity#com.xiaoai.islandnotify.TestActivity
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:36:9-44:20
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:38:9-46:20
 	android:label
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:38:13-34
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:40:13-34
 	android:exported
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:39:13-36
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:41:13-36
 	android:name
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:37:13-41
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:39:13-41
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:40:13-43:29
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:42:13-45:29
 action#android.intent.action.MAIN
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:41:17-69
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:43:17-69
 	android:name
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:41:25-66
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:43:25-66
 category#android.intent.category.LAUNCHER
-ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:42:17-77
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:44:17-77
 	android:name
-		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:42:27-74
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:44:27-74
+receiver#com.xiaoai.islandnotify.MuteReceiver
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:49:9-55:20
+	android:exported
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:51:13-36
+	android:name
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:50:13-41
+intent-filter#action:name:com.xiaoai.islandnotify.ACTION_MUTE
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:52:13-54:29
+action#com.xiaoai.islandnotify.ACTION_MUTE
+ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:53:17-78
+	android:name
+		ADDED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml:53:25-75
 uses-sdk
 INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from D:\mercu\Desktop\xiaoai\app\src\main\AndroidManifest.xml

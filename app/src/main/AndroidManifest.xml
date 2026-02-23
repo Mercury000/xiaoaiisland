@@ -3,6 +3,8 @@
 
     <!-- Android 13+ 发送通知需要此权限 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 上课静音：修改铃声模式 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
         android:label="@string/app_name"
@@ -42,6 +44,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 上课静音广播接收器 -->
+        <receiver
+            android:name=".MuteReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xiaoai.islandnotify.ACTION_MUTE" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

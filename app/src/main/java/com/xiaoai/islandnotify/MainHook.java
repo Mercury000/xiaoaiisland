@@ -66,6 +66,12 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final ConcurrentHashMap<String, String> endTimeCache =
             new ConcurrentHashMap<>();
 
+    /**
+     * 从 VA_PushReceiver 原始 JSON 中解析到的最近一条课程信息。
+     * hookPushLog 写入，extractCourseInfo 读取并清空。
+     */
+    private static volatile CourseInfo lastPushedInfo = null;
+
     /** 防止同一进程内多个 ClassLoader 重复注册 Hook */
     private static volatile boolean hooked = false;
 
@@ -156,11 +162,18 @@ public class MainHook implements IXposedHookLoadPackage {
                                     for (int j = 0; j < courses.length(); j++) {
                                         org.json.JSONObject course = courses.optJSONObject(j);
                                         if (course == null) continue;
-                                        String start = course.optString("startDateTime", "");
-                                        String end   = course.optString("endDateTime",   "");
-                                        if (!start.isEmpty() && !end.isEmpty()) {
-                                            endTimeCache.put(start, end);
-                                            XposedBridge.log(TAG + ": 缓存 endTime " + start + " → " + end);
+                                        String start     = course.optString("startDateTime", "");
+                                        String end       = course.optString("endDateTime",   "");
+                                        String name      = course.optString("name",          "");
+                                        // JSON 字段名为 "location"，不是 "classroom"
+                                        String classroom = course.optString("location",      "");
+                                        if (!start.isEmpty()) {
+                                            if (!end.isEmpty()) endTimeCache.put(start, end);
+                                            lastPushedInfo = new CourseInfo(
+                                                    name.isEmpty() ? "课程提醒" : name,
+                                                    start, end, classroom);
+                                            XposedBridge.log(TAG + ": 缓存 push 课程 课程=" + name
+                                                    + " 开始=" + start + " 结束=" + end + " 教室=" + classroom);
                                         }
                                     }
                                 }
@@ -412,51 +425,41 @@ public class MainHook implements IXposedHookLoadPackage {
      * </pre>
      */
     private CourseInfo extractCourseInfo(Bundle extras) {
-        // 通知 title/text 存的是 CharSequence（Spanned），getString() 对此类型返回 null
+        // ① 优先使用 hookPushLog 从原始 push JSON 精确解析的课程信息
+        //    VA_PushReceiver 打印 Log.d 在发出通知之前，此时数据已就绪
+        CourseInfo cached = lastPushedInfo;
+        if (cached != null) {
+            lastPushedInfo = null;
+            XposedBridge.log(TAG + ": 从 push JSON 精确提取 → 课程=" + cached.courseName
+                    + " 开始=" + cached.startTime + " 结束=" + cached.endTime
+                    + " 教室=" + cached.classroom);
+            return cached;
+        }
+
+        // ② 兜底：尝试从通知 extras 解析（兼容其他来源/未来格式）
         CharSequence titleCs = extras.getCharSequence(Notification.EXTRA_TITLE);
         CharSequence bodyCs  = extras.getCharSequence(Notification.EXTRA_TEXT);
         String title = titleCs != null ? titleCs.toString() : "";
         String body  = bodyCs  != null ? bodyCs.toString()  : "";
 
-        // ── 课程名：提取 "[高等数学]" 中的内容 ───────────────────────
+        // 课程名：提取 "[高等数学]" 中的内容
         String courseName = "";
         Matcher m = Pattern.compile("\\[([^\\]]+)\\]").matcher(title);
-        if (m.find()) {
-            courseName = m.group(1).trim();
-        }
-        if (courseName.isEmpty()) {
-            courseName = title.replaceAll("(快到了|提醒|通知|课程表).*", "").trim();
-        }
+        if (m.find()) courseName = m.group(1).trim();
+        if (courseName.isEmpty()) courseName = title.replaceAll("(快到了|提醒|通知|课程表).*", "").trim();
         if (courseName.isEmpty()) courseName = "课程提醒";
 
-        // ── 时间 + 教室：body 固定格式 "19:50 | 教1-201" ─────────────
+        // 时间 + 教室：body 固定格式 "19:50 | 教1-201"
         String startTime = "";
         String classroom = "";
         String[] parts = body.split("\\s*\\|\\s*", 2);
         if (parts.length >= 1) startTime = parts[0].trim();
         if (parts.length >= 2) classroom  = parts[1].trim();
 
-        // ── 结束时间：优先查 push JSON 缓存（由 Log.d hook 预填），回退扫描 extras ──
+        // 结束时间：查 endTimeCache
         String endTime = endTimeCache.getOrDefault(startTime, "");
-        if (!endTime.isEmpty()) {
-            XposedBridge.log(TAG + ": 从缓存取到结束时间 " + startTime + " → " + endTime);
-        } else {
-            // 兜底：扫描所有字符串型 extra，找符合 HH:mm 且不同于 startTime 的值
-            for (String key : extras.keySet()) {
-                if (key.equals(Notification.EXTRA_TITLE) || key.equals(Notification.EXTRA_TEXT)) continue;
-                Object val = extras.get(key);
-                if (val instanceof String || val instanceof CharSequence) {
-                    String sv = val.toString().trim();
-                    if (sv.matches("\\d{1,2}:\\d{2}") && !sv.equals(startTime)) {
-                        endTime = sv;
-                        XposedBridge.log(TAG + ": 从 extra[" + key + "] 找到结束时间=" + endTime);
-                        break;
-                    }
-                }
-            }
-        }
 
-        XposedBridge.log(TAG + ": 解析 title=[" + title + "] body=[" + body + "]"
+        XposedBridge.log(TAG + ": 兜底解析 title=[" + title + "] body=[" + body + "]"
                 + " → 课程=" + courseName + " 开始=" + startTime
                 + " 结束=" + endTime + " 教室=" + classroom);
         return new CourseInfo(courseName, startTime, endTime, classroom);

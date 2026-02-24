@@ -344,8 +344,6 @@ public class MainHook implements IXposedHookLoadPackage {
         if (notif == null) return null;
         RemoteViews big     = notif.bigContentView;
         RemoteViews content = notif.contentView;
-        XposedBridge.log(TAG + ": [RV] big=" + (big != null ? "yes" : "null")
-                + " content=" + (content != null ? "yes" : "null"));
         if (big == null && content == null) return null;
 
         java.util.List<String> texts = new java.util.ArrayList<>();
@@ -355,30 +353,22 @@ public class MainHook implements IXposedHookLoadPackage {
                 java.lang.reflect.Field fActions = RemoteViews.class.getDeclaredField("mActions");
                 fActions.setAccessible(true);
                 java.util.ArrayList<?> actions = (java.util.ArrayList<?>) fActions.get(rv);
-                if (actions == null) { XposedBridge.log(TAG + ": [RV] actions=null"); continue; }
-                XposedBridge.log(TAG + ": [RV] actions.size=" + actions.size());
+                if (actions == null) continue;
                 for (Object act : actions) {
-                    String simpleName = act.getClass().getSimpleName();
-                    if (!simpleName.equals("ReflectionAction")) {
-                        continue;
-                    }
+                    if (!act.getClass().getSimpleName().equals("ReflectionAction")) continue;
                     try {
                         java.lang.reflect.Field fValue = act.getClass().getDeclaredField("mValue");
                         fValue.setAccessible(true);
                         Object val = fValue.get(act);
                         if (!(val instanceof CharSequence)) continue;
                         String sv = val.toString().trim();
-                        if (!sv.isEmpty()) { texts.add(sv); XposedBridge.log(TAG + ": [RV] text=" + sv); }
-                    } catch (Throwable e) {
-                        XposedBridge.log(TAG + ": [RV] mValue失败 " + act.getClass().getName() + ": " + e.getMessage());
-                    }
+                        if (!sv.isEmpty()) texts.add(sv);
+                    } catch (Throwable ignored) {}
                 }
-            } catch (Throwable e) {
-                XposedBridge.log(TAG + ": [RV] mActions失败: " + e.getMessage());
-            }
+            } catch (Throwable ignored) {}
             if (!texts.isEmpty()) break;
         }
-        if (texts.isEmpty()) { XposedBridge.log(TAG + ": [RV] texts为空，返回 null"); return null; }
+        if (texts.isEmpty()) return null;
 
         String courseName = "", startTime = "", endTime = "", classroom = "";
         java.util.regex.Pattern timePattern = java.util.regex.Pattern.compile("^\\d{1,2}:\\d{2}$");

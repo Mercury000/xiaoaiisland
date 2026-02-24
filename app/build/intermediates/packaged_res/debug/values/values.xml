@@ -2,4 +2,5 @@
 <resources>
     <string name="app_description">将小爱同学课程表提醒通知转换为小米超级岛通知</string>
     <string name="app_name">课程表超级岛</string>
+    <style name="Theme.XiaoaiIsland" parent="Theme.Material3.DayNight.NoActionBar"/>
 </resources>

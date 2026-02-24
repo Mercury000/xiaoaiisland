@@ -448,115 +448,123 @@ public class MainHook implements IXposedHookLoadPackage {
         return s != null ? s : "";
     }
 
-    /**
-     * 构建超级岛 JSON 参数（param_v2 格式）。
-     *
-     * <p>采用 PDF 模板9：文本组件2 + 识别图形组件1 + 按钮组件2
-     * <pre>
-     * 焦点通知展开态：
-     * ┌─────────────────────────────┬──────────┐
-     * │ 高等数学（主要文本1）        │ [图标]   │
-     * │ 10:20（次要文本1）           │          │
-     * │ 12:05（次要文本2）           │          │
-     * ├─────────────────────────────┴──────────┤
-     * │ 时间  5分钟后(倒计时)  地点  教1-201    │
-     * │                           [上课静音]   │
-     * └─────────────────────────────────────────┘
-     * </pre>
-     */
-    private String buildIslandParams(CourseInfo info) throws JSONException {
+    // 岛状态常量
+    private static final int STATE_COUNTDOWN = 0; // 倒计时（课前）
+    private static final int STATE_ELAPSED   = 1; // 正计时（上课中）
+    private static final int STATE_FINISHED  = 2; // 正计时（已下课）
 
-        // ── 1. 文本组件2（baseInfo type=2）────────────────────────────
-        // 主要文本1=课程名，次要文本1=开始时间，次要文本2=结束时间
+    private String buildIslandParams(CourseInfo info)         throws JSONException { return buildIslandJson(info, STATE_COUNTDOWN); }
+    private String buildIslandParamsElapsed(CourseInfo info)  throws JSONException { return buildIslandJson(info, STATE_ELAPSED);   }
+    private String buildIslandParamsFinished(CourseInfo info) throws JSONException { return buildIslandJson(info, STATE_FINISHED);  }
+
+    /**
+     * 统一构建超级岛 JSON。三种状态的差异通过 state 参数区分：
+     *   STATE_COUNTDOWN：课前倒计时，上课静音按钮
+     *   STATE_ELAPSED  ：上课中正计时，上课静音按钮
+     *   STATE_FINISHED ：下课后正计时，解除静音按钮
+     */
+    private String buildIslandJson(CourseInfo info, int state) throws JSONException {
+        long startMs = computeClassStartMs(info.startTime);
+        long endMs   = computeClassStartMs(info.endTime);
+        long now     = System.currentTimeMillis();
+        boolean isFinished = state == STATE_FINISHED;
+        boolean isActive   = state != STATE_COUNTDOWN; // STATE_ELAPSED 或 STATE_FINISHED
+
+        // ── baseInfo ──────────────────────────────────────────────
         JSONObject baseInfo = new JSONObject();
-        baseInfo.put("type",        2);
-        baseInfo.put("title",       info.courseName);
+        baseInfo.put("type",  2);
+        baseInfo.put("title", info.courseName);
+        if (isActive) baseInfo.put("showDivider", true);
         if (!info.startTime.isEmpty()) baseInfo.put("content",    info.startTime);
         if (!info.endTime.isEmpty())   baseInfo.put("subContent", "| " + info.endTime);
-        // 计算 startMs（后续 hintInfo/bigIslandArea 共用）
-        long startMs = computeClassStartMs(info.startTime);
 
-        // ── 2. 识别图形组件1（picInfo type=1，App图标）─────────────
-        // type=1 = 直接使用应用自身图标，无需自定义 pic
+        // ── picInfo ───────────────────────────────────────────────
         JSONObject notifPicInfo = new JSONObject();
         notifPicInfo.put("type", 1);
 
-        // ── 3. 按钮组件2（hintInfo type=2）───────────────────────────
-        // 前置文本1="时间"，主要小文本1=倒计时（timerInfo）
-        // 前置文本2="地点"，主要小文本2=教室
-        // 圆头图文按钮 = 上课静音
-        // 按钮：ActionInfo 自定义 Action（actionIntentType=2 sendBroadcast + 显式 component）
-        // 显式广播不受 Android 13+ 隐式广播限制，不需要 miui.focus.actions Bundle
+        // ── actionInfo ────────────────────────────────────────────
+        String actionAction = isFinished ? UNMUTE_ACTION : MUTE_ACTION;
+        String actionTitle  = isFinished ? "解除静音" : "上课静音";
         JSONObject actionInfo = new JSONObject();
-        actionInfo.put("actionIntentType", 2); // 2 = sendBroadcast
+        actionInfo.put("actionIntentType", 2);
         actionInfo.put("actionIntent",
-                "intent:#Intent;action=" + MUTE_ACTION
+                "intent:#Intent;action=" + actionAction
                 + ";component=com.xiaoai.islandnotify/.MuteReceiver"
-                + ";launchFlags=0x10000000;end"); // FLAG_RECEIVER_FOREGROUND
-        actionInfo.put("actionTitle", "上课静音");
+                + ";launchFlags=0x10000000;end");
+        actionInfo.put("actionTitle", actionTitle);
 
-        // 主要小文本1 = 静态文本：发通知时计算一次，无需实时倒计时
-        // 倒计时："XX分钟后开始"，已开始："已开始X分钟"
+        // ── hintInfo ──────────────────────────────────────────────
+        long   timerMs;
+        int    timerType;
+        String hintContent;
+        if (isFinished) {
+            timerMs     = endMs;
+            timerType   = 1;
+            hintContent = "已经下课";
+        } else if (isActive) {
+            timerMs     = startMs;
+            timerType   = 1;
+            hintContent = "已经上课";
+        } else {
+            // STATE_COUNTDOWN：倒计时或已过时
+            timerMs     = startMs;
+            timerType   = (startMs > now) ? -1 : 1;
+            hintContent = (startMs > now) ? "即将上课" : "已经上课";
+        }
         JSONObject hintInfo = new JSONObject();
         hintInfo.put("type",       2);
-        hintInfo.put("subContent", "地点");   // 前缀文本2
-        hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom); // 主要小文本2
+        hintInfo.put("content",    hintContent);
+        hintInfo.put("subContent", "地点");
+        hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom);
         hintInfo.put("actionInfo", actionInfo);
-        // 前缀文本1 + 主要小文本1：根据是否已上课动态切换
-        if (startMs > 0) {
+        if (timerMs > 0) {
             JSONObject timerInfo = new JSONObject();
-            boolean countdown = startMs > System.currentTimeMillis();
-            timerInfo.put("timerType",          countdown ? -1 : 1); // -1=倒计时开始, 1=正计时开始
-            timerInfo.put("timerWhen",          startMs);              // 毫秒时间戳
-            timerInfo.put("timerSystemCurrent", System.currentTimeMillis()); // 发通知时的当前时间
+            timerInfo.put("timerType",          timerType);
+            timerInfo.put("timerWhen",          timerMs);
+            timerInfo.put("timerSystemCurrent", now);
             hintInfo.put("timerInfo", timerInfo);
-            hintInfo.put("content", countdown ? "即将上课" : "已经上课");
         } else {
-            // 无法解析时间，退化为静态文本
-            hintInfo.put("content", "时间");
-            if (!info.startTime.isEmpty()) hintInfo.put("title", info.startTime);
+            hintInfo.put("title", hintContent);
         }
 
-        // ── 4. 大岛摘要态（param_island）─────────────────────────────
-        // A区：App图标 + 课程名（title）+ 倒计时/已开始（timerInfo）
-        JSONObject aPicInfo = new JSONObject();
-        aPicInfo.put("type", 1);  // type=1：App图标
-        JSONObject aTextInfo = new JSONObject();
-        aTextInfo.put("title", info.courseName);
-        if (startMs > 0 && startMs > System.currentTimeMillis()) {
-            long mins = (startMs - System.currentTimeMillis()) / 60000L;
-            aTextInfo.put("content", Math.max(1, mins) + "分钟后开始");
+        // ── bigIslandArea ─────────────────────────────────────────
+        String aContent;
+        if (isFinished) {
+            aContent = "已下课";
+        } else if (isActive) {
+            aContent = "已开始" + computeElapsed(info.startTime);
+        } else if (startMs > 0 && startMs > now) {
+            aContent = Math.max(1L, (startMs - now) / 60000L) + "分钟后开始";
         } else {
-            aTextInfo.put("content", "已开始" + computeElapsed(info.startTime));
+            aContent = "已开始" + computeElapsed(info.startTime);
         }
+        JSONObject aPicInfo  = new JSONObject(); aPicInfo.put("type", 1);
+        JSONObject aTextInfo = new JSONObject();
+        aTextInfo.put("title",   info.courseName);
+        aTextInfo.put("content", aContent);
         JSONObject imageTextInfoLeft = new JSONObject();
         imageTextInfoLeft.put("type",     1);
         imageTextInfoLeft.put("picInfo",  aPicInfo);
         imageTextInfoLeft.put("textInfo", aTextInfo);
-        // B区：textInfo = 上课地点（教室）
         JSONObject bTextInfo = new JSONObject();
         bTextInfo.put("title", info.classroom.isEmpty() ? "—" : info.classroom);
         JSONObject bigIslandArea = new JSONObject();
         bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
         bigIslandArea.put("textInfo",          bTextInfo);
 
-        // 小岛：type=1 使用 App图标
-        JSONObject smallPicInfo = new JSONObject();
-        smallPicInfo.put("type", 1);
-        JSONObject smallIslandArea = new JSONObject();
-        smallIslandArea.put("picInfo", smallPicInfo);
+        // ── smallIslandArea ───────────────────────────────────────
+        JSONObject smallPicInfo = new JSONObject(); smallPicInfo.put("type", 1);
+        JSONObject smallIslandArea = new JSONObject(); smallIslandArea.put("picInfo", smallPicInfo);
 
-        // shareData: 拖拽分享参数（必须在 param_island 内）
+        // ── shareData ─────────────────────────────────────────────
+        String timeRange = info.startTime + (info.endTime.isEmpty() ? "" : "-" + info.endTime);
         JSONObject shareData = new JSONObject();
-        shareData.put("pic",   PIC_KEY_SHARE);  // key → miui.focus.pics Bundle 中对应的 Bitmap
-        shareData.put("title", info.courseName);
-        shareData.put("content", info.classroom.isEmpty() ? "" : info.classroom);
-        String timeRange = info.startTime
-                + (info.endTime.isEmpty() ? "" : "-" + info.endTime);
-        String shareContent = info.courseName
+        shareData.put("pic",          PIC_KEY_SHARE);
+        shareData.put("title",        info.courseName);
+        shareData.put("content",      info.classroom.isEmpty() ? "" : info.classroom);
+        shareData.put("shareContent", info.courseName
                 + (info.classroom.isEmpty() ? "" : " " + info.classroom)
-                + (timeRange.isEmpty() ? "" : " " + timeRange);
-        shareData.put("shareContent", shareContent);
+                + (timeRange.isEmpty() ? "" : " " + timeRange));
 
         JSONObject paramIsland = new JSONObject();
         paramIsland.put("islandProperty",  1);
@@ -564,206 +572,28 @@ public class MainHook implements IXposedHookLoadPackage {
         paramIsland.put("smallIslandArea", smallIslandArea);
         paramIsland.put("shareData",       shareData);
 
+        // ── paramV2 ───────────────────────────────────────────────
         String tickerText = buildTickerText(info);
         JSONObject paramV2 = new JSONObject();
-        paramV2.put("protocol",        1);
-        paramV2.put("business",        "course_schedule");
-        paramV2.put("enableFloat",     false);
-        paramV2.put("updatable",       true);
-        paramV2.put("ticker",          tickerText);
-        paramV2.put("aodTitle",        tickerText);
-        paramV2.put("baseInfo",        baseInfo);
-        paramV2.put("picInfo",         notifPicInfo);
-        paramV2.put("hintInfo",        hintInfo);
-        paramV2.put("param_island",    paramIsland);
+        paramV2.put("protocol",  1);
+        paramV2.put("business",  "course_schedule");
+        paramV2.put("updatable", true);
+        paramV2.put("ticker",    tickerText);
+        paramV2.put("aodTitle",  tickerText);
+        if (isActive) {
+            paramV2.put("islandFirstFloat", true);
+            paramV2.put("enableFloat",      true);
+        } else {
+            paramV2.put("enableFloat", false);
+        }
+        paramV2.put("baseInfo",     baseInfo);
+        paramV2.put("picInfo",      notifPicInfo);
+        paramV2.put("hintInfo",     hintInfo);
+        paramV2.put("param_island", paramIsland);
 
         JSONObject root = new JSONObject();
         root.put("param_v2", paramV2);
         return root.toString();
-    }
-
-    /**
-     * 构建正计时状态的岛 JSON（开课后由 Handler 延迟重发时调用）。
-     * 与 buildIslandParams 相同结构，区别仅在于 timerType=1 + content="已经上课"。
-     */
-    private String buildIslandParamsElapsed(CourseInfo info) throws JSONException {
-        long startMs = computeClassStartMs(info.startTime);
-
-        JSONObject baseInfo = new JSONObject();
-        baseInfo.put("type",        2);
-        baseInfo.put("title",       info.courseName);
-        baseInfo.put("showDivider", true);
-        if (!info.startTime.isEmpty()) baseInfo.put("content",    info.startTime);
-        if (!info.endTime.isEmpty())   baseInfo.put("subContent", "| " + info.endTime);
-
-        JSONObject notifPicInfo = new JSONObject();
-        notifPicInfo.put("type", 1);
-
-        JSONObject actionInfo = new JSONObject();
-        actionInfo.put("actionIntentType", 2);
-        actionInfo.put("actionIntent",
-                "intent:#Intent;action=" + MUTE_ACTION
-                + ";component=com.xiaoai.islandnotify/.MuteReceiver"
-                + ";launchFlags=0x10000000;end");
-        actionInfo.put("actionTitle", "上课静音");
-
-        JSONObject hintInfo = new JSONObject();
-        hintInfo.put("type",       2);
-        hintInfo.put("content",    "已经上课");  // 正计时固定前置文本
-        hintInfo.put("subContent", "地点");
-        hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom);
-        hintInfo.put("actionInfo", actionInfo);
-        if (startMs > 0) {
-            JSONObject timerInfo = new JSONObject();
-            timerInfo.put("timerType",          1);   // 1 = 正计时开始
-            timerInfo.put("timerWhen",          startMs);
-            timerInfo.put("timerSystemCurrent", System.currentTimeMillis());
-            hintInfo.put("timerInfo", timerInfo);
-        } else {
-            hintInfo.put("title", "已经上课");
-        }
-
-        JSONObject aPicInfo  = new JSONObject(); aPicInfo.put("type", 1);
-        JSONObject aTextInfo = new JSONObject();
-        aTextInfo.put("title",   info.courseName);
-        aTextInfo.put("content", "已开始" + computeElapsed(info.startTime));
-        JSONObject imageTextInfoLeft = new JSONObject();
-        imageTextInfoLeft.put("type",     1);
-        imageTextInfoLeft.put("picInfo",  aPicInfo);
-        imageTextInfoLeft.put("textInfo", aTextInfo);
-        JSONObject bTextInfo = new JSONObject();
-        bTextInfo.put("title", info.classroom.isEmpty() ? "—" : info.classroom);
-        JSONObject bigIslandArea = new JSONObject();
-        bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
-        bigIslandArea.put("textInfo",          bTextInfo);
-
-        JSONObject smallPicInfo = new JSONObject(); smallPicInfo.put("type", 1);
-        JSONObject smallIslandArea = new JSONObject(); smallIslandArea.put("picInfo", smallPicInfo);
-
-        JSONObject shareDataE = new JSONObject();
-        shareDataE.put("pic",          PIC_KEY_SHARE);  // key → miui.focus.pics Bundle 中对应的 Bitmap
-        shareDataE.put("title",        info.courseName);
-        shareDataE.put("content",      info.classroom.isEmpty() ? "" : info.classroom);
-        String timeRangeE = info.startTime
-                + (info.endTime.isEmpty() ? "" : "-" + info.endTime);
-        shareDataE.put("shareContent", info.courseName
-                + (info.classroom.isEmpty() ? "" : " " + info.classroom)
-                + (timeRangeE.isEmpty() ? "" : " " + timeRangeE));
-
-        JSONObject paramIsland = new JSONObject();
-        paramIsland.put("islandProperty",  1);
-        paramIsland.put("bigIslandArea",   bigIslandArea);
-        paramIsland.put("smallIslandArea", smallIslandArea);
-        paramIsland.put("shareData",       shareDataE);
-
-        String tickerText = buildTickerText(info);
-        JSONObject paramV2 = new JSONObject();
-        paramV2.put("protocol",        1);
-        paramV2.put("business",        "course_schedule");
-        paramV2.put("islandFirstFloat", true);
-        paramV2.put("enableFloat",      true);  // 更新时重新弹出展开态
-        paramV2.put("updatable",        true);
-        paramV2.put("ticker",           tickerText);
-        paramV2.put("aodTitle",         tickerText);
-        paramV2.put("baseInfo",         baseInfo);
-        paramV2.put("picInfo",          notifPicInfo);
-        paramV2.put("hintInfo",         hintInfo);
-        paramV2.put("param_island",     paramIsland);
-
-        JSONObject root = new JSONObject();
-        root.put("param_v2", paramV2);
-        return root.toString();
-    }
-
-    /**
-     * 构建下课状态的岛 JSON：已经下课 + 正计时（从下课时刻起）+ 解除静音按鈕。
-     */
-    private String buildIslandParamsFinished(CourseInfo info) throws JSONException {
-        long endMs = computeClassStartMs(info.endTime);
-
-        JSONObject baseInfo = new JSONObject();
-        baseInfo.put("type",        2);
-        baseInfo.put("title",       info.courseName);
-        baseInfo.put("showDivider", true);
-        if (!info.startTime.isEmpty()) baseInfo.put("content",    info.startTime);
-        if (!info.endTime.isEmpty())   baseInfo.put("subContent", "| " + info.endTime);
-
-        JSONObject notifPicInfo = new JSONObject();
-        notifPicInfo.put("type", 1);
-
-        JSONObject actionInfo = new JSONObject();
-        actionInfo.put("actionIntentType", 2);
-        actionInfo.put("actionIntent",
-                "intent:#Intent;action=" + UNMUTE_ACTION
-                + ";component=com.xiaoai.islandnotify/.MuteReceiver"
-                + ";launchFlags=0x10000000;end");
-        actionInfo.put("actionTitle", "解除静音");
-
-        JSONObject hintInfo = new JSONObject();
-        hintInfo.put("type",       2);
-        hintInfo.put("content",    "已经下课");
-        hintInfo.put("subContent", "地点");
-        hintInfo.put("subTitle",   info.classroom.isEmpty() ? "—" : info.classroom);
-        hintInfo.put("actionInfo", actionInfo);
-        if (endMs > 0) {
-            JSONObject timerInfo = new JSONObject();
-            timerInfo.put("timerType",          1);
-            timerInfo.put("timerWhen",          endMs);
-            timerInfo.put("timerSystemCurrent", System.currentTimeMillis());
-            hintInfo.put("timerInfo", timerInfo);
-        } else {
-            hintInfo.put("title", "已经下课");
-        }
-
-        JSONObject aPicInfo  = new JSONObject(); aPicInfo.put("type", 1);
-        JSONObject aTextInfo = new JSONObject();
-        aTextInfo.put("title",   info.courseName);
-        aTextInfo.put("content", "已下课");
-        JSONObject imageTextInfoLeft = new JSONObject();
-        imageTextInfoLeft.put("type",     1);
-        imageTextInfoLeft.put("picInfo",  aPicInfo);
-        imageTextInfoLeft.put("textInfo", aTextInfo);
-        JSONObject bTextInfo = new JSONObject();
-        bTextInfo.put("title", info.classroom.isEmpty() ? "—" : info.classroom);
-        JSONObject bigIslandArea = new JSONObject();
-        bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
-        bigIslandArea.put("textInfo",          bTextInfo);
-
-        JSONObject smallPicInfo = new JSONObject(); smallPicInfo.put("type", 1);
-        JSONObject smallIslandArea = new JSONObject(); smallIslandArea.put("picInfo", smallPicInfo);
-
-        JSONObject shareDataF = new JSONObject();
-        shareDataF.put("pic",          PIC_KEY_SHARE);
-        shareDataF.put("title",        info.courseName);
-        shareDataF.put("content",      info.classroom.isEmpty() ? "" : info.classroom);
-        String timeRangeF = info.startTime + (info.endTime.isEmpty() ? "" : "-" + info.endTime);
-        shareDataF.put("shareContent", info.courseName
-                + (info.classroom.isEmpty() ? "" : " " + info.classroom)
-                + (timeRangeF.isEmpty() ? "" : " " + timeRangeF));
-
-        JSONObject paramIsland = new JSONObject();
-        paramIsland.put("islandProperty",  1);
-        paramIsland.put("bigIslandArea",   bigIslandArea);
-        paramIsland.put("smallIslandArea", smallIslandArea);
-        paramIsland.put("shareData",       shareDataF);
-
-        String tickerText = buildTickerText(info);
-        JSONObject paramV2 = new JSONObject();
-        paramV2.put("protocol",        1);
-        paramV2.put("business",        "course_schedule");
-        paramV2.put("islandFirstFloat", true);
-        paramV2.put("enableFloat",      true);
-        paramV2.put("updatable",        true);
-        paramV2.put("ticker",           tickerText);
-        paramV2.put("aodTitle",         tickerText);
-        paramV2.put("baseInfo",         baseInfo);
-        paramV2.put("picInfo",          notifPicInfo);
-        paramV2.put("hintInfo",         hintInfo);
-        paramV2.put("param_island",     paramIsland);
-
-        JSONObject rootF = new JSONObject();
-        rootF.put("param_v2", paramV2);
-        return rootF.toString();
     }
 
     /** 状态栏 / 息屏文案：格式 "高等数学  19:50" */

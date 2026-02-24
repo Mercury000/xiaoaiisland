@@ -52,9 +52,6 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 防止同一进程内多个 ClassLoader 重复注册 Hook */
     private static volatile boolean hooked = false;
 
-    /** 最近一次通知对象，供 extractFromRemoteViews 读取 bigContentView */
-    private Notification lastNotificationRef = null;
-
     // ─────────────────────────────────────────────────────────────
 
     @Override
@@ -153,11 +150,7 @@ public class MainHook implements IXposedHookLoadPackage {
             Notification notification = (Notification) param.args[notifArgIndex];
             if (notification == null) return;
 
-            // 正计时更新通知直接放行，不再重入注入逻辑
-            if (notification.extras != null
-                    && notification.extras.getBoolean("islandElapsedUpdate", false)) return;
-
-            // 防止重复处理
+            // 防止重复处理（已注入岛参数的通知直接放行）
             if (isAlreadyIsland(notification)) return;
 
             if (isScheduleNotification(notification)) {
@@ -194,11 +187,9 @@ public class MainHook implements IXposedHookLoadPackage {
      */
     private boolean isScheduleNotification(Notification notification) {
         String channelId = safeStr(notification.getChannelId());
-        if (channelId.contains("COURSE_SCHEDULER_REMINDER")) {
-            XposedBridge.log(TAG + ": 命中 channelId=" + channelId);
-            return true;
-        }
-        return false;
+        boolean hit = channelId.contains("COURSE_SCHEDULER_REMINDER");
+        if (hit) XposedBridge.log(TAG + ": 命中 channelId=" + channelId);
+        return hit;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -218,15 +209,14 @@ public class MainHook implements IXposedHookLoadPackage {
         }
 
         try {
-            this.lastNotificationRef = notification;
-            CourseInfo info = extractCourseInfo(extras);
+            CourseInfo info = extractCourseInfo(notification);
             XposedBridge.log(TAG + ": 解析结果 → 课程=" + info.courseName
                     + " 时间=" + info.startTime + " 结束=" + info.endTime
                     + " 教室=" + info.classroom);
 
             // ── 1. 构建超级岛 JSON ─────────────────────────────────────
             long startMs = computeClassStartMs(info.startTime);
-            String islandJson = buildIslandParams(info);
+            String islandJson = buildIslandJson(info, STATE_COUNTDOWN);
             extras.putString(KEY_FOCUS_PARAM, islandJson);
             XposedBridge.log(TAG + ": JSON 长度=" + islandJson.length()
                     + " startMs=" + startMs);
@@ -270,33 +260,12 @@ public class MainHook implements IXposedHookLoadPackage {
                         finalCtx.getSystemService(android.app.NotificationManager.class);
                 final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
 
-                // Helper：构建并发送更新通知
-                // （用局部方法替代重复的 Builder 样板）
-
                 // 4a. 开课时刻 → 正计时（STATE_ELAPSED）
                 long delay = startMs - System.currentTimeMillis();
                 if (delay > 0 && delay <= 6 * 3600 * 1000L) {
-                    h.postDelayed(() -> {
-                        try {
-                            String json = buildIslandParamsElapsed(savedInfo);
-                            Notification.Builder b = new Notification.Builder(finalCtx, channelId)
-                                    .setSmallIcon(notification.getSmallIcon())
-                                    .setContentTitle(savedInfo.courseName)
-                                    .setContentText(savedInfo.startTime
-                                            + (savedInfo.endTime.isEmpty() ? "" : " | " + savedInfo.endTime)
-                                            + (savedInfo.classroom.isEmpty() ? "" : " " + savedInfo.classroom))
-                                    .setAutoCancel(true);
-                            Notification n = b.build();
-                            n.extras.putString(KEY_FOCUS_PARAM, json);
-                            if (savedPics != null) n.extras.putBundle("miui.focus.pics", savedPics);
-                            n.contentIntent = notification.contentIntent;
-                            if (notifTag != null) nm.notify(notifTag, notifId, n);
-                            else                  nm.notify(notifId, n);
-                            XposedBridge.log(TAG + ": 正计时更新通知已重发 id=" + notifId);
-                        } catch (Exception e) {
-                            XposedBridge.log(TAG + ": 正计时更新失败 → " + e.getMessage());
-                        }
-                    }, delay);
+                    h.postDelayed(() -> sendIslandUpdate(
+                            savedInfo, STATE_ELAPSED, finalCtx, channelId,
+                            notification, savedPics, nm, notifTag, notifId), delay);
                     XposedBridge.log(TAG + ": 已安排正计时更新，延迟 " + (delay / 1000) + "秒");
                 }
 
@@ -304,27 +273,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 long endMs2 = computeClassStartMs(savedInfo.endTime);
                 long delayEnd = endMs2 - System.currentTimeMillis();
                 if (!savedInfo.endTime.isEmpty() && endMs2 > 0 && delayEnd > 0 && delayEnd <= 6 * 3600 * 1000L) {
-                    h.postDelayed(() -> {
-                        try {
-                            String json = buildIslandParamsFinished(savedInfo);
-                            Notification.Builder bf = new Notification.Builder(finalCtx, channelId)
-                                    .setSmallIcon(notification.getSmallIcon())
-                                    .setContentTitle(savedInfo.courseName)
-                                    .setContentText(savedInfo.startTime
-                                            + (savedInfo.endTime.isEmpty() ? "" : " | " + savedInfo.endTime)
-                                            + (savedInfo.classroom.isEmpty() ? "" : " " + savedInfo.classroom))
-                                    .setAutoCancel(true);
-                            Notification fin = bf.build();
-                            fin.extras.putString(KEY_FOCUS_PARAM, json);
-                            if (savedPics != null) fin.extras.putBundle("miui.focus.pics", savedPics);
-                            fin.contentIntent = notification.contentIntent;
-                            if (notifTag != null) nm.notify(notifTag, notifId, fin);
-                            else                  nm.notify(notifId, fin);
-                            XposedBridge.log(TAG + ": 下课更新通知已重发 id=" + notifId);
-                        } catch (Exception e) {
-                            XposedBridge.log(TAG + ": 下课更新失败 → " + e.getMessage());
-                        }
-                    }, delayEnd);
+                    h.postDelayed(() -> sendIslandUpdate(
+                            savedInfo, STATE_FINISHED, finalCtx, channelId,
+                            notification, savedPics, nm, notifTag, notifId), delayEnd);
                     XposedBridge.log(TAG + ": 已安排下课更新，延迟 " + (delayEnd / 1000) + "秒");
                 }
             }
@@ -348,8 +299,8 @@ public class MainHook implements IXposedHookLoadPackage {
      *   [4] "教室"                           ← 教室
      * contentView 中有 "11:45 | 教室" 格式，可作补充来源。
      */
-    private CourseInfo extractCourseInfo(Bundle extras) {
-        CourseInfo fromView = extractFromRemoteViews();
+    private CourseInfo extractCourseInfo(Notification notification) {
+        CourseInfo fromView = extractFromRemoteViews(notification);
         if (fromView != null) {
             XposedBridge.log(TAG + ": [RemoteViews] 精确提取 → 课程=" + fromView.courseName
                     + " 开始=" + fromView.startTime + " 结束=" + fromView.endTime
@@ -371,8 +322,7 @@ public class MainHook implements IXposedHookLoadPackage {
      *   - "HH:mm | 教室" 格式 → 拆分开始时间和教室
      *   - 2~20字且非时间非按钮文字 → 优先作教室，其次作课程名
      */
-    private CourseInfo extractFromRemoteViews() {
-        Notification notif = this.lastNotificationRef;
+    private CourseInfo extractFromRemoteViews(Notification notif) {
         if (notif == null) return null;
         RemoteViews big     = notif.bigContentView;
         RemoteViews content = notif.contentView;
@@ -454,9 +404,32 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final int STATE_ELAPSED   = 1; // 正计时（上课中）
     private static final int STATE_FINISHED  = 2; // 正计时（已下课）
 
-    private String buildIslandParams(CourseInfo info)         throws JSONException { return buildIslandJson(info, STATE_COUNTDOWN); }
-    private String buildIslandParamsElapsed(CourseInfo info)  throws JSONException { return buildIslandJson(info, STATE_ELAPSED);   }
-    private String buildIslandParamsFinished(CourseInfo info) throws JSONException { return buildIslandJson(info, STATE_FINISHED);  }
+    /**
+     * 构建并发送更新后的岛通知，供 Handler 延迟回调使用。
+     */
+    private void sendIslandUpdate(CourseInfo info, int state,
+            Context ctx, String channelId, Notification src, Bundle pics,
+            android.app.NotificationManager nm, String tag, int id) {
+        try {
+            String json = buildIslandJson(info, state);
+            Notification n = new Notification.Builder(ctx, channelId)
+                    .setSmallIcon(src.getSmallIcon())
+                    .setContentTitle(info.courseName)
+                    .setContentText(info.startTime
+                            + (info.endTime.isEmpty() ? "" : " | " + info.endTime)
+                            + (info.classroom.isEmpty() ? "" : " " + info.classroom))
+                    .setAutoCancel(true)
+                    .build();
+            n.extras.putString(KEY_FOCUS_PARAM, json);
+            if (pics != null) n.extras.putBundle("miui.focus.pics", pics);
+            n.contentIntent = src.contentIntent;
+            if (tag != null) nm.notify(tag, id, n);
+            else             nm.notify(id, n);
+            XposedBridge.log(TAG + ": 岛状态更新已发送 state=" + state + " id=" + id);
+        } catch (Exception e) {
+            XposedBridge.log(TAG + ": 岛状态更新失败 state=" + state + " → " + e.getMessage());
+        }
+    }
 
     /**
      * 统一构建超级岛 JSON。三种状态的差异通过 state 参数区分：

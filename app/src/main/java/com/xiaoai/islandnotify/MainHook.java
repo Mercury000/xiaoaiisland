@@ -56,12 +56,6 @@ public class MainHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        // 注入自身进程 → hook isModuleActive()；同时 hook notify，支持测试通知
-        if ("com.xiaoai.islandnotify".equals(lpparam.packageName)) {
-            hookSelfStatus(lpparam);
-            hookNotifyMethods(lpparam);
-            return;
-        }
         // 只注入目标进程
         if (!TARGET_PACKAGE.equals(lpparam.packageName)) {
             return;
@@ -71,28 +65,6 @@ public class MainHook implements IXposedHookLoadPackage {
         hooked = true;
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
         hookNotifyMethods(lpparam);
-    }
-
-    /**
-     * Hook 自身进程的 MainActivity.isModuleActive()，将返回值替换为 true，
-     * 使主界面能正确检测到模块已激活。
-     */
-    private void hookSelfStatus(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            findAndHookMethod(
-                    "com.xiaoai.islandnotify.MainActivity",
-                    lpparam.classLoader,
-                    "isModuleActive",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            param.setResult(Boolean.TRUE);
-                        }
-                    }
-            );
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hookSelfStatus 失败: " + t.getMessage());
-        }
     }
 
     /**

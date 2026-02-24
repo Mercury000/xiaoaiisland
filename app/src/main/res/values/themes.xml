@@ -1,5 +1,3 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- 主题：Material Design 3，支持 Android 12+ 动态取色（Material You） -->
-    <style name="Theme.XiaoaiIsland" parent="Theme.Material3.DayNight.NoActionBar" />
-</resources>
+<resources />
+

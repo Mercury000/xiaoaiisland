@@ -2,6 +2,7 @@ package com.xiaoai.islandnotify;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -72,6 +73,7 @@ public class MainActivity extends AppCompatActivity {
 
         updateModuleStatus();
         initCustomCard();
+        initHideIconSwitch();
     }
 
     @Override
@@ -110,7 +112,7 @@ public class MainActivity extends AppCompatActivity {
             ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(onColor));
             title.setText("模块未激活");
             title.setTextColor(onColor);
-            desc.setText("请在 LSPosed 管理器中启用，并将作用域设为小爱同学");
+            desc.setText("请在 LSPosed 管理器中启用，并将作用域设为超级小爱");
             desc.setTextColor(onColor);
         }
     }
@@ -145,8 +147,26 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private static final String ALIAS = "com.xiaoai.islandnotify.MainActivityAlias";
+
+    private void initHideIconSwitch() {
+        SwitchMaterial sw = findViewById(R.id.sw_hide_icon);
+        PackageManager pm = getPackageManager();
+        ComponentName alias = new ComponentName(this, ALIAS);
+
+        // 读取当前状态：第一次安装后为 DEFAULT（显示）或 ENABLED
+        int state = pm.getComponentEnabledSetting(alias);
+        sw.setChecked(state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED);
+
+        sw.setOnCheckedChangeListener((btn, checked) -> {
+            pm.setComponentEnabledSetting(alias,
+                    checked ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                            : PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP);
+        });
+    }
+
     // ─────────────────────────────────────────────────────────────
-    // 测试通知
     // ─────────────────────────────────────────────────────────────
 
     /** 检查/请求通知权限，通过后再执行 action。 */

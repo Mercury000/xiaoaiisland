@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    测试通知的 bigContentView 布局。
+    文本顺序必须与真实 com.miui.voiceassist bigContentView mActions 顺序一致：
+      tv1 = "[课程名]快到了，提前准备一下吧"
+      tv2 = 开始时间 HH:mm
+      tv3 = 结束时间 HH:mm
+      tv4 = 课程名（纯文字）
+      tv5 = 教室
+    extractFromRemoteViews 通过反射收集所有 CharSequence 值，不依赖 view ID，
+    只要文本出现顺序与真实通知一致即可正确解析。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <TextView android:id="@+id/tv_notif_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp" />
+
+    <TextView android:id="@+id/tv_notif_start"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="13sp" />
+
+    <TextView android:id="@+id/tv_notif_end"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="13sp" />
+
+    <TextView android:id="@+id/tv_notif_name"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="13sp" />
+
+    <TextView android:id="@+id/tv_notif_room"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="13sp" />
+
+</LinearLayout>

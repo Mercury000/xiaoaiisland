@@ -11,8 +11,8 @@ android {
         // 小米超级岛(OS3)最低需要MIUI14+，Android 12+
         minSdk 31
         targetSdk 35
-        versionCode 2
-        versionName "1.0.1"
+        versionCode 3
+        versionName "1.0.2"
     }
 
     buildTypes {

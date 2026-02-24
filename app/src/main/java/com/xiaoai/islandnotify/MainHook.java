@@ -317,7 +317,7 @@ public class MainHook implements IXposedHookLoadPackage {
      * contentView 中有 "11:45 | 教室" 格式，可作补充来源。
      */
     private CourseInfo extractCourseInfo(Bundle extras) {
-        CourseInfo fromView = extractFromRemoteViews(extras);
+        CourseInfo fromView = extractFromRemoteViews();
         if (fromView != null) {
             XposedBridge.log(TAG + ": [RemoteViews] 精确提取 → 课程=" + fromView.courseName
                     + " 开始=" + fromView.startTime + " 结束=" + fromView.endTime
@@ -339,7 +339,7 @@ public class MainHook implements IXposedHookLoadPackage {
      *   - "HH:mm | 教室" 格式 → 拆分开始时间和教室
      *   - 2~20字且非时间非按钮文字 → 优先作教室，其次作课程名
      */
-    private CourseInfo extractFromRemoteViews(Bundle extras) {
+    private CourseInfo extractFromRemoteViews() {
         Notification notif = this.lastNotificationRef;
         if (notif == null) return null;
         RemoteViews big     = notif.bigContentView;
@@ -359,9 +359,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 XposedBridge.log(TAG + ": [RV] actions.size=" + actions.size());
                 for (Object act : actions) {
                     String simpleName = act.getClass().getSimpleName();
-                    // 兼容混淆名：只要类名包含 "Reflection" 即处理
-                    if (!simpleName.contains("Reflection")) {
-                        XposedBridge.log(TAG + ": [RV] skip " + simpleName);
+                    if (!simpleName.equals("ReflectionAction")) {
                         continue;
                     }
                     try {
@@ -423,27 +421,6 @@ public class MainHook implements IXposedHookLoadPackage {
 
         if (startTime.isEmpty()) return null; // 连时间都没有，本方法无效
         return new CourseInfo(courseName, startTime, endTime, classroom);
-    }
-
-    /**
-     * 将任意 Drawable（包括 AdaptiveIconDrawable）转换为 Bitmap。
-     * API 26+ 的 getApplicationIcon() 返回 AdaptiveIconDrawable，直接 instanceof BitmapDrawable 为 false。
-     */
-    private static android.graphics.Bitmap drawableToBitmap(android.graphics.drawable.Drawable drawable) {
-        if (drawable instanceof android.graphics.drawable.BitmapDrawable) {
-            android.graphics.Bitmap bmp = ((android.graphics.drawable.BitmapDrawable) drawable).getBitmap();
-            if (bmp != null) return bmp;
-        }
-        int w = drawable.getIntrinsicWidth();
-        int h = drawable.getIntrinsicHeight();
-        if (w <= 0) w = 96;
-        if (h <= 0) h = 96;
-        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
-                w, h, android.graphics.Bitmap.Config.ARGB_8888);
-        android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
-        drawable.setBounds(0, 0, w, h);
-        drawable.draw(canvas);
-        return bmp;
     }
 
     private static String safeStr(String s) {

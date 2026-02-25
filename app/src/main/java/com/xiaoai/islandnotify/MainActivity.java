@@ -11,6 +11,8 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
@@ -28,6 +30,7 @@ import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.color.DynamicColors;
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -43,6 +46,11 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String> notifPermLauncher;
     /** 权限通过后执行的挂起动作 */
     private Runnable pendingTestAction;
+    // 保存按钮引用与脏状态
+    private MaterialButton btnSaveCustom;
+    private MaterialButton btnSaveTimeout;
+    private boolean customDirty = false;
+    private boolean timeoutDirty = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -152,7 +160,29 @@ public class MainActivity extends AppCompatActivity {
         }
         swIconA.setChecked(sp.getBoolean("icon_a", true));
 
+        // 保存按钮引用 & 监控输入变化用于即时指示未保存状态
+        btnSaveCustom = findViewById(R.id.btn_save_custom);
+        for (int i = 0; i < 3; i++) {
+            ((EditText) findViewById(IDS_A[i])).addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+                @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
+                @Override public void afterTextChanged(android.text.Editable s) {}
+            });
+            ((EditText) findViewById(IDS_B[i])).addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+                @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
+                @Override public void afterTextChanged(android.text.Editable s) {}
+            });
+            ((EditText) findViewById(IDS_TICKER[i])).addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+                @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
+                @Override public void afterTextChanged(android.text.Editable s) {}
+            });
+        }
+        swIconA.setOnCheckedChangeListener((b, checked) -> updateCustomDirtyIndicator());
+
         findViewById(R.id.btn_save_custom).setOnClickListener(v -> {
+
             SharedPreferences.Editor ed = sp.edit();
             // 通知 voiceassist 进程同步最新配置（绕过 SELinux 跨 UID 文件读取限制）
             Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
@@ -177,7 +207,130 @@ public class MainActivity extends AppCompatActivity {
 
             tvHint.setText("已保存，下次通知生效");
             tvHint.setVisibility(View.VISIBLE);
+            // 保存后清除指示
+            customDirty = false;
+            updateCustomDirtyIndicator();
         });
+
+        // helper: perform actual save (used by confirmation)
+        
+    }
+
+    private void doSaveCustom(SharedPreferences sp) {
+        SharedPreferences.Editor ed = sp.edit();
+        final String[] SUFFIXES = {"_pre", "_active", "_post"};
+        final int[] IDS_A      = {R.id.et_tpl_a_pre,      R.id.et_tpl_a_active,      R.id.et_tpl_a_post};
+        final int[] IDS_B      = {R.id.et_tpl_b_pre,      R.id.et_tpl_b_active,      R.id.et_tpl_b_post};
+        final int[] IDS_TICKER = {R.id.et_tpl_ticker_pre,  R.id.et_tpl_ticker_active,  R.id.et_tpl_ticker_post};
+        SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);
+
+        Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
+        sync.setPackage("com.miui.voiceassist");
+
+        for (int i = 0; i < 3; i++) {
+            String tplA      = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
+            String tplB      = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
+            String tplTicker = ((EditText) findViewById(IDS_TICKER[i])).getText().toString().trim();
+            ed.putString("tpl_a"      + SUFFIXES[i], tplA);
+            ed.putString("tpl_b"      + SUFFIXES[i], tplB);
+            ed.putString("tpl_ticker" + SUFFIXES[i], tplTicker);
+            sync.putExtra("tpl_a"      + SUFFIXES[i], tplA);
+            sync.putExtra("tpl_b"      + SUFFIXES[i], tplB);
+            sync.putExtra("tpl_ticker" + SUFFIXES[i], tplTicker);
+        }
+        boolean iconA = swIconA.isChecked();
+        ed.putBoolean("icon_a", iconA);
+        sync.putExtra("icon_a", iconA);
+        ed.apply();
+        sendBroadcast(sync);
+
+        TextView tvHint = findViewById(R.id.tv_save_hint);
+        tvHint.setText("已保存，下次通知生效");
+        tvHint.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * 检查「自定义模板」卡片是否有未保存变更
+     */
+    private boolean isCustomDirty() {
+        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        final String[] SUFFIXES = {"_pre", "_active", "_post"};
+        final int[] IDS_A      = {R.id.et_tpl_a_pre,      R.id.et_tpl_a_active,      R.id.et_tpl_a_post};
+        final int[] IDS_B      = {R.id.et_tpl_b_pre,      R.id.et_tpl_b_active,      R.id.et_tpl_b_post};
+        final int[] IDS_TICKER = {R.id.et_tpl_ticker_pre,  R.id.et_tpl_ticker_active,  R.id.et_tpl_ticker_post};
+        for (int i = 0; i < 3; i++) {
+            String curA = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
+            String curB = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
+            String curT = ((EditText) findViewById(IDS_TICKER[i])).getText().toString().trim();
+            String sA = sp.getString("tpl_a" + SUFFIXES[i], "");
+            String sB = sp.getString("tpl_b" + SUFFIXES[i], "");
+            String sT = sp.getString("tpl_ticker" + SUFFIXES[i], "");
+            if (!curA.equals(sA) || !curB.equals(sB) || !curT.equals(sT)) return true;
+        }
+        SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);
+        if (swIconA.isChecked() != sp.getBoolean("icon_a", true)) return true;
+        return false;
+    }
+
+    /**
+     * 检查「超时设置」卡片当前可见项是否与已保存值不同（表明存在未保存修改）
+     */
+    private boolean isTimeoutDirty() {
+        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        // 岛：当前阶段
+        MaterialButtonToggleGroup toggleIslandPhase = findViewById(R.id.toggle_island_phase);
+        int checkedIsland = toggleIslandPhase.getCheckedButtonId();
+        int idxIsland = (checkedIsland == R.id.btn_island_phase_active) ? 1
+                : (checkedIsland == R.id.btn_island_phase_post) ? 2 : 0;
+        EditText etIsland = findViewById(R.id.et_island_to);
+        String curIslandStr = etIsland.getText() != null ? etIsland.getText().toString().trim() : "";
+        int curIslandVal = curIslandStr.isEmpty() ? -1 : tryParseInt(curIslandStr, -1);
+        MaterialButtonToggleGroup toggleIslandUnit = findViewById(R.id.toggle_island_unit);
+        String curIslandUnit = (toggleIslandUnit.getCheckedButtonId() == R.id.btn_island_s) ? "s" : "m";
+        int savedIsVal = sp.getInt("to_island_val_" + TO_PHASES[idxIsland], -1);
+        String savedIsUnit = sp.getString("to_island_unit_" + TO_PHASES[idxIsland], "m");
+        if (curIslandVal != savedIsVal) return true;
+        if (!curIslandUnit.equals(savedIsUnit)) return true;
+
+        // 通知：当前阶段
+        MaterialButtonToggleGroup toggleNotifPhase = findViewById(R.id.toggle_notif_phase);
+        int checkedNotif = toggleNotifPhase.getCheckedButtonId();
+        int idxNotif = (checkedNotif == R.id.btn_notif_phase_active) ? 1
+                : (checkedNotif == R.id.btn_notif_phase_post) ? 2 : 0;
+        EditText etNotif = findViewById(R.id.et_notif_to);
+        String curNotifStr = etNotif.getText() != null ? etNotif.getText().toString().trim() : "";
+        int curNotifVal = curNotifStr.isEmpty() ? -1 : tryParseInt(curNotifStr, -1);
+        MaterialButtonToggleGroup toggleNotifUnit = findViewById(R.id.toggle_notif_unit);
+        String curNotifUnit = (toggleNotifUnit.getCheckedButtonId() == R.id.btn_notif_s) ? "s" : "m";
+        int savedNoVal = sp.getInt("to_notif_val_" + TO_PHASES[idxNotif], -1);
+        String savedNoUnit = sp.getString("to_notif_unit_" + TO_PHASES[idxNotif], "m");
+        if (curNotifVal != savedNoVal) return true;
+        if (!curNotifUnit.equals(savedNoUnit)) return true;
+
+        // 若都一致，则无未保存项
+        return false;
+    }
+
+    private int tryParseInt(String s, int def) {
+        try { return Integer.parseInt(s); } catch (Exception e) { return def; }
+    }
+
+    private void updateCustomDirtyIndicator() {
+        boolean d = isCustomDirty();
+        customDirty = d;
+        if (btnSaveCustom == null) return;
+        int color = d ? Color.parseColor("#FF9800")
+                : MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, Color.parseColor("#6200EE"));
+        btnSaveCustom.setBackgroundTintList(ColorStateList.valueOf(color));
+    }
+
+    private void updateTimeoutDirtyIndicator() {
+        boolean d = isTimeoutDirty();
+        timeoutDirty = d;
+        if (btnSaveTimeout == null) return;
+        int color = d ? Color.parseColor("#FF9800")
+                : MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, Color.parseColor("#6200EE"));
+        btnSaveTimeout.setBackgroundTintList(ColorStateList.valueOf(color));
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -232,6 +385,7 @@ public class MainActivity extends AppCompatActivity {
         SwitchMaterial   swNotifDefault  = findViewById(R.id.sw_notif_to_default);
 
         TextView tvHint = findViewById(R.id.tv_timeout_hint);
+        btnSaveTimeout = findViewById(R.id.btn_save_timeout);
 
         final boolean[] updatingIsland = {false};
         final boolean[] updatingNotif  = {false};
@@ -241,6 +395,7 @@ public class MainActivity extends AppCompatActivity {
             if (updatingIsland[0]) return;
             setTimeoutRowEnabled(tilIsland, toggleIslandUnit, !checked);
             if (checked) { etIsland.setText(""); islandVals[curIslandPhase[0]] = -1; }
+            updateTimeoutDirtyIndicator();
         });
 
         // ── 通知默认开关 listener（全局开关：控制所有阶段） ────────────
@@ -256,6 +411,7 @@ public class MainActivity extends AppCompatActivity {
             setTimeoutRowEnabled(tilNotif, toggleNotifUnit, en);
             toggleNotifPhase.setEnabled(en);
             toggleNotifPhase.setAlpha(en ? 1f : 0.4f);
+            updateTimeoutDirtyIndicator();
         });
 
         // ── 初始化岛 UI（按阶段加载） ─────────────────────────────────
@@ -294,6 +450,7 @@ public class MainActivity extends AppCompatActivity {
             else if (checkedId == R.id.btn_island_phase_active) curIslandPhase[0] = 1;
             else                                                curIslandPhase[0] = 2;
             loadIslandUI.run();
+            updateTimeoutDirtyIndicator();
         });
 
         // ── 通知 UI 刷新 ────────────────────────────────────────────
@@ -336,6 +493,7 @@ public class MainActivity extends AppCompatActivity {
             else if (checkedId == R.id.btn_notif_phase_active) curNotifPhase[0] = 1;
             else                                                curNotifPhase[0] = 2;
             loadNotifUI.run();
+            updateTimeoutDirtyIndicator();
         });
 
         // ── 保存按钮 ──────────────────────────────────────────────────
@@ -385,6 +543,19 @@ public class MainActivity extends AppCompatActivity {
 
             tvHint.setText("已保存，下次通知生效");
             tvHint.setVisibility(View.VISIBLE);
+            timeoutDirty = false;
+            updateTimeoutDirtyIndicator();
+        });
+        // 监听输入变化以即时更新保存按钮指示
+        etIsland.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateTimeoutDirtyIndicator(); }
+            @Override public void afterTextChanged(android.text.Editable s) {}
+        });
+        etNotif.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateTimeoutDirtyIndicator(); }
+            @Override public void afterTextChanged(android.text.Editable s) {}
         });
     }
 

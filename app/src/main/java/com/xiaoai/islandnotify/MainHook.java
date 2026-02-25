@@ -109,10 +109,12 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (ACTION_SYNC_PREFS.equals(intent.getAction())) {
                             SharedPreferences.Editor ed = context
                                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
-                            ed.putString("tpl_a",      intent.getStringExtra("tpl_a"));
-                            ed.putString("tpl_b",      intent.getStringExtra("tpl_b"));
-                            ed.putString("tpl_ticker", intent.getStringExtra("tpl_ticker"));
-                            ed.putBoolean("icon_a",    intent.getBooleanExtra("icon_a", true));
+                            for (String sfx : new String[]{"_pre", "_active", "_post"}) {
+                                ed.putString("tpl_a"      + sfx, intent.getStringExtra("tpl_a"      + sfx));
+                                ed.putString("tpl_b"      + sfx, intent.getStringExtra("tpl_b"      + sfx));
+                                ed.putString("tpl_ticker" + sfx, intent.getStringExtra("tpl_ticker" + sfx));
+                            }
+                            ed.putBoolean("icon_a", intent.getBooleanExtra("icon_a", true));
                             ed.apply();
                             XposedBridge.log(TAG + ": 偷好设置已同步到目标进程");
                         } else if (ACTION_ISLAND_UPDATE.equals(intent.getAction())) {
@@ -467,7 +469,7 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     // 岛状态常量
-    private static final int STATE_COUNTDOWN = 0; // 倒计时（课前）
+    private static final int STATE_COUNTDOWN = 0; // 倒计时（上课前）
     private static final int STATE_ELAPSED   = 1; // 正计时（上课中）
     private static final int STATE_FINISHED  = 2; // 正计时（已下课）
 
@@ -553,7 +555,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
     /**
      * 统一构建超级岛 JSON。三种状态的差异通过 state 参数区分：
-     *   STATE_COUNTDOWN：课前倒计时，上课静音按钮
+     *   STATE_COUNTDOWN：上课前倒计时，上课静音按钮
      *   STATE_ELAPSED  ：上课中正计时，上课静音按钮
      *   STATE_FINISHED ：下课后正计时，解除静音按钮
      */
@@ -623,11 +625,14 @@ public class MainHook implements IXposedHookLoadPackage {
         }
 
         // ── bigIslandArea ─────────────────────────────────────────
+        // 按上课状态选择对应阶段模板后缀
+        String stageSuffix = (state == STATE_COUNTDOWN) ? "_pre"
+                           : (state == STATE_ELAPSED)   ? "_active" : "_post";
         final boolean showIconA = (prefs == null || prefs.getBoolean("icon_a", true));
         JSONObject aTextInfo = new JSONObject();
         String aFallback = info.startTime.isEmpty() ? info.courseName : info.startTime + "上课";
         aTextInfo.put("title", resolveTemplate(
-                prefs != null ? prefs.getString("tpl_a", "") : "", info, aFallback));
+                getStagedPref(prefs, "tpl_a", stageSuffix), info, aFallback));
         JSONObject imageTextInfoLeft = new JSONObject();
         imageTextInfoLeft.put("type", 1);
         if (showIconA) {
@@ -641,7 +646,7 @@ public class MainHook implements IXposedHookLoadPackage {
         JSONObject bTextInfo = new JSONObject();
         String bFallback = info.classroom.isEmpty() ? "—" : info.classroom;
         bTextInfo.put("title", resolveTemplate(
-                prefs != null ? prefs.getString("tpl_b", "") : "", info, bFallback));
+                getStagedPref(prefs, "tpl_b", stageSuffix), info, bFallback));
         JSONObject bigIslandArea = new JSONObject();
         bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
         bigIslandArea.put("textInfo",          bTextInfo);
@@ -671,7 +676,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
         // ── paramV2 ───────────────────────────────────────────────
         String tickerText = resolveTemplate(
-                prefs != null ? prefs.getString("tpl_ticker", "") : "",
+                getStagedPref(prefs, "tpl_ticker", stageSuffix),
                 info, buildTickerText(info));
         JSONObject paramV2 = new JSONObject();
         paramV2.put("protocol",    1);
@@ -701,6 +706,19 @@ public class MainHook implements IXposedHookLoadPackage {
         String text = info.startTime.isEmpty() ? info.courseName : info.startTime + "上课";
         if (!info.classroom.isEmpty()) text += " " + info.classroom;
         return text;
+    }
+
+    /**
+     * 读取分阶段模板（suffix = "_pre" / "_active" / "_post"）。
+     * 若对应 key 为空则 fallback 到无后缀旧 key，兼容未迁移配置。
+     */
+    private static String getStagedPref(SharedPreferences prefs, String key, String suffix) {
+        if (prefs == null) return "";
+        String v = prefs.getString(key + suffix, "");
+        if (v != null && !v.isEmpty()) return v;
+        // 兼容旧版无分阶段配置
+        String fb = prefs.getString(key, "");
+        return fb != null ? fb : "";
     }
 
     /**

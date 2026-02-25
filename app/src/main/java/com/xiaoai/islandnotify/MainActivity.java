@@ -123,38 +123,52 @@ public class MainActivity extends AppCompatActivity {
     private void initCustomCard() {
         SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
 
-        EditText etA      = findViewById(R.id.et_tpl_a);
-        EditText etB      = findViewById(R.id.et_tpl_b);
-        EditText etTicker = findViewById(R.id.et_tpl_ticker);
-        SwitchMaterial swIconA   = findViewById(R.id.sw_icon_a);
-        TextView tvHint   = findViewById(R.id.tv_save_hint);
+        // 三个阶段 SP 后缀：_pre=上课前  _active=上课中  _post=下课后
+        final String[] SUFFIXES = {"_pre", "_active", "_post"};
+        // 各阶段 A/B/ticker 的默认值
+        final String[] DEFAULT_A      = {"{开始}上课", "{课名}", "{结束}下课"};
+        final String[] DEFAULT_B      = {"{教室}",     "{教室}", "{教室}"};
+        final String[] DEFAULT_TICKER = {"{开始}上课 {教室}", "上课中 {教室}", "下课了 {教室}"};
+        // 各阶段输入框 View ID
+        final int[] IDS_A      = {R.id.et_tpl_a_pre,      R.id.et_tpl_a_active,      R.id.et_tpl_a_post};
+        final int[] IDS_B      = {R.id.et_tpl_b_pre,      R.id.et_tpl_b_active,      R.id.et_tpl_b_post};
+        final int[] IDS_TICKER = {R.id.et_tpl_ticker_pre,  R.id.et_tpl_ticker_active,  R.id.et_tpl_ticker_post};
+
+        SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);
+        TextView tvHint        = findViewById(R.id.tv_save_hint);
 
         // 读取已保存配置，无则用默认值
-        etA.setText(sp.getString("tpl_a",      "{开始}上课"));
-        etB.setText(sp.getString("tpl_b",      "{教室}"));
-        etTicker.setText(sp.getString("tpl_ticker", "{开始}上课 {教室}"));
-        swIconA.setChecked(sp.getBoolean("icon_a",   true));
+        for (int i = 0; i < 3; i++) {
+            ((EditText) findViewById(IDS_A[i])).setText(
+                    sp.getString("tpl_a"      + SUFFIXES[i], DEFAULT_A[i]));
+            ((EditText) findViewById(IDS_B[i])).setText(
+                    sp.getString("tpl_b"      + SUFFIXES[i], DEFAULT_B[i]));
+            ((EditText) findViewById(IDS_TICKER[i])).setText(
+                    sp.getString("tpl_ticker" + SUFFIXES[i], DEFAULT_TICKER[i]));
+        }
+        swIconA.setChecked(sp.getBoolean("icon_a", true));
 
         findViewById(R.id.btn_save_custom).setOnClickListener(v -> {
-            String tplA      = etA.getText().toString().trim();
-            String tplB      = etB.getText().toString().trim();
-            String tplTicker = etTicker.getText().toString().trim();
-            boolean iconA    = swIconA.isChecked();
-
-            sp.edit()
-                .putString("tpl_a",      tplA)
-                .putString("tpl_b",      tplB)
-                .putString("tpl_ticker", tplTicker)
-                .putBoolean("icon_a",    iconA)
-                .apply();
-
+            SharedPreferences.Editor ed = sp.edit();
             // 通知 voiceassist 进程同步最新配置（绕过 SELinux 跨 UID 文件读取限制）
             Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
             sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("tpl_a",      tplA);
-            sync.putExtra("tpl_b",      tplB);
-            sync.putExtra("tpl_ticker", tplTicker);
-            sync.putExtra("icon_a",     iconA);
+
+            for (int i = 0; i < 3; i++) {
+                String tplA      = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
+                String tplB      = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
+                String tplTicker = ((EditText) findViewById(IDS_TICKER[i])).getText().toString().trim();
+                ed.putString("tpl_a"      + SUFFIXES[i], tplA);
+                ed.putString("tpl_b"      + SUFFIXES[i], tplB);
+                ed.putString("tpl_ticker" + SUFFIXES[i], tplTicker);
+                sync.putExtra("tpl_a"      + SUFFIXES[i], tplA);
+                sync.putExtra("tpl_b"      + SUFFIXES[i], tplB);
+                sync.putExtra("tpl_ticker" + SUFFIXES[i], tplTicker);
+            }
+            boolean iconA = swIconA.isChecked();
+            ed.putBoolean("icon_a", iconA);
+            sync.putExtra("icon_a", iconA);
+            ed.apply();
             sendBroadcast(sync);
 
             tvHint.setText("已保存，下次通知生效");

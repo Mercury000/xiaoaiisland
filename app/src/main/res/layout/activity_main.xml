@@ -213,39 +213,43 @@
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:alpha="0.75" />
 
-                    <!-- 岛A模板 -->
+                    <!-- ── 上课前 ───────────────────────────── -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:text="上课前"
+                        android:textAppearance="?attr/textAppearanceLabelMedium"
+                        android:textColor="?attr/colorPrimary" />
+
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginBottom="10dp"
-                        android:hint="岛A区域（左侧文字）"
+                        android:layout_marginBottom="8dp"
+                        android:hint="岛A（左侧文字）"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_tpl_a"
+                            android:id="@+id/et_tpl_a_pre"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="{开始}上课"
                             android:imeOptions="actionNext"
                             android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- 岛B模板 -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginBottom="10dp"
-                        android:hint="岛B区域（右侧文字）"
+                        android:layout_marginBottom="8dp"
+                        android:hint="岛B（右侧文字）"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_tpl_b"
+                            android:id="@+id/et_tpl_b_pre"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="{教室}"
                             android:imeOptions="actionNext"
                             android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- 息屏模板 -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -253,13 +257,129 @@
                         android:hint="息屏显示"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_tpl_ticker"
+                            android:id="@+id/et_tpl_ticker_pre"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="{开始}上课 {教室}"
+                            android:imeOptions="actionNext"
+                            android:singleLine="true" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.divider.MaterialDivider
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="12dp" />
+
+                    <!-- ── 上课中 ───────────────────────────── -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:text="上课中"
+                        android:textAppearance="?attr/textAppearanceLabelMedium"
+                        android:textColor="?attr/colorPrimary" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:hint="岛A（左侧文字）"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_tpl_a_active"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionNext"
+                            android:singleLine="true" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:hint="岛B（右侧文字）"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_tpl_b_active"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionNext"
+                            android:singleLine="true" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="14dp"
+                        android:hint="息屏显示"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_tpl_ticker_active"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionNext"
+                            android:singleLine="true" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.divider.MaterialDivider
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="12dp" />
+
+                    <!-- ── 下课后 ───────────────────────────── -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:text="下课后"
+                        android:textAppearance="?attr/textAppearanceLabelMedium"
+                        android:textColor="?attr/colorPrimary" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:hint="岛A（左侧文字）"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_tpl_a_post"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionNext"
+                            android:singleLine="true" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:hint="岛B（右侧文字）"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_tpl_b_post"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionNext"
+                            android:singleLine="true" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="14dp"
+                        android:hint="息屏显示"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_tpl_ticker_post"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
                             android:imeOptions="actionDone"
                             android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.divider.MaterialDivider
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="12dp" />
 
                     <!-- 岛A图标开关（同时影响息屏/小岛图标，系统不允许完全隐藏） -->
                     <LinearLayout
@@ -348,7 +468,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="1.0.3"
+                            android:text="1.0.6"
                             android:textAppearance="?attr/textAppearanceBodyMedium" />
                     </LinearLayout>
 

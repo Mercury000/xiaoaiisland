@@ -628,7 +628,8 @@ public class MainHook implements IXposedHookLoadPackage {
                            : (state == STATE_ELAPSED)   ? "_active" : "_post";
         final boolean showIconA = (prefs == null || prefs.getBoolean("icon_a", true));
         JSONObject aTextInfo = new JSONObject();
-        String aFallback = info.startTime.isEmpty() ? info.courseName : info.startTime + "上课";
+        String aFallback = resolveTemplate(DEFAULT_TPLS[
+                (state == STATE_COUNTDOWN) ? 0 : (state == STATE_ELAPSED) ? 1 : 2][0], info, info.courseName);
         aTextInfo.put("title", resolveTemplate(
                 getStagedPref(prefs, "tpl_a", stageSuffix), info, aFallback));
         JSONObject imageTextInfoLeft = new JSONObject();
@@ -642,7 +643,8 @@ public class MainHook implements IXposedHookLoadPackage {
         // 隐藏图标时不传 picInfo，文档："图标或正文大字二选一"，有 textInfo.title 即合规
         imageTextInfoLeft.put("textInfo", aTextInfo);
         JSONObject bTextInfo = new JSONObject();
-        String bFallback = info.classroom.isEmpty() ? "—" : info.classroom;
+        String bFallback = resolveTemplate(DEFAULT_TPLS[
+                (state == STATE_COUNTDOWN) ? 0 : (state == STATE_ELAPSED) ? 1 : 2][1], info, info.classroom.isEmpty() ? "\u2014" : info.classroom);
         bTextInfo.put("title", resolveTemplate(
                 getStagedPref(prefs, "tpl_b", stageSuffix), info, bFallback));
         JSONObject bigIslandArea = new JSONObject();
@@ -699,24 +701,38 @@ public class MainHook implements IXposedHookLoadPackage {
         return root.toString();
     }
 
-    /** 状态栏 / 息屏文案：格式 "19:50上课 教1-201" */
+    /** 状态栏 / 息屏文案兜底（getStagedPref 已优先返回 DEFAULT_TPLS，此方法为最后保底） */
     private String buildTickerText(CourseInfo info) {
-        String text = info.startTime.isEmpty() ? info.courseName : info.startTime + "上课";
-        if (!info.classroom.isEmpty()) text += " " + info.classroom;
-        return text;
+        return (info.startTime.isEmpty() ? info.courseName : info.startTime + "上课");
     }
+
+    // 各阶段模板的最终兑底默认值（即使未开启过模块主界面也生效）
+    private static final String[][] DEFAULT_TPLS = {
+        // { tpl_a,    tpl_b,       tpl_ticker          }
+        { "{\u6559\u5ba4}",   "{\u5f00\u59cb}\u4e0a\u8bfe",  "{\u6559\u5ba4}\uff5c{\u5f00\u59cb}\u4e0a\u8bfe"  }, // _pre
+        { "{\u8bfe\u540d}",   "{\u7ed3\u675f}\u4e0b\u8bfe",  "{\u8bfe\u540d}\uff5c{\u7ed3\u675f}\u4e0b\u8bfe"  }, // _active
+        { "{\u8bfe\u540d}",   "\u5df2\u7ecf\u4e0b\u8bfe",    "{\u8bfe\u540d}\uff5c\u5df2\u7ecf\u4e0b\u8bfe"    }, // _post
+    };
+    private static final String[] STAGE_SUFFIXES = {"_pre", "_active", "_post"};
+    private static final String[] TPL_KEYS       = {"tpl_a", "tpl_b", "tpl_ticker"};
 
     /**
      * 读取分阶段模板（suffix = "_pre" / "_active" / "_post"）。
-     * 若对应 key 为空则 fallback 到无后缀旧 key，兼容未迁移配置。
+     * SP 为空时依次 fallback：无后缀旧 key → 代码内置默认值。
      */
     private static String getStagedPref(SharedPreferences prefs, String key, String suffix) {
-        if (prefs == null) return "";
-        String v = prefs.getString(key + suffix, "");
-        if (v != null && !v.isEmpty()) return v;
-        // 兼容旧版无分阶段配置
-        String fb = prefs.getString(key, "");
-        return fb != null ? fb : "";
+        if (prefs != null) {
+            String v = prefs.getString(key + suffix, "");
+            if (v != null && !v.isEmpty()) return v;
+            // 兼容旧版无分阶段配置
+            String old = prefs.getString(key, "");
+            if (old != null && !old.isEmpty()) return old;
+        }
+        // SP 完全为空（未开启过主界面），返回代码内置默认模板
+        int si = java.util.Arrays.asList(STAGE_SUFFIXES).indexOf(suffix);
+        int ki = java.util.Arrays.asList(TPL_KEYS).indexOf(key);
+        if (si >= 0 && ki >= 0) return DEFAULT_TPLS[si][ki];
+        return "";
     }
 
     /**

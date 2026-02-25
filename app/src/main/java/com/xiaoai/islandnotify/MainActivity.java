@@ -196,9 +196,14 @@ public class MainActivity extends AppCompatActivity {
     private void initTimeoutCard() {
         SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
 
-        // ── 岛：全局单一值 ────────────────────────────────────────────
-        final int[]    islandVal  = {sp.getInt("to_island_val",  -1)};
-        final String[] islandUnit = {sp.getString("to_island_unit", "m")};
+        // ── 岛：三阶段独立设置 ─────────────────────────────────────────
+        final int[]    islandVals  = new int[3];
+        final String[] islandUnits = new String[3];
+        for (int i = 0; i < 3; i++) {
+            islandVals[i]  = sp.getInt   ("to_island_val_"  + TO_PHASES[i], -1);
+            islandUnits[i] = sp.getString("to_island_unit_" + TO_PHASES[i], "m");
+        }
+        final int[] curIslandPhase = {0};
 
         // ── 通知：三阶段独立 ───────────────────────────────────────────
         final int[]    notifVals  = new int[3];
@@ -208,16 +213,17 @@ public class MainActivity extends AppCompatActivity {
             notifUnits[i] = sp.getString("to_notif_unit_" + TO_PHASES[i], "m");
         }
         final int[] curNotifPhase = {0};
-        // 全局默认标志：所有阶段均为 -1 时为默认（不取消通知）
-        boolean allDefault = true;
-        for (int i = 0; i < 3; i++) if (notifVals[i] >= 0) { allDefault = false; break; }
-        final boolean[] notifDefault = {allDefault};
-
+        // 通知默认为全局开关：当所有阶段均为 -1 时视为默认
+        boolean notifAllDefault = true;
+        for (int i = 0; i < 3; i++) if (notifVals[i] >= 0) { notifAllDefault = false; break; }
+        final boolean[] notifGlobalDefault = {notifAllDefault};
         // ── View 引用 ──────────────────────────────────────────────────
         TextInputLayout  tilIsland       = findViewById(R.id.til_island_to);
         EditText         etIsland        = findViewById(R.id.et_island_to);
         MaterialButtonToggleGroup toggleIslandUnit = findViewById(R.id.toggle_island_unit);
         SwitchMaterial   swIslandDefault = findViewById(R.id.sw_island_to_default);
+
+        MaterialButtonToggleGroup toggleIslandPhase = findViewById(R.id.toggle_island_phase);
 
         MaterialButtonToggleGroup toggleNotifPhase = findViewById(R.id.toggle_notif_phase);
         TextInputLayout  tilNotif        = findViewById(R.id.til_notif_to);
@@ -230,19 +236,19 @@ public class MainActivity extends AppCompatActivity {
         final boolean[] updatingIsland = {false};
         final boolean[] updatingNotif  = {false};
 
-        // ── 岛默认开关 listener ────────────────────────────────────────
+        // ── 岛默认开关 listener（按当前阶段生效） ─────────────────────────
         swIslandDefault.setOnCheckedChangeListener((btn, checked) -> {
             if (updatingIsland[0]) return;
             setTimeoutRowEnabled(tilIsland, toggleIslandUnit, !checked);
-            if (checked) { etIsland.setText(""); islandVal[0] = -1; }
+            if (checked) { etIsland.setText(""); islandVals[curIslandPhase[0]] = -1; }
         });
 
-        // ── 通知默认开关 listener（全局：控制所有阶段） ──────────────────
+        // ── 通知默认开关 listener（全局开关：控制所有阶段） ────────────
         swNotifDefault.setOnCheckedChangeListener((btn, checked) -> {
             if (updatingNotif[0]) return;
-            notifDefault[0] = checked;
+            notifGlobalDefault[0] = checked;
             if (checked) {
-                // 全局默认：三阶段全部置 -1
+                // 全局默认：清空三个阶段的自定义值
                 for (int j = 0; j < 3; j++) notifVals[j] = -1;
                 etNotif.setText("");
             }
@@ -252,30 +258,64 @@ public class MainActivity extends AppCompatActivity {
             toggleNotifPhase.setAlpha(en ? 1f : 0.4f);
         });
 
-        // ── 初始化岛 UI（全局单一值，不涉及阶段） ─────────────────────
-        {
-            boolean def = (islandVal[0] < 0);
+        // ── 初始化岛 UI（按阶段加载） ─────────────────────────────────
+        final Runnable loadIslandUI = () -> {
+            int idx = curIslandPhase[0];
+            boolean def = (islandVals[idx] < 0);
             updatingIsland[0] = true;
             swIslandDefault.setChecked(def);
             updatingIsland[0] = false;
-            etIsland.setText(def ? "" : String.valueOf(islandVal[0]));
-            toggleIslandUnit.check("s".equals(islandUnit[0])
+            etIsland.setText(def ? "" : String.valueOf(islandVals[idx]));
+            toggleIslandUnit.check("s".equals(islandUnits[idx])
                     ? R.id.btn_island_s : R.id.btn_island_m);
             setTimeoutRowEnabled(tilIsland, toggleIslandUnit, !def);
-        }
+        };
 
-        // ── 通知 UI 刷新（只加载当前阶段值；默认开关由 notifDefault[] 全局控制） ──
+        final Runnable saveIslandUI = () -> {
+            int idx = curIslandPhase[0];
+            if (swIslandDefault.isChecked()) {
+                islandVals[idx] = -1;
+            } else {
+                String s = etIsland.getText() != null ? etIsland.getText().toString().trim() : "";
+                try { islandVals[idx] = s.isEmpty() ? -1 : Integer.parseInt(s); }
+                catch (NumberFormatException e) { islandVals[idx] = -1; }
+            }
+            islandUnits[idx] = (toggleIslandUnit.getCheckedButtonId() == R.id.btn_island_s) ? "s" : "m";
+        };
+
+        toggleIslandPhase.check(R.id.btn_island_phase_pre);
+        loadIslandUI.run();
+
+        // ── 岛阶段切换 ───────────────────────────────────────────────
+        toggleIslandPhase.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (!isChecked) return;
+            saveIslandUI.run();
+            if      (checkedId == R.id.btn_island_phase_pre)    curIslandPhase[0] = 0;
+            else if (checkedId == R.id.btn_island_phase_active) curIslandPhase[0] = 1;
+            else                                                curIslandPhase[0] = 2;
+            loadIslandUI.run();
+        });
+
+        // ── 通知 UI 刷新 ────────────────────────────────────────────
         final Runnable loadNotifUI = () -> {
             int idx = curNotifPhase[0];
+            // 默认开关由全局状态控制
+            updatingNotif[0] = true;
+            swNotifDefault.setChecked(notifGlobalDefault[0]);
+            updatingNotif[0] = false;
             etNotif.setText((notifVals[idx] > 0) ? String.valueOf(notifVals[idx]) : "");
             toggleNotifUnit.check("s".equals(notifUnits[idx])
-                    ? R.id.btn_notif_s : R.id.btn_notif_m);
+                ? R.id.btn_notif_s : R.id.btn_notif_m);
+            boolean en = !notifGlobalDefault[0];
+            setTimeoutRowEnabled(tilNotif, toggleNotifUnit, en);
+            toggleNotifPhase.setEnabled(en);
+            toggleNotifPhase.setAlpha(en ? 1f : 0.4f);
         };
 
         // ── 通知 UI 写回内存 ─────────────────────────────────────────
         final Runnable saveNotifUI = () -> {
             int idx = curNotifPhase[0];
-            if (notifDefault[0]) {
+            if (swNotifDefault.isChecked()) {
                 notifVals[idx] = -1;
             } else {
                 String s = etNotif.getText() != null ? etNotif.getText().toString().trim() : "";
@@ -285,19 +325,8 @@ public class MainActivity extends AppCompatActivity {
             notifUnits[idx] = (toggleNotifUnit.getCheckedButtonId() == R.id.btn_notif_s) ? "s" : "m";
         };
 
-        // ── 初始化通知 UI ─────────────────────────────────────────────
-        {
-            boolean def = notifDefault[0];
-            updatingNotif[0] = true;
-            swNotifDefault.setChecked(def);
-            updatingNotif[0] = false;
-            boolean en = !def;
-            setTimeoutRowEnabled(tilNotif, toggleNotifUnit, en);
-            toggleNotifPhase.setEnabled(en);
-            toggleNotifPhase.setAlpha(en ? 1f : 0.4f);
-            toggleNotifPhase.check(R.id.btn_notif_phase_pre);
-            loadNotifUI.run();
-        }
+        toggleNotifPhase.check(R.id.btn_notif_phase_pre);
+        loadNotifUI.run();
 
         // ── 通知阶段切换 ──────────────────────────────────────────────
         toggleNotifPhase.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
@@ -313,23 +342,25 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btn_save_timeout).setOnClickListener(v -> {
             saveNotifUI.run();
 
-            // 读取岛当前 UI 值
-            if (!swIslandDefault.isChecked()) {
-                String s = etIsland.getText() != null ? etIsland.getText().toString().trim() : "";
-                try { islandVal[0] = s.isEmpty() ? -1 : Integer.parseInt(s); }
-                catch (NumberFormatException e) { islandVal[0] = -1; }
+            // 读取并保存岛当前 UI 值（按三阶段写回）
+            saveIslandUI.run();
+
+            // 若全局默认被选中，确保所有 notifVals 为 -1
+            if (notifGlobalDefault[0]) {
+                for (int i = 0; i < 3; i++) notifVals[i] = -1;
             }
-            islandUnit[0] = (toggleIslandUnit.getCheckedButtonId() == R.id.btn_island_s) ? "s" : "m";
 
             SharedPreferences.Editor ed = sp.edit();
             Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
             sync.setPackage("com.miui.voiceassist");
 
-            // 岛：单一全局键
-            ed.putInt   ("to_island_val",  islandVal[0]);
-            ed.putString("to_island_unit", islandUnit[0]);
-            sync.putExtra("to_island_val",  islandVal[0]);
-            sync.putExtra("to_island_unit", islandUnit[0]);
+            // 岛：三阶段键
+            for (int i = 0; i < 3; i++) {
+                ed.putInt   ("to_island_val_"  + TO_PHASES[i], islandVals[i]);
+                ed.putString("to_island_unit_" + TO_PHASES[i], islandUnits[i]);
+                sync.putExtra("to_island_val_"  + TO_PHASES[i], islandVals[i]);
+                sync.putExtra("to_island_unit_" + TO_PHASES[i], islandUnits[i]);
+            }
 
             // 通知：三阶段
             for (int i = 0; i < 3; i++) {
@@ -338,6 +369,17 @@ public class MainActivity extends AppCompatActivity {
                 sync.putExtra("to_notif_val_"  + TO_PHASES[i], notifVals[i]);
                 sync.putExtra("to_notif_unit_" + TO_PHASES[i], notifUnits[i]);
             }
+
+            // 删除旧版/遗留键，避免模块内部 SharedPreferences 与目标进程不一致
+            ed.remove("to_island_val");
+            ed.remove("to_island_unit");
+            ed.remove("use_default_behavior");
+            ed.remove("notif_dismiss_value");
+            ed.remove("notif_dismiss_unit");
+            ed.remove("notif_dismiss_trigger");
+            ed.remove("island_dismiss_value");
+            ed.remove("island_dismiss_unit");
+            ed.remove("island_dismiss_trigger");
             ed.apply();
             sendBroadcast(sync);
 

@@ -468,10 +468,41 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="10dp"
-                        android:text="每次状态更新（发通知/上课/下课）都会重新 notify，islandTimeout 会随之重置，因此统一设置"
+                        android:text="可为三个阶段分别设置岛消失时间（通知后 / 上课后 / 下课后）。注意：每次状态更新会重新 notify，islandTimeout 将在该状态生效并按该阶段值计时。"
                         android:textAppearance="?attr/textAppearanceBodySmall"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:alpha="0.6" />
+
+                    <!-- 岛：阶段选择（恢复为三阶段独立设置） -->
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/toggle_island_phase"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
+                        <Button
+                            android:id="@+id/btn_island_phase_pre"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="通知后" />
+                        <Button
+                            android:id="@+id/btn_island_phase_active"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="上课后" />
+                        <Button
+                            android:id="@+id/btn_island_phase_post"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="下课后" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
 
                     <!-- 岛：时长输入（独占一行） -->
                     <com.google.android.material.textfield.TextInputLayout
@@ -545,6 +576,16 @@
                         android:textAppearance="?attr/textAppearanceLabelMedium"
                         android:textColor="?attr/colorPrimary" />
 
+                    <!-- 通知：说明 -->
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        android:text="设置时间到达后，将取消通知，后续将不再更新状态（上课/下课）。"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:alpha="0.7" />
+
                     <!-- 通知：阶段选择 -->
                     <com.google.android.material.button.MaterialButtonToggleGroup
                         android:id="@+id/toggle_notif_phase"
@@ -559,7 +600,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="发通知后" />
+                            android:text="通知后" />
                         <Button
                             android:id="@+id/btn_notif_phase_active"
                             style="@style/Widget.Material3.Button.OutlinedButton"

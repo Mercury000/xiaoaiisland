@@ -109,19 +109,46 @@ public class MainHook implements IXposedHookLoadPackage {
                             SharedPreferences.Editor ed = context
                                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
                             for (String sfx : new String[]{"_pre", "_active", "_post"}) {
-                                ed.putString("tpl_a"      + sfx, intent.getStringExtra("tpl_a"      + sfx));
-                                ed.putString("tpl_b"      + sfx, intent.getStringExtra("tpl_b"      + sfx));
-                                ed.putString("tpl_ticker" + sfx, intent.getStringExtra("tpl_ticker" + sfx));
+                                String kA = "tpl_a" + sfx;
+                                if (intent.hasExtra(kA)) ed.putString(kA, intent.getStringExtra(kA));
+                                String kB = "tpl_b" + sfx;
+                                if (intent.hasExtra(kB)) ed.putString(kB, intent.getStringExtra(kB));
+                                String kT = "tpl_ticker" + sfx;
+                                if (intent.hasExtra(kT)) ed.putString(kT, intent.getStringExtra(kT));
                             }
-                            ed.putBoolean("icon_a", intent.getBooleanExtra("icon_a", true));
-                            // 同步超时设置：岛消失为全局单值；通知消失仍按阶段
-                            ed.putInt   ("to_island_val",  intent.getIntExtra   ("to_island_val",  -1));
-                            ed.putString("to_island_unit", safeStr(intent.getStringExtra("to_island_unit")));
+                            if (intent.hasExtra("icon_a")) {
+                                ed.putBoolean("icon_a", intent.getBooleanExtra("icon_a", true));
+                            }
+                            // 同步超时设置：岛消失改为三阶段独立；通知消失按阶段
                             for (String phase : new String[]{"pre", "active", "post"}) {
-                                ed.putInt   ("to_notif_val_"  + phase, intent.getIntExtra   ("to_notif_val_"  + phase, -1));
-                                ed.putString("to_notif_unit_" + phase, safeStr(intent.getStringExtra("to_notif_unit_" + phase)));
+                                String kIsVal  = "to_island_val_"  + phase;
+                                String kIsUnit = "to_island_unit_" + phase;
+                                String kNoVal  = "to_notif_val_"   + phase;
+                                String kNoUnit = "to_notif_unit_"  + phase;
+                                if (intent.hasExtra(kIsVal))  ed.putInt   (kIsVal,  intent.getIntExtra   (kIsVal, -1));
+                                if (intent.hasExtra(kIsUnit)) ed.putString(kIsUnit, safeStr(intent.getStringExtra(kIsUnit)));
+                                if (intent.hasExtra(kNoVal))  ed.putInt   (kNoVal,  intent.getIntExtra   (kNoVal, -1));
+                                if (intent.hasExtra(kNoUnit)) ed.putString(kNoUnit, safeStr(intent.getStringExtra(kNoUnit)));
                             }
                             ed.apply();
+                            // 记录接收到的 extras 与写入的键值，便于排查模块进程与目标进程不一致问题
+                            try {
+                                StringBuilder sb = new StringBuilder();
+                                sb.append("SYNC_PREFS extras:\n");
+                                for (String key : intent.getExtras().keySet()) {
+                                    Object v = intent.getExtras().get(key);
+                                    sb.append(key).append("=").append(String.valueOf(v)).append("\n");
+                                }
+                                sb.append("Saved prefs:\n");
+                                SharedPreferences saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                                for (String k : saved.getAll().keySet()) {
+                                    Object vv = saved.getAll().get(k);
+                                    sb.append(k).append("=").append(String.valueOf(vv)).append("\n");
+                                }
+                                XposedBridge.log(TAG + ": " + sb.toString());
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": SYNC_PREFS log failure -> " + t.getMessage());
+                            }
                             XposedBridge.log(TAG + ": 偏好设置已同步到目标进程");
                         } else if (ACTION_ISLAND_UPDATE.equals(intent.getAction())) {
                             String courseName = safeStr(intent.getStringExtra("course_name"));
@@ -726,11 +753,12 @@ public class MainHook implements IXposedHookLoadPackage {
                 + (info.classroom.isEmpty() ? "" : " " + info.classroom)
                 + (timeRange.isEmpty() ? "" : " " + timeRange));
 
-        // ── 岛消失超时（全局单值，写入每次状态更新的 JSON）──────────
-        // 岛每次 sendIslandUpdate 都重新 notify，islandTimeout 随之重置，
-        // 因此不按阶段区分，统一使用同一个值。
-        int islandToVal  = (prefs != null) ? prefs.getInt   ("to_island_val",  -1) : -1;
-        String islandToUnit = (prefs != null) ? safeStr(prefs.getString("to_island_unit", "m")) : "m";
+        // ── 岛消失超时（按阶段读取对应值）──────────
+        // 根据当前 state 选择阶段后缀："pre" / "active" / "post"
+        String phase = (state == STATE_COUNTDOWN) ? "pre"
+                 : (state == STATE_ELAPSED)   ? "active" : "post";
+        int islandToVal  = (prefs != null) ? prefs.getInt   ("to_island_val_"  + phase, -1) : -1;
+        String islandToUnit = (prefs != null) ? safeStr(prefs.getString("to_island_unit_" + phase, "m")) : "m";
 
         JSONObject paramIsland = new JSONObject();
         paramIsland.put("islandProperty",  1);
@@ -740,7 +768,7 @@ public class MainHook implements IXposedHookLoadPackage {
         if (islandToVal > 0) {
             long islandToSecs = "m".equals(islandToUnit) ? (long) islandToVal * 60 : islandToVal;
             paramIsland.put("islandTimeout", islandToSecs);
-            XposedBridge.log(TAG + ": islandTimeout=" + islandToSecs + "s");
+            XposedBridge.log(TAG + ": islandTimeout(" + phase + ")=" + islandToSecs + "s");
         }
 
         // ── paramV2 ───────────────────────────────────────────────

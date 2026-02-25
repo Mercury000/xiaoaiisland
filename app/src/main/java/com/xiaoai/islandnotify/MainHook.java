@@ -63,8 +63,8 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 同步偶好设置到目标进程的广播 Action */
     private static final String ACTION_SYNC_PREFS = "com.xiaoai.islandnotify.ACTION_SYNC_PREFS";    /** AlarmManager 闹钟触发岛状态更新的广播 Action */
     private static final String ACTION_ISLAND_UPDATE = "com.xiaoai.islandnotify.ACTION_ISLAND_UPDATE";
-    /** 防止同一进程内多个 ClassLoader 重复注册 Hook */
-    private static volatile boolean hooked = false;
+    /** 跨 ClassLoader 的防重复注入标记 key（存于 boot classloader 的 System.properties） */
+    private static final String HOOKED_KEY = "xiaoai.island.hooked";
 
     // ─────────────────────────────────────────────────────────────
 
@@ -81,8 +81,9 @@ public class MainHook implements IXposedHookLoadPackage {
             return;
         }
         // 同一进程可能因多 ClassLoader 被调用多次，只注册一次
-        if (hooked) return;
-        hooked = true;
+        // 用 System.setProperty 而非 static 字段，确保跨 ClassLoader 生效
+        if (System.getProperty(HOOKED_KEY) != null) return;
+        System.setProperty(HOOKED_KEY, "1");
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
         hookApplicationOnCreate(lpparam);
         hookNotifyMethods(lpparam);
@@ -474,28 +475,50 @@ public class MainHook implements IXposedHookLoadPackage {
      */
     private void scheduleIslandAlarm(Context ctx, CourseInfo info, int state,
             String channelId, String tag, int id, long triggerMs) {
-        // 仅在 voiceassist 进程内调度，模块自身进程（测试通知）无需计时切换
-        if (!TARGET_PACKAGE.equals(ctx.getPackageName())) return;
-        try {
-            Intent intent = new Intent(ACTION_ISLAND_UPDATE);
-            intent.setPackage(TARGET_PACKAGE);
-            intent.putExtra("course_name", info.courseName);
-            intent.putExtra("start_time",  info.startTime);
-            intent.putExtra("end_time",    info.endTime);
-            intent.putExtra("classroom",   info.classroom);
-            intent.putExtra("state",       state);
-            intent.putExtra("channel_id",  channelId);
-            intent.putExtra("notif_tag",   tag);
-            intent.putExtra("notif_id",    id);
-            int reqCode = id * 10 + state;
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            AlarmManager am = ctx.getSystemService(AlarmManager.class);
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
-            XposedBridge.log(TAG + ": AlarmManager 已设定 state=" + state
-                    + " in " + ((triggerMs - System.currentTimeMillis()) / 1000) + "s");
-        } catch (Exception e) {
-            XposedBridge.log(TAG + ": scheduleIslandAlarm 失败 → " + e.getMessage());
+        long delayMs = triggerMs - System.currentTimeMillis();
+        if (delayMs <= 0) return;
+
+        if (TARGET_PACKAGE.equals(ctx.getPackageName())) {
+            // voiceassist 进程：用精确闹钟，可唤醒 Doze
+            try {
+                Intent intent = new Intent(ACTION_ISLAND_UPDATE);
+                intent.setPackage(TARGET_PACKAGE);
+                intent.putExtra("course_name", info.courseName);
+                intent.putExtra("start_time",  info.startTime);
+                intent.putExtra("end_time",    info.endTime);
+                intent.putExtra("classroom",   info.classroom);
+                intent.putExtra("state",       state);
+                intent.putExtra("channel_id",  channelId);
+                intent.putExtra("notif_tag",   tag);
+                intent.putExtra("notif_id",    id);
+                int reqCode = id * 10 + state;
+                PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                AlarmManager am = ctx.getSystemService(AlarmManager.class);
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
+                XposedBridge.log(TAG + ": AlarmManager 已设定 state=" + state
+                        + " in " + (delayMs / 1000) + "s");
+            } catch (Exception e) {
+                XposedBridge.log(TAG + ": scheduleIslandAlarm 失败 → " + e.getMessage());
+            }
+        } else {
+            // 模块自身进程（测试通知）：前台运行，Handler 足够
+            final CourseInfo fi = info;
+            final Context fc = ctx;
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                android.app.NotificationManager nm =
+                        fc.getSystemService(android.app.NotificationManager.class);
+                android.service.notification.StatusBarNotification src = null;
+                for (android.service.notification.StatusBarNotification sbn
+                        : nm.getActiveNotifications()) {
+                    if (sbn.getId() == id) { src = sbn.getNotification() != null ? sbn : null; break; }
+                }
+                if (src == null) return;
+                SharedPreferences prefs =
+                        fc.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                sendIslandUpdate(fi, state, fc, channelId, src.getNotification(), nm, tag, id, prefs);
+            }, delayMs);
+            XposedBridge.log(TAG + ": Handler 已设定 state=" + state + " in " + (delayMs / 1000) + "s");
         }
     }
 

@@ -30,6 +30,12 @@ __pycache__/
 *.pyc
 *.pyo
 
+# ── 构建自动生成（非代码） ────────────────────────────────────
+# versionCode 由 Gradle 在每次 release 构建时自动写入，不属于代码变更
+version.properties
+# Gradle Wrapper JAR（可由 gradlew 自动下载，无需入库）
+gradle/wrapper/gradle-wrapper.jar
+
 # ── 本地临时文件 ──────────────────────────────────────────────
 pdf_text.txt
 *.pdf

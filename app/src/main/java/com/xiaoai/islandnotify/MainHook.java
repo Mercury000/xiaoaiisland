@@ -80,10 +80,12 @@ public class MainHook implements IXposedHookLoadPackage {
         if (!TARGET_PACKAGE.equals(lpparam.packageName)) {
             return;
         }
-        // 同一进程可能因多 ClassLoader 被调用多次，只注册一次
-        // 用 System.setProperty 而非 static 字段，确保跨 ClassLoader 生效
-        if (System.getProperty(HOOKED_KEY) != null) return;
-        System.setProperty(HOOKED_KEY, "1");
+        // 同一进程可能因多 ClassLoader 被并发调用多次，只注册一次
+        // synchronized on Runtime.class（boot classloader），确保跨 ClassLoader 线程安全
+        synchronized (java.lang.Runtime.class) {
+            if (System.getProperty(HOOKED_KEY) != null) return;
+            System.setProperty(HOOKED_KEY, "1");
+        }
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
         hookApplicationOnCreate(lpparam);
         hookNotifyMethods(lpparam);

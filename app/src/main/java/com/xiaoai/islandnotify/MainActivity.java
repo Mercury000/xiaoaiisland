@@ -74,6 +74,7 @@ public class MainActivity extends AppCompatActivity {
         updateModuleStatus();
         initCustomCard();
         initHideIconSwitch();
+        initAboutSection(); // 初始化关于页面的版本信息
     }
 
     @Override
@@ -197,6 +198,25 @@ public class MainActivity extends AppCompatActivity {
 
     // ─────────────────────────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────
+
+    /** 初始化关于页面，动态显示版本号 */
+    private void initAboutSection() {
+        TextView versionText = findViewById(R.id.version_text);
+        if (versionText != null) {
+            String versionName = getAppVersionName();
+            versionText.setText(versionName);
+        }
+    }
+
+    /** 获取应用版本名称 */
+    private String getAppVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            Log.e("MainActivity", "获取版本信息失败", e);
+            return "未知版本";
+        }
+    }
 
     /** 检查/请求通知权限，通过后再执行 action。 */
     private void requireNotifPermAndRun(Runnable action) {

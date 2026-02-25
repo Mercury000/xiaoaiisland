@@ -2,30 +2,100 @@ plugins {
     id 'com.android.application'
 }
 
-// ── 自动迭代版本号 ───────────────────────────────────────────────
-// 版本信息存储在项目根目录 version.properties，构建 release 时自动 +1
-def versionPropsFile = rootProject.file('version.properties')
-def versionProps = new Properties()
-if (versionPropsFile.exists()) {
-    versionPropsFile.withInputStream { versionProps.load(it) }
-}
-def vCode = (versionProps['VERSION_CODE'] ?: '1').toInteger()
-def vName = (versionProps['VERSION_NAME'] ?: '1.0.0')
+// ── 自动迭代版本号 (yyyymmddxx 格式，纯数字) ───────────────────────────────────────────────
+// 版本信息存储在项目根目录 version.properties，Debug/Release使用独立计数
 
-// 仅在明确构建 release 变体时才自增（debug 构建不影响计数）
-def isReleaseBuild = gradle.startParameter.taskNames.any {
-    it.toLowerCase().contains('release')
+// 获取当前日期
+def getDateStr() {
+    return new Date().format('yyyyMMdd')
 }
-if (isReleaseBuild) {
-    vCode++
-    versionProps['VERSION_CODE'] = vCode.toString()
+
+// 生成指定类型的版本号
+def generateVersion(buildType) {
+    def versionPropsFile = rootProject.file('version.properties')
+    def versionProps = new Properties()
+    if (versionPropsFile.exists()) {
+        versionPropsFile.withInputStream { versionProps.load(it) }
+    }
+    
+    def today = getDateStr()
+    def prefix = buildType == 'release' ? 'RELEASE_' : 'DEBUG_'
+    def lastBuildDate = versionProps[prefix + 'LAST_BUILD_DATE'] ?: ''
+    def lastBuildCount = (versionProps[prefix + 'BUILD_COUNT'] ?: '0').toInteger()
+    
+    if (lastBuildDate == today) {
+        // 同一天构建，序号+1
+        lastBuildCount++
+    } else {
+        // 新的一天，重置序号为1
+        lastBuildCount = 1
+    }
+    
+    // 生成 yyyymmddxx 格式的纯数字版本号
+    def versionCode = (today + String.format('%02d', lastBuildCount)).toInteger()
+    def versionName = versionCode.toString()  // 纯数字格式，无点
+    
+    // Debug版本添加后缀标识（仅用于显示，不影响实际版本号）
+    def displayVersionName = versionName
+    if (buildType == 'debug') {
+        displayVersionName += '_debug'
+    }
+    
+    // 更新属性文件
+    versionProps[prefix + 'LAST_BUILD_DATE'] = today
+    versionProps[prefix + 'BUILD_COUNT'] = lastBuildCount.toString()
+    versionProps[prefix + 'VERSION_CODE'] = versionCode.toString()
+    versionProps[prefix + 'VERSION_NAME'] = versionName  // 存储纯数字版本号
+    
     versionPropsFile.withWriter { versionProps.store(it, null) }
-    logger.lifecycle(">>> Release 构建：versionCode 已自增至 $vCode")
+    
+    logger.lifecycle(">>> ${buildType.toUpperCase()} 构建：今日第 ${lastBuildCount} 次")
+    logger.lifecycle(">>> versionCode: ${versionCode}")
+    logger.lifecycle(">>> versionName: ${displayVersionName}")
+    
+    return [code: versionCode, name: versionName, displayName: displayVersionName]
+}
+
+// 判断构建类型
+def isReleaseBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+def isDebugBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains('debug') }
+
+def releaseVersion, debugVersion
+
+// 只有在需要时才生成对应的版本号
+if (isReleaseBuild) {
+    releaseVersion = generateVersion('release')
+}
+if (isDebugBuild) {
+    debugVersion = generateVersion('debug')
+}
+
+// 如果都没有匹配，默认生成release版本号
+def vCode, vName, displayVName
+if (isReleaseBuild && releaseVersion) {
+    vCode = releaseVersion.code
+    vName = releaseVersion.name
+    displayVName = releaseVersion.displayName
+} else if (isDebugBuild && debugVersion) {
+    vCode = debugVersion.code
+    vName = debugVersion.name
+    displayVName = debugVersion.displayName
+} else {
+    // 默认情况，生成release版本号
+    def defaultVersion = generateVersion('release')
+    vCode = defaultVersion.code
+    vName = defaultVersion.name
+    displayVName = defaultVersion.displayName
 }
 
 android {
     namespace 'com.xiaoai.islandnotify'
     compileSdk 35
+    
+    // 添加构建配置来解决output-metadata.json问题
+    buildFeatures {
+        buildConfig = true
+    }
 
     defaultConfig {
         applicationId "com.xiaoai.islandnotify"
@@ -33,16 +103,86 @@ android {
         minSdk 31
         targetSdk 35
         versionCode vCode
-        versionName vName
+        versionName vName  // 使用纯数字版本号
+    }
+
+    // 签名配置
+    signingConfigs {
+        release {
+            // 从build目录下安全读取签名配置
+            def signingPropsFile = rootProject.file('build/config/signing.properties')
+            logger.lifecycle(">>> 查找签名配置文件: ${signingPropsFile.absolutePath}")
+            logger.lifecycle(">>> 文件是否存在: ${signingPropsFile.exists()}")
+            
+            if (signingPropsFile.exists()) {
+                def props = new Properties()
+                signingPropsFile.withInputStream { props.load(it) }
+                
+                logger.lifecycle(">>> 读取到的配置:")
+                props.each { key, value ->
+                    if (key.contains('Password')) {
+                        logger.lifecycle(">>> ${key}: ******")
+                    } else {
+                        logger.lifecycle(">>> ${key}: ${value}")
+                    }
+                }
+                
+                // 安全检查必需的属性
+                if (props['storeFile'] && new File(props['storeFile']).exists() && 
+                    props['storePassword'] && props['keyAlias'] && props['keyPassword']) {
+                    storeFile file(props['storeFile'])
+                    storePassword props['storePassword']
+                    keyAlias props['keyAlias']
+                    keyPassword props['keyPassword']
+                    
+                    logger.lifecycle(">>> 签名配置加载成功")
+                } else {
+                    logger.lifecycle(">>> 签名配置不完整或文件不存在")
+                    logger.lifecycle(">>> storeFile存在: ${props['storeFile'] ? new File(props['storeFile']).exists() : 'null'}")
+                    throw new GradleException("签名配置错误，请检查build/config/signing.properties文件")
+                }
+            } else {
+                logger.lifecycle(">>> 未找到签名配置文件")
+                throw new GradleException("缺少build/config/signing.properties签名配置文件")
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+            
+            // 自定义Release APK文件名和输出路径
+            applicationVariants.all { variant ->
+                if (variant.buildType.name == 'release') {
+                    variant.outputs.all {
+                        def appName = "课程表超级岛"
+                        def versionName = variant.versionName  // 纯数字版本号
+                        outputFileName = "${appName}_${versionName}.apk"
+                        
+                        // 设置输出目录
+                        variant.packageApplicationProvider.get().outputDirectory = file("$rootDir/build/release")
+                    }
+                }
+            }
         }
         debug {
             minifyEnabled false
+            // 自定义Debug APK文件名和输出路径
+            applicationVariants.all { variant ->
+                if (variant.buildType.name == 'debug') {
+                    variant.outputs.all {
+                        def appName = "课程表超级岛"
+                        def versionName = variant.versionName  // 纯数字版本号
+                        outputFileName = "${appName}_${versionName}_debug.apk"
+                        
+                        // 设置输出目录
+                        variant.packageApplicationProvider.get().outputDirectory = file("$rootDir/build/debug")
+                    }
+                }
+            }
         }
     }
 
@@ -61,4 +201,12 @@ dependencies {
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'androidx.activity:activity:1.9.3'
     implementation 'androidx.constraintlayout:constraintlayout:2.2.0'
+}
+
+// 强制禁用APK列表文件重定向任务
+afterEvaluate {
+    tasks.matching { it.name.startsWith('create') && it.name.endsWith('ApkListingFileRedirect') }.all {
+        enabled = false
+        println "Disabled task: ${it.name}"
+    }
 }

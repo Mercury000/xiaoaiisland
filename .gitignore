@@ -12,10 +12,10 @@ build/
 local.properties
 captures/
 
-# ── 签名密钥（绝对不能提交） ─────────────────────────────────
-*.jks
-*.keystore
-keystore.properties
+# ── 构建工具敏感信息保护 ────────────────────────────────────────
+build-tools/signing/
+build-tools/*.properties
+signing.properties
 
 # ── 本地 libs jar（体积大，通过文档说明手动放置） ────────────
 app/libs/*.jar

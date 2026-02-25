@@ -597,6 +597,147 @@ public class MainActivity extends AppCompatActivity {
             String versionName = getAppVersionName();
             versionText.setText(versionName);
         }
+
+        // 检查更新按钮
+        MaterialButton btnCheckUpdate = findViewById(R.id.btn_check_update);
+        TextView tvUpdateStatus = findViewById(R.id.tv_update_status);
+        if (btnCheckUpdate != null) {
+            btnCheckUpdate.setOnClickListener(v -> {
+                btnCheckUpdate.setEnabled(false);
+                btnCheckUpdate.setText("检查中...");
+                if (tvUpdateStatus != null) {
+                    tvUpdateStatus.setText("");
+                }
+
+                UpdateChecker updateChecker = new UpdateChecker(this);
+                updateChecker.checkUpdate(new UpdateChecker.UpdateCheckCallback() {
+                    @Override
+                    public void onNewVersionAvailable(UpdateChecker.UpdateInfo updateInfo) {
+                        runOnUiThread(() -> {
+                            btnCheckUpdate.setEnabled(true);
+                            btnCheckUpdate.setText("检查");
+                            if (tvUpdateStatus != null) {
+                                tvUpdateStatus.setText("有新版本");
+                                tvUpdateStatus.setTextColor(getColor(R.color.colorPrimary));
+                            }
+                            showUpdateDialog(updateInfo);
+                        });
+                    }
+
+                    @Override
+                    public void onAlreadyLatest(String currentVersion) {
+                        runOnUiThread(() -> {
+                            btnCheckUpdate.setEnabled(true);
+                            btnCheckUpdate.setText("检查");
+                            if (tvUpdateStatus != null) {
+                                tvUpdateStatus.setText("已是最新");
+                                tvUpdateStatus.setTextColor(getColor(R.color.colorSuccess));
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onError(String errorMessage) {
+                        runOnUiThread(() -> {
+                            btnCheckUpdate.setEnabled(true);
+                            btnCheckUpdate.setText("检查");
+                            if (tvUpdateStatus != null) {
+                                tvUpdateStatus.setText(errorMessage);
+                                tvUpdateStatus.setTextColor(getColor(R.color.colorError));
+                            }
+                        });
+                    }
+                }, true); // 手动检查
+            });
+        }
+
+        // 自动检查更新（每次进入APP时）
+        autoCheckUpdate();
+    }
+
+    /**
+     * 自动检查更新
+     */
+    private void autoCheckUpdate() {
+        UpdateChecker updateChecker = new UpdateChecker(this);
+        updateChecker.checkUpdate(new UpdateChecker.UpdateCheckCallback() {
+            @Override
+            public void onNewVersionAvailable(UpdateChecker.UpdateInfo updateInfo) {
+                runOnUiThread(() -> {
+                    // 自动检查时，如果用户已忽略此版本，则不弹窗
+                    if (!updateInfo.isManual) {
+                        // 检查是否已忽略此版本
+                        SharedPreferences prefs = getSharedPreferences("update_check", Context.MODE_PRIVATE);
+                        String ignoredVersion = prefs.getString("ignored_version", "");
+                        if (ignoredVersion.equals(updateInfo.latestVersion)) {
+                            // 已忽略此版本，不弹窗
+                            return;
+                        }
+                    }
+                    showUpdateDialog(updateInfo);
+                });
+            }
+
+            @Override
+            public void onAlreadyLatest(String currentVersion) {
+                // 自动检查时，已是最新版本不显示提示
+            }
+
+            @Override
+            public void onError(String errorMessage) {
+                // 自动检查时，网络错误不显示提示
+            }
+        }, false); // 自动检查
+    }
+
+    /**
+     * 显示更新提示对话框
+     */
+    private void showUpdateDialog(UpdateChecker.UpdateInfo updateInfo) {
+        androidx.appcompat.app.AlertDialog.Builder builder = new androidx.appcompat.app.AlertDialog.Builder(this);
+        android.view.LayoutInflater inflater = getLayoutInflater();
+        android.view.View dialogView = inflater.inflate(R.layout.dialog_update, null);
+
+        // 设置版本信息
+        TextView tvCurrentVersion = dialogView.findViewById(R.id.tv_current_version);
+        TextView tvLatestVersion = dialogView.findViewById(R.id.tv_latest_version);
+        TextView tvReleaseBody = dialogView.findViewById(R.id.tv_release_body);
+
+        if (tvCurrentVersion != null) {
+            tvCurrentVersion.setText(updateInfo.localVersion);
+        }
+        if (tvLatestVersion != null) {
+            tvLatestVersion.setText(updateInfo.latestVersion);
+        }
+        if (tvReleaseBody != null) {
+            tvReleaseBody.setText(updateInfo.releaseBody.isEmpty() ? "暂无更新日志" : updateInfo.releaseBody);
+        }
+
+        builder.setView(dialogView);
+
+        // 创建对话框
+        androidx.appcompat.app.AlertDialog dialog = builder.create();
+
+        // 设置按钮
+        dialogView.findViewById(R.id.btn_go_to_download).setOnClickListener(v -> {
+            // 打开GitHub Releases页面
+            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            intent.setData(android.net.Uri.parse(updateInfo.htmlUrl));
+            startActivity(intent);
+            dialog.dismiss();
+        });
+
+        dialogView.findViewById(R.id.btn_ignore_version).setOnClickListener(v -> {
+            // 忽略此版本
+            UpdateChecker updateChecker = new UpdateChecker(this);
+
+            // 无论是手动检查还是自动检查，忽略此版本后，以后都不再弹窗
+            updateChecker.ignoreVersion(updateInfo.latestVersion);
+
+            dialog.dismiss();
+        });
+
+        dialog.show();
     }
 
     /** 获取应用版本名称 */

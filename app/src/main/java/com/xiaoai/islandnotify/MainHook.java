@@ -714,9 +714,11 @@ public class MainHook implements IXposedHookLoadPackage {
         final boolean showIconA = (prefs == null || prefs.getBoolean("icon_a", true));
         JSONObject aTextInfo = new JSONObject();
         String aFallback = resolveTemplate(DEFAULT_TPLS[
-                (state == STATE_COUNTDOWN) ? 0 : (state == STATE_ELAPSED) ? 1 : 2][0], info, info.courseName);
+                (state == STATE_COUNTDOWN) ? 0 : (state == STATE_ELAPSED) ? 1 : 2][0], info, info.courseName,
+                state, startMs, endMs, now);
         aTextInfo.put("title", resolveTemplate(
-                getStagedPref(prefs, "tpl_a", stageSuffix), info, aFallback));
+                getStagedPref(prefs, "tpl_a", stageSuffix), info, aFallback,
+                state, startMs, endMs, now));
         JSONObject imageTextInfoLeft = new JSONObject();
         imageTextInfoLeft.put("type", 1);
         if (showIconA) {
@@ -727,14 +729,144 @@ public class MainHook implements IXposedHookLoadPackage {
         }
         // 隐藏图标时不传 picInfo，文档："图标或正文大字二选一"，有 textInfo.title 即合规
         imageTextInfoLeft.put("textInfo", aTextInfo);
-        JSONObject bTextInfo = new JSONObject();
-        String bFallback = resolveTemplate(DEFAULT_TPLS[
-                (state == STATE_COUNTDOWN) ? 0 : (state == STATE_ELAPSED) ? 1 : 2][1], info, info.classroom.isEmpty() ? "\u2014" : info.classroom);
-        bTextInfo.put("title", resolveTemplate(
-                getStagedPref(prefs, "tpl_b", stageSuffix), info, bFallback));
+        // 检查岛B样式是否为等宽数字
+        String bStyle = prefs != null ? prefs.getString("tpl_b_style" + stageSuffix, "default") : "default";
         JSONObject bigIslandArea = new JSONObject();
         bigIslandArea.put("imageTextInfoLeft", imageTextInfoLeft);
-        bigIslandArea.put("textInfo",          bTextInfo);
+
+        if (bStyle.equals("digital")) {
+            // 等宽数字样式：使用sameWidthDigitInfo结构
+            JSONObject sameWidthDigitInfo = new JSONObject();
+
+            // 获取计时变量和后置小字
+            String timerVar = prefs != null ? prefs.getString("tpl_b_timer_var" + stageSuffix, "{计时}") : "{计时}";
+            String suffix = prefs != null ? prefs.getString("tpl_b_suffix" + stageSuffix,
+                    state == STATE_COUNTDOWN ? "后上课" : (state == STATE_ELAPSED ? "后下课" : "已下课")) :
+                    (state == STATE_COUNTDOWN ? "后上课" : (state == STATE_ELAPSED ? "后下课" : "已下课"));
+
+            // 计算计时值
+            String timerValue = "";
+            String elapsedValue = "";
+            String countdownValue = "";
+
+            if (state == STATE_COUNTDOWN) { // 上课前
+                // {计时}：倒计时（距离上课时间）
+                long countdownMs = startMs - now;
+                if (countdownMs > 0) {
+                    timerValue = formatTime(countdownMs);
+                } else {
+                    timerValue = "已开始";
+                }
+                // {正计时}：不适用
+                elapsedValue = "N/A";
+                // {倒计时}：倒计时（距离上课时间）
+                countdownValue = timerValue;
+            } else if (state == STATE_ELAPSED) { // 上课中
+                // {计时}：倒计时（距离下课时间）
+                long countdownMs = endMs - now;
+                if (countdownMs > 0) {
+                    timerValue = formatTime(countdownMs);
+                } else {
+                    timerValue = "已结束";
+                }
+                // {正计时}：正计时（已上课时间）
+                long elapsedMs = now - startMs;
+                if (elapsedMs > 0) {
+                    elapsedValue = formatTime(elapsedMs);
+                } else {
+                    elapsedValue = "00:00";
+                }
+                // {倒计时}：倒计时（距离下课时间）
+                countdownValue = timerValue;
+            } else { // 下课后
+                // {计时}：正计时（已下课时间）
+                long elapsedMs = now - endMs;
+                if (elapsedMs > 0) {
+                    timerValue = formatTime(elapsedMs);
+                } else {
+                    timerValue = "00:00";
+                }
+                // {正计时}：不适用
+                elapsedValue = "N/A";
+                // {倒计时}：不适用
+                countdownValue = "N/A";
+            }
+
+            // 根据选择的计时变量确定使用digit还是timerInfo
+            // digit和timerInfo是二选一的，不能同时构造
+
+            if (timerVar.equals("{开始}") || timerVar.equals("{结束}")) {
+                // 使用digit字段（静态时间）
+                String digit = "";
+                if (timerVar.equals("{开始}")) {
+                    digit = info.startTime;
+                } else if (timerVar.equals("{结束}")) {
+                    digit = info.endTime;
+                }
+
+                // 构建sameWidthDigitInfo对象（只包含digit）
+                sameWidthDigitInfo.put("digit", digit);
+                sameWidthDigitInfo.put("content", suffix);
+                sameWidthDigitInfo.put("showHighlightColor", true);
+            } else {
+                // 使用timerInfo对象（动态计时器）
+                JSONObject timerInfo = new JSONObject();
+                int timerTypeDigital = 0;
+                long timerWhen = 0;
+                long timerTotal = 0;
+                long timerSystemCurrent = now;
+
+                if (state == STATE_COUNTDOWN) { // 上课前
+                    // 上课前只有{计时}变量，使用倒计时
+                    timerTypeDigital = -1; // 倒计时
+                    timerWhen = startMs;
+                    timerTotal = startMs - now;
+                } else if (state == STATE_ELAPSED) { // 上课中
+                    if (timerVar.equals("{正计时}")) {
+                        timerTypeDigital = 1; // 正计时
+                        timerWhen = startMs;
+                        timerTotal = now - startMs;
+                    } else if (timerVar.equals("{倒计时}")) {
+                        timerTypeDigital = -1; // 倒计时
+                        timerWhen = endMs;
+                        timerTotal = endMs - now;
+                    }
+                } else { // 下课后
+                    if (timerVar.equals("{计时}") || timerVar.equals("{正计时}")) {
+                        // 下课后{计时}统一为正计时（已下课）
+                        timerTypeDigital = 1; // 正计时
+                        timerWhen = endMs;
+                        timerTotal = now - endMs;
+                    } else if (timerVar.equals("{倒计时}")) {
+                        timerTypeDigital = -1; // 倒计时
+                        timerWhen = endMs;
+                        timerTotal = endMs - now;
+                    }
+                }
+
+                timerInfo.put("timerType", timerTypeDigital);
+                timerInfo.put("timerWhen", timerWhen);
+                timerInfo.put("timerTotal", timerTotal);
+                timerInfo.put("timerSystemCurrent", timerSystemCurrent);
+
+                // 构建sameWidthDigitInfo对象（只包含timerInfo）
+                sameWidthDigitInfo.put("timerInfo", timerInfo);
+                sameWidthDigitInfo.put("content", suffix);
+                sameWidthDigitInfo.put("showHighlightColor", true);
+            }
+
+            bigIslandArea.put("sameWidthDigitInfo", sameWidthDigitInfo);
+        } else {
+            // 默认样式：使用原来的textInfo结构
+            JSONObject bTextInfo = new JSONObject();
+            String bFallback = resolveTemplate(DEFAULT_TPLS[
+                    (state == STATE_COUNTDOWN) ? 0 : (state == STATE_ELAPSED) ? 1 : 2][1], info, info.classroom.isEmpty() ? "\u2014" : info.classroom,
+                    state, startMs, endMs, now);
+            bTextInfo.put("title", resolveTemplate(
+                    getStagedPref(prefs, "tpl_b", stageSuffix), info, bFallback,
+                    state, startMs, endMs, now));
+            bigIslandArea.put("textInfo", bTextInfo);
+        }
 
         // ── smallIslandArea（小岛/息屏图标）────────────────────────────────────────
         // 文档说明：小岛图标有三级 fallback（开发者上传 → A区左侧图标 → 应用图标），
@@ -774,7 +906,8 @@ public class MainHook implements IXposedHookLoadPackage {
         // ── paramV2 ───────────────────────────────────────────────
         String tickerText = resolveTemplate(
                 getStagedPref(prefs, "tpl_ticker", stageSuffix),
-                info, buildTickerText(info));
+                info, buildTickerText(info),
+                state, startMs, endMs, now);
         JSONObject paramV2 = new JSONObject();
         paramV2.put("protocol",    1);
         paramV2.put("business",    "course_schedule");
@@ -836,16 +969,94 @@ public class MainHook implements IXposedHookLoadPackage {
 
     /**
      * 将模板字符串中的变量替换为实际课程信息。
-     * 支持：{课名} {开始} {结束} {教室}
+     * 支持：{课名} {开始} {结束} {教室} {计时} {正计时} {倒计时}
      * 若模板为空则返回 fallback。
+     *
+     * @param tpl 模板字符串
+     * @param info 课程信息
+     * @param fallback 兜底值
+     * @param state 当前状态（0=上课前，1=上课中，2=下课后）
+     * @param startMs 上课时间（毫秒）
+     * @param endMs 下课时间（毫秒）
+     * @param now 当前时间（毫秒）
      */
-    private static String resolveTemplate(String tpl, CourseInfo info, String fallback) {
+    private static String resolveTemplate(String tpl, CourseInfo info, String fallback,
+                                         int state, long startMs, long endMs, long now) {
         if (tpl == null || tpl.isEmpty()) return fallback;
-        return tpl
+
+        String result = tpl
                 .replace("{课名}", info.courseName)
                 .replace("{开始}", info.startTime)
                 .replace("{结束}", info.endTime)
                 .replace("{教室}", info.classroom);
+
+        // 处理计时变量
+        if (result.contains("{计时}") || result.contains("{正计时}") || result.contains("{倒计时}")) {
+            // 计算计时值
+            String timerValue = "";
+            String elapsedValue = "";
+            String countdownValue = "";
+
+            if (state == 0) { // 上课前
+                // {计时}：倒计时（距离上课时间）
+                long countdownMs = startMs - now;
+                if (countdownMs > 0) {
+                    timerValue = formatTime(countdownMs);
+                } else {
+                    timerValue = "已开始";
+                }
+                // {正计时}：不适用
+                elapsedValue = "N/A";
+                // {倒计时}：倒计时（距离上课时间）
+                countdownValue = timerValue;
+            } else if (state == 1) { // 上课中
+                // {计时}：倒计时（距离下课时间）
+                long countdownMs = endMs - now;
+                if (countdownMs > 0) {
+                    timerValue = formatTime(countdownMs);
+                } else {
+                    timerValue = "已结束";
+                }
+                // {正计时}：正计时（已上课时间）
+                long elapsedMs = now - startMs;
+                if (elapsedMs > 0) {
+                    elapsedValue = formatTime(elapsedMs);
+                } else {
+                    elapsedValue = "00:00";
+                }
+                // {倒计时}：倒计时（距离下课时间）
+                countdownValue = timerValue;
+            } else { // 下课后
+                // {计时}：正计时（已下课时间）
+                long elapsedMs = now - endMs;
+                if (elapsedMs > 0) {
+                    timerValue = formatTime(elapsedMs);
+                } else {
+                    timerValue = "00:00";
+                }
+                // {正计时}：不适用
+                elapsedValue = "N/A";
+                // {倒计时}：不适用
+                countdownValue = "N/A";
+            }
+
+            // 替换变量
+            result = result.replace("{计时}", timerValue);
+            result = result.replace("{正计时}", elapsedValue);
+            result = result.replace("{倒计时}", countdownValue);
+        }
+
+        return result;
+    }
+
+    /**
+     * 格式化毫秒时间为 MM:SS 格式
+     */
+    private static String formatTime(long milliseconds) {
+        long totalSeconds = milliseconds / 1000;
+        long minutes = totalSeconds / 60;
+        long seconds = totalSeconds % 60;
+        return String.format("%02d:%02d", minutes, seconds);
     }
 
     /**

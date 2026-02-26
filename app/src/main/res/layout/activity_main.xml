@@ -162,7 +162,7 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_send_test"
-                        style="@style/Widget.Material3.Button"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="发送测试通知" />
@@ -208,7 +208,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:layout_marginBottom="14dp"
-                        android:text="可用变量：{课名} {开始} {结束} {教室}"
+                        android:text="可用变量：{课名} {开始} {结束} {教室} {计时} {正计时} {倒计时}（注：{计时}、{正计时}、{倒计时}仅在等宽数字样式下可用）"
                         android:textAppearance="?attr/textAppearanceBodySmall"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:alpha="0.75" />
@@ -236,18 +236,93 @@
                             android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <!-- 岛B选择区域（并排横排显示） -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"
+                        android:text="岛B选择区域"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="8dp">
+
+                        <!-- 第一个下拉选择器：样式选择 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="4dp"
+                            android:hint="样式"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_b_style_pre"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true"
+                                android:focusable="false"
+                                android:cursorVisible="false"
+                                android:text="默认样式" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- 第二个：根据样式选择显示不同的输入框或选择器 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_b_default_pre"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            android:hint="岛B（右侧文字）"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_tpl_b_pre"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- 第三个：后置小字输入框 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_b_suffix_pre"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            android:hint="后置小字"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_b_suffix_pre"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true"
+                                android:text="后上课" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- 等宽数字样式变量选择器（下拉选择器） -->
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tpl_b_timer_var_pre"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="8dp"
-                        android:hint="岛B（右侧文字）"
+                        android:visibility="gone"
+                        android:hint="变量选择"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_tpl_b_pre"
+                            android:id="@+id/et_b_timer_var_pre"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:imeOptions="actionNext"
-                            android:singleLine="true" />
+                            android:singleLine="true"
+                            android:text="{计时}" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -292,18 +367,93 @@
                             android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <!-- 岛B选择区域（并排横排显示） -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"
+                        android:text="岛B选择区域"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="8dp">
+
+                        <!-- 第一个下拉选择器：样式选择 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="4dp"
+                            android:hint="样式"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_b_style_active"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true"
+                                android:focusable="false"
+                                android:cursorVisible="false"
+                                android:text="默认样式" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- 第二个：根据样式选择显示不同的输入框或选择器 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_b_default_active"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            android:hint="岛B（右侧文字）"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_tpl_b_active"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- 第三个：后置小字输入框 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_b_suffix_active"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            android:hint="后置小字"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_b_suffix_active"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true"
+                                android:text="后下课" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- 等宽数字样式变量选择器（下拉选择器） -->
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tpl_b_timer_var_active"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="8dp"
-                        android:hint="岛B（右侧文字）"
+                        android:visibility="gone"
+                        android:hint="变量选择"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_tpl_b_active"
+                            android:id="@+id/et_b_timer_var_active"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:imeOptions="actionNext"
-                            android:singleLine="true" />
+                            android:singleLine="true"
+                            android:text="{计时}" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -348,18 +498,93 @@
                             android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <!-- 岛B选择区域（并排横排显示） -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"
+                        android:text="岛B选择区域"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="8dp">
+
+                        <!-- 第一个下拉选择器：样式选择 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="4dp"
+                            android:hint="样式"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_b_style_post"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true"
+                                android:focusable="false"
+                                android:cursorVisible="false"
+                                android:text="默认样式" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- 第二个：根据样式选择显示不同的输入框或选择器 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_b_default_post"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            android:hint="岛B（右侧文字）"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_tpl_b_post"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:singleLine="true" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- 第三个：后置小字输入框 -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_b_suffix_post"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            android:hint="后置小字"
+                            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_b_suffix_post"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionDone"
+                                android:singleLine="true"
+                                android:text="已下课" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- 等宽数字样式变量选择器（下拉选择器） -->
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tpl_b_timer_var_post"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="8dp"
-                        android:hint="岛B（右侧文字）"
+                        android:visibility="gone"
+                        android:hint="变量选择"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_tpl_b_post"
+                            android:id="@+id/et_b_timer_var_post"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:imeOptions="actionNext"
-                            android:singleLine="true" />
+                            android:singleLine="true"
+                            android:text="{计时}" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -405,7 +630,7 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_save_custom"
-                        style="@style/Widget.Material3.Button"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="保存" />
@@ -682,7 +907,7 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_save_timeout"
-                        style="@style/Widget.Material3.Button"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="保存超时设置" />

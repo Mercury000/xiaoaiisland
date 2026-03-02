@@ -75,6 +75,20 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String KEY_REMINDER_MINUTES = "reminder_minutes_before";
     /** 课前提醒默认提前分钟数 */
     private static final int DEFAULT_REMINDER_MINUTES = 15;
+    /** CourseData 变化防抖延迟（ms）：合并同一次写入触发的多个 inotify 事件 */
+    private static final int RESCHEDULE_DEBOUNCE_MS = 1500;
+    /** 防抖 Handler，懒加载避免 Xposed 初始化阶段 Looper 未就绪导致 NPE */
+    private android.os.Handler mRescheduleHandler;
+    /** 防抖 token，用于 removeCallbacksAndMessages */
+    private final Object mRescheduleToken = new Object();
+
+    /** 获取（或创建）防抖 Handler，保证在主 Looper 就绪后才初始化。 */
+    private android.os.Handler getRescheduleHandler() {
+        if (mRescheduleHandler == null) {
+            mRescheduleHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        }
+        return mRescheduleHandler;
+    }
     /** 跨 ClassLoader 的防重复注入标记 key（存于 boot classloader 的 System.properties） */
     private static final String HOOKED_KEY = "xiaoai.island.hooked";
 
@@ -399,19 +413,27 @@ public class MainHook implements IXposedHookLoadPackage {
      */
     private void registerCourseDataObserver(Context ctx) {
         try {
-            String filePath = ctx.getFilesDir().getParent()
-                    + "/shared_prefs/CourseData.xml";
-            android.os.FileObserver observer = new android.os.FileObserver(
-                    filePath, android.os.FileObserver.CLOSE_WRITE) {
+            // Android SharedPreferences 采用原子写入：先写 .bak 临时文件，再 rename 到目标文件。
+            // 因此监听单个文件的 CLOSE_WRITE 永远不会触发（inode 已替换）。
+            // 正确做法：监听 shared_prefs 目录，捕获 MOVED_TO（rename 完成）和 CLOSE_WRITE。
+            String dirPath = ctx.getFilesDir().getParent() + "/shared_prefs";
+            // MOVED_TO=64, CLOSE_WRITE=8
+            int mask = android.os.FileObserver.MOVED_TO | android.os.FileObserver.CLOSE_WRITE;
+            android.os.FileObserver observer = new android.os.FileObserver(dirPath, mask) {
                 @Override
                 public void onEvent(int event, String path) {
-                    XposedBridge.log(TAG + ": CourseData.xml 已更新，重新调度课前提醒");
-                    new android.os.Handler(android.os.Looper.getMainLooper())
-                            .post(() -> scheduleTodayCourseReminders(ctx));
+                    if (!"CourseData.xml".equals(path)) return;
+                    // 防抖：一次 SP 原子写入会产生多个 inotify 事件（.bak CLOSE_WRITE + MOVED_TO）
+                    // 取消已挂起的调度请求，延迟后只执行一次
+                    getRescheduleHandler().removeCallbacksAndMessages(mRescheduleToken);
+                    getRescheduleHandler().postDelayed(() -> {
+                        XposedBridge.log(TAG + ": CourseData.xml 已更新，重新调度课前提醒");
+                        scheduleTodayCourseReminders(ctx);
+                    }, mRescheduleToken, RESCHEDULE_DEBOUNCE_MS);
                 }
             };
             observer.startWatching();
-            XposedBridge.log(TAG + ": CourseData 文件观察器已注册 → " + filePath);
+            XposedBridge.log(TAG + ": CourseData 目录观察器已注册 → " + dirPath);
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": registerCourseDataObserver 失败 → " + e.getMessage());
         }

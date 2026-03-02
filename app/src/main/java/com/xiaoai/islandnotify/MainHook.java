@@ -93,6 +93,8 @@ public class MainHook implements IXposedHookLoadPackage {
             new java.util.concurrent.atomic.AtomicInteger(2001);
     /** 上一条测试通知的 ID，用于发新测试前自动取消旧通知；-1 表示尚无 */
     private static volatile int sLastTestNotifId = -1;
+    /** 已调度的课前提醒 alarmId 集合，关闭开关或重新调度时用于批量取消 */
+    private final java.util.Set<Integer> mScheduledAlarmIds = new java.util.HashSet<>();
 
     /** 获取（或创建）防抖 Handler，保证在主 Looper 就绪后才初始化。 */
     private android.os.Handler getRescheduleHandler() {
@@ -200,6 +202,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                             mCourseDataObserver.stopWatching();
                                             mCourseDataObserver = null;
                                         }
+                                        cancelAllScheduledAlarms(context);
                                     }
                                 }
                             }
@@ -359,7 +362,14 @@ public class MainHook implements IXposedHookLoadPackage {
      */
     private void scheduleTodayCourseReminders(Context ctx) {
         try {
-            SharedPreferences coursePrefs = ctx.getSharedPreferences(PREFS_COURSE_DATA, Context.MODE_PRIVATE);
+            // MODE_MULTI_PROCESS：每次调用都从磁盘重新读取，避免跨进程写入后本进程缓存陈旧
+            // 重新调度前先取消所有旧闹钟，避免课程删除后残留
+            cancelAllScheduledAlarms(ctx);
+            mScheduledAlarmIds.clear();
+
+            @SuppressWarnings("deprecation")
+            SharedPreferences coursePrefs = ctx.getSharedPreferences(
+                    PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
             String beanJson = coursePrefs.getString("weekCourseBean", null);
             if (beanJson == null || beanJson.isEmpty()) {
                 XposedBridge.log(TAG + ": CourseData 为空，跳过课前提醒调度");
@@ -453,7 +463,15 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                 }
 
-                if (triggerMs <= nowMs) continue; // 已过，跳过
+                if (triggerMs <= nowMs) {
+                    // 已进入提醒窗口且课程未开始 → 立即补发通知
+                    if (nowMs < startMs) {
+                        sendCourseReminderNow(ctx, info, alarmId);
+                        XposedBridge.log(TAG + ": [窗口内补发] " + courseName + " @" + startTime);
+                        scheduledCount++;
+                    }
+                    continue;
+                }
 
                 scheduleCourseReminderAlarm(ctx, info, triggerMs, alarmId, isConsecutive);
                 scheduledCount++;
@@ -505,12 +523,80 @@ public class MainHook implements IXposedHookLoadPackage {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
+            mScheduledAlarmIds.add(alarmId);
             long minsLeft = (triggerMs - System.currentTimeMillis()) / 60_000;
             XposedBridge.log(TAG + ": 闹钟已设 " + info.courseName + " @" + info.startTime
                     + (isConsecutive ? "（连续课程，上节下课触发）" : "")
                     + " 约 " + minsLeft + " 分钟后触发");
         } catch (Exception e) {
             XposedBridge.log(TAG + ": scheduleCourseReminderAlarm 失败 → " + e.getMessage());
+        }
+    }
+
+    /**
+     * 取消 mScheduledAlarmIds 中所有已调度的 AlarmManager 闹钟。
+     * 关闭自定义开关或重新调度前调用，避免旧闹钟残留。
+     */
+    private void cancelAllScheduledAlarms(Context ctx) {
+        if (mScheduledAlarmIds.isEmpty()) return;
+        try {
+            AlarmManager am = ctx.getSystemService(AlarmManager.class);
+            for (int id : mScheduledAlarmIds) {
+                Intent dummy = new Intent(ACTION_COURSE_REMINDER);
+                dummy.setPackage(TARGET_PACKAGE);
+                PendingIntent pi = PendingIntent.getBroadcast(ctx, id, dummy,
+                        PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+                if (pi != null) { am.cancel(pi); pi.cancel(); }
+            }
+            XposedBridge.log(TAG + ": 已取消 " + mScheduledAlarmIds.size() + " 个课前提醒闹钟");
+        } catch (Exception e) {
+            XposedBridge.log(TAG + ": cancelAllScheduledAlarms 失败 → " + e.getMessage());
+        }
+    }
+
+    /**
+     * 立即在 voiceassist 进程内发出课前提醒通知。
+     * 同时扫描并 cancel 小爱自身已发出的同频道通知（非我方注入的），
+     * 防止通知栏出现旧旧的重复条目。
+     */
+    private void sendCourseReminderNow(Context ctx, CourseInfo info, int notifId) {
+        try {
+            final String CR_CH = "COURSE_SCHEDULER_REMINDER_sound";
+            android.app.NotificationManager nm =
+                    ctx.getSystemService(android.app.NotificationManager.class);
+            if (nm == null) return;
+            // 取消小爱自己已发出的同频道通知（我方注入的带有 xiaoai.test.course_name 标记，跳过）
+            for (android.service.notification.StatusBarNotification sbn : nm.getActiveNotifications()) {
+                android.app.Notification n = sbn.getNotification();
+                if (CR_CH.equals(n.getChannelId())
+                        && (n.extras == null || !n.extras.containsKey("xiaoai.test.course_name"))) {
+                    nm.cancel(sbn.getId());
+                    XposedBridge.log(TAG + ": 已 cancel 小爱同频道旧通知 id=" + sbn.getId());
+                }
+            }
+            if (nm.getNotificationChannel(CR_CH) == null) {
+                android.app.NotificationChannel ch = new android.app.NotificationChannel(
+                        CR_CH, "课程提醒", android.app.NotificationManager.IMPORTANCE_HIGH);
+                nm.createNotificationChannel(ch);
+            }
+            android.app.Notification notif = new android.app.Notification.Builder(ctx, CR_CH)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("[" + info.courseName + "]快到了，提前准备一下吧")
+                    .setContentText(info.startTime + " - " + info.endTime + "  " + info.classroom)
+                    .build();
+            if (notif.extras == null) notif.extras = new android.os.Bundle();
+            notif.extras.remove("android.title");
+            notif.extras.remove("android.text");
+            notif.extras.putBoolean("android.contains.customView", true);
+            notif.extras.putString("xiaoai.test.course_name", info.courseName);
+            notif.extras.putString("xiaoai.test.start_time",  info.startTime);
+            notif.extras.putString("xiaoai.test.end_time",    info.endTime);
+            notif.extras.putString("xiaoai.test.classroom",   info.classroom);
+            nm.notify(notifId, notif);
+            XposedBridge.log(TAG + ": [立即] 课前提醒通知已发送 " + info.courseName
+                    + " @" + info.startTime + " id=" + notifId);
+        } catch (Exception e) {
+            XposedBridge.log(TAG + ": sendCourseReminderNow 失败 → " + e.getMessage());
         }
     }
 

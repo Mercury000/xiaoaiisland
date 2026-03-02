@@ -84,6 +84,7 @@ public class MainActivity extends AppCompatActivity {
         updateModuleStatus();
         initCustomCard();
         initTimeoutCard();
+        initReminderCard();
         initHideIconSwitch();
         initAboutSection(); // 初始化关于页面的版本信息
     }
@@ -569,6 +570,43 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private static final String ALIAS = "com.xiaoai.islandnotify.MainActivityAlias";
+
+    /**
+     * 初始化「课前提醒」卡片。
+     * 读取/保存提前提醒分钟数，保存时同步到 voiceassist 进程并触发重新调度。
+     */
+    private void initReminderCard() {
+        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        EditText etMinutes = findViewById(R.id.et_reminder_minutes);
+        TextView tvHint    = findViewById(R.id.tv_reminder_hint);
+
+        int saved = sp.getInt("reminder_minutes_before", 15);
+        etMinutes.setText(String.valueOf(saved));
+
+        findViewById(R.id.btn_save_reminder).setOnClickListener(v -> {
+            String str = etMinutes.getText() != null ? etMinutes.getText().toString().trim() : "";
+            int minutes;
+            try {
+                minutes = Integer.parseInt(str);
+                if (minutes < 1) minutes = 1;
+                if (minutes > 120) minutes = 120;
+            } catch (NumberFormatException e) {
+                minutes = 15;
+            }
+            etMinutes.setText(String.valueOf(minutes));
+
+            sp.edit().putInt("reminder_minutes_before", minutes).apply();
+
+            // 同步到 voiceassist 进程并触发重新调度
+            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
+            sync.setPackage("com.miui.voiceassist");
+            sync.putExtra("reminder_minutes_before", minutes);
+            sendBroadcast(sync);
+
+            tvHint.setText("已保存，重新调度今日提醒（提前 " + minutes + " 分钟）");
+            tvHint.setVisibility(View.VISIBLE);
+        });
+    }
 
     private void initHideIconSwitch() {
         SwitchMaterial sw = findViewById(R.id.sw_hide_icon);

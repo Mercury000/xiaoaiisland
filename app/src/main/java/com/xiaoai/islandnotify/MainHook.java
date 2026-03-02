@@ -75,6 +75,12 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String KEY_REMINDER_MINUTES = "reminder_minutes_before";
     /** 课前提醒默认提前分钟数 */
     private static final int DEFAULT_REMINDER_MINUTES = 15;
+    /** 自定义课前提醒开关键（存入 island_custom SP） */
+    private static final String KEY_CUSTOM_REMINDER_ENABLED = "custom_reminder_enabled";
+    /** 自定义课前提醒是否启用（volatile，voiceassist 进程内快速读取，broadcast 后同步更新） */
+    private static volatile boolean sCustomReminderEnabled = false;
+    /** CourseData SP 监听器引用（持有防 GC） */
+    private SharedPreferences.OnSharedPreferenceChangeListener mCourseDataListener;
     /** CourseData 变化防抖延迟（ms）：合并同一次写入触发的多个 inotify 事件 */
     private static final int RESCHEDULE_DEBOUNCE_MS = 1500;
     /** 防抖 Handler，懒加载避免 Xposed 初始化阶段 Looper 未就绪导致 NPE */
@@ -166,10 +172,31 @@ public class MainHook implements IXposedHookLoadPackage {
                                 ed.putInt(KEY_REMINDER_MINUTES, intent.getIntExtra(
                                         KEY_REMINDER_MINUTES, DEFAULT_REMINDER_MINUTES));
                             }
+                            if (intent.hasExtra(KEY_CUSTOM_REMINDER_ENABLED)) {
+                                ed.putBoolean(KEY_CUSTOM_REMINDER_ENABLED,
+                                        intent.getBooleanExtra(KEY_CUSTOM_REMINDER_ENABLED, false));
+                            }
                             ed.apply();
-                            // 提醒分钟数变化时重新调度今日课前提醒
-                            if (intent.hasExtra(KEY_REMINDER_MINUTES)) {
+                            // 提醒分钟数变化时重新调度（仅自定义模式已开启）
+                            if (intent.hasExtra(KEY_REMINDER_MINUTES) && sCustomReminderEnabled) {
                                 scheduleTodayCourseReminders(context);
+                            }
+                            // 自定义开关变化：启动或停止监听+调度
+                            if (intent.hasExtra(KEY_CUSTOM_REMINDER_ENABLED)) {
+                                boolean newEnabled = intent.getBooleanExtra(KEY_CUSTOM_REMINDER_ENABLED, false);
+                                if (newEnabled != sCustomReminderEnabled) {
+                                    sCustomReminderEnabled = newEnabled;
+                                    if (newEnabled) {
+                                        registerCourseDataListener(context);
+                                        scheduleTodayCourseReminders(context);
+                                    } else {
+                                        if (mCourseDataListener != null) {
+                                            context.getSharedPreferences(PREFS_COURSE_DATA, Context.MODE_PRIVATE)
+                                                    .unregisterOnSharedPreferenceChangeListener(mCourseDataListener);
+                                            mCourseDataListener = null;
+                                        }
+                                    }
+                                }
                             }
                             // 记录接收到的 extras 与写入的键值，便于排查模块进程与目标进程不一致问题
                             try {
@@ -251,6 +278,7 @@ public class MainHook implements IXposedHookLoadPackage {
                             XposedBridge.log(TAG + ": 已在目标进程发出测试通知");
                         } else if (ACTION_COURSE_REMINDER.equals(intent.getAction())) {
                             // AlarmManager 触发课前提醒 → 在 voiceassist 进程构造通知
+                            if (!sCustomReminderEnabled) return;
                             String crName  = safeStr(intent.getStringExtra("course_name"));
                             String crStart = safeStr(intent.getStringExtra("start_time"));
                             String crEnd   = safeStr(intent.getStringExtra("end_time"));
@@ -284,11 +312,14 @@ public class MainHook implements IXposedHookLoadPackage {
                 } else {
                     appCtx.registerReceiver(receiver, filter);
                 }
-                // 注册 CourseData 文件变化监听，数据更新时重新调度提醒
-                registerCourseDataObserver(appCtx);
-                // 立即调度今日课前提醒
-                scheduleTodayCourseReminders(appCtx);
-                XposedBridge.log(TAG + ": 偷好同步接收器已注册");
+                // 从 SP 读取自定义提醒开关，按需启动监听和调度（开关关闭时不注册任何监听器）
+                SharedPreferences initPrefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                sCustomReminderEnabled = initPrefs.getBoolean(KEY_CUSTOM_REMINDER_ENABLED, false);
+                if (sCustomReminderEnabled) {
+                    registerCourseDataListener(appCtx);
+                    scheduleTodayCourseReminders(appCtx);
+                }
+                XposedBridge.log(TAG + ": 偷好同步接收器已注册，自定义提醒=" + sCustomReminderEnabled);
             }
         });
     }
@@ -413,35 +444,24 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 监听 CourseData.xml 文件变化（CLOSE_WRITE），变化后重新调度今日提醒。
-     * 使用 getFilesDir().getParent() 取得 voiceassist 数据目录，拼接 shared_prefs/。
+     * 直接在 CourseData SP 实例上注册 OnSharedPreferenceChangeListener。
+     * 仅在 weekCourseBean 变化时触发，无 FileObserver 的目录轮询开销。
+     * 需持有引用（存于 mCourseDataListener）防止被 GC。
      */
-    private void registerCourseDataObserver(Context ctx) {
-        try {
-            // Android SharedPreferences 采用原子写入：先写 .bak 临时文件，再 rename 到目标文件。
-            // 因此监听单个文件的 CLOSE_WRITE 永远不会触发（inode 已替换）。
-            // 正确做法：监听 shared_prefs 目录，捕获 MOVED_TO（rename 完成）和 CLOSE_WRITE。
-            String dirPath = ctx.getFilesDir().getParent() + "/shared_prefs";
-            // MOVED_TO=64, CLOSE_WRITE=8
-            int mask = android.os.FileObserver.MOVED_TO | android.os.FileObserver.CLOSE_WRITE;
-            android.os.FileObserver observer = new android.os.FileObserver(dirPath, mask) {
-                @Override
-                public void onEvent(int event, String path) {
-                    if (!"CourseData.xml".equals(path)) return;
-                    // 防抖：一次 SP 原子写入会产生多个 inotify 事件（.bak CLOSE_WRITE + MOVED_TO）
-                    // 取消已挂起的调度请求，延迟后只执行一次
-                    getRescheduleHandler().removeCallbacksAndMessages(mRescheduleToken);
-                    getRescheduleHandler().postDelayed(() -> {
-                        XposedBridge.log(TAG + ": CourseData.xml 已更新，重新调度课前提醒");
-                        scheduleTodayCourseReminders(ctx);
-                    }, mRescheduleToken, RESCHEDULE_DEBOUNCE_MS);
-                }
-            };
-            observer.startWatching();
-            XposedBridge.log(TAG + ": CourseData 目录观察器已注册 → " + dirPath);
-        } catch (Throwable e) {
-            XposedBridge.log(TAG + ": registerCourseDataObserver 失败 → " + e.getMessage());
-        }
+    private void registerCourseDataListener(Context ctx) {
+        if (mCourseDataListener != null) return; // 已注册，防重复
+        SharedPreferences coursePrefs = ctx.getSharedPreferences(PREFS_COURSE_DATA, Context.MODE_PRIVATE);
+        mCourseDataListener = (sp, key) -> {
+            if (!"weekCourseBean".equals(key)) return;
+            getRescheduleHandler().removeCallbacksAndMessages(mRescheduleToken);
+            getRescheduleHandler().postDelayed(() -> {
+                if (!sCustomReminderEnabled) return;
+                XposedBridge.log(TAG + ": CourseData 已更新，重新调度课前提醒");
+                scheduleTodayCourseReminders(ctx);
+            }, mRescheduleToken, RESCHEDULE_DEBOUNCE_MS);
+        };
+        coursePrefs.registerOnSharedPreferenceChangeListener(mCourseDataListener);
+        XposedBridge.log(TAG + ": CourseData SP 监听器已注册");
     }
 
     /**     * Hook 自身进程的 MainActivity.isModuleActive()，将返回值替换为 true，
@@ -524,6 +544,14 @@ public class MainHook implements IXposedHookLoadPackage {
             if (isAlreadyIsland(notification)) return;
 
             if (isScheduleNotification(notification)) {
+                // 自定义模式开启时，屏蔽小爱自身的课程提醒（无我方注入标记的通知）
+                // 我方注入的通知携带 xiaoai.test.course_name，让其正常通过
+                boolean isOurInjected = notification.extras != null
+                        && notification.extras.containsKey("xiaoai.test.course_name");
+                if (sCustomReminderEnabled && !isOurInjected) {
+                    param.setResult(null); // 抑制 notify()
+                    return;
+                }
                 XposedBridge.log(TAG + ": 检测到课程表提醒，开始注入超级岛参数");
                 int notifId;
                 String notifTag;

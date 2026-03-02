@@ -48,6 +48,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String ACTION_DO_MUTE   = "com.xiaoai.islandnotify.DO_MUTE";
     /** AlarmManager 触发下课解除静音（发给 voiceassist 自身，不受 MIUI 电池限制） */
     private static final String ACTION_DO_UNMUTE = "com.xiaoai.islandnotify.DO_UNMUTE";
+    /** 每日 00:01 跨日重调广播 Action（链式保证次日课程 alarm 不丢失） */
+    private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
     /** shareData 拖拽分享图片在 miui.focus.pics Bundle 中的 key */
     private static final String PIC_KEY_SHARE = "miui.focus.pic_share";
 
@@ -172,6 +174,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 filter.addAction(ACTION_COURSE_REMINDER);
                 filter.addAction(ACTION_DO_MUTE);
                 filter.addAction(ACTION_DO_UNMUTE);
+                filter.addAction(ACTION_RESCHEDULE_DAILY);
                 BroadcastReceiver receiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
@@ -482,6 +485,21 @@ public class MainHook implements IXposedHookLoadPackage {
                             } catch (Exception e) {
                                 XposedBridge.log(TAG + ": [DO_UNMUTE] 失败 → " + e.getMessage());
                             }
+                        } else if (ACTION_RESCHEDULE_DAILY.equals(intent.getAction())) {
+                            // 每日 00:01 跨日重调：重新同步开关状态，重新调度当日 alarm，再链式设置下一个 00:01
+                            XposedBridge.log(TAG + ": [跨日重调] 触发，重新调度今日课程/静音闹钟");
+                            SharedPreferences dp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                            sCustomReminderEnabled = dp.getBoolean(KEY_CUSTOM_REMINDER_ENABLED, false);
+                            sMuteEnabled   = dp.getBoolean(KEY_MUTE_ENABLED,   false);
+                            sUnmuteEnabled = dp.getBoolean(KEY_UNMUTE_ENABLED, false);
+                            if (sCustomReminderEnabled) {
+                                scheduleTodayCourseReminders(context);
+                            }
+                            if (sMuteEnabled || sUnmuteEnabled) {
+                                scheduleTodayMuteAlarms(context);
+                            }
+                            // 链式调度下一个 00:01
+                            scheduleMidnightReschedule(context);
                         }
                     }
                 };
@@ -503,6 +521,8 @@ public class MainHook implements IXposedHookLoadPackage {
                 if (sMuteEnabled || sUnmuteEnabled) {
                     scheduleTodayMuteAlarms(appCtx);
                 }
+                // 跨日自动重调：每天 00:01 重新调度当日闹钟，链式保证次日不丢失
+                scheduleMidnightReschedule(appCtx);
                 XposedBridge.log(TAG + ": 偷好同步接收器已注册，自定义提醒=" + sCustomReminderEnabled);
             }
         });
@@ -677,11 +697,14 @@ public class MainHook implements IXposedHookLoadPackage {
             intent.putExtra("consecutive",  isConsecutive);
             PendingIntent pi = PendingIntent.getBroadcast(ctx, alarmId, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, alarmId | 0x50000000,
+                    new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
+                    PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
-               .setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
+               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
             mScheduledAlarmIds.add(alarmId);
             long minsLeft = (triggerMs - System.currentTimeMillis()) / 60_000;
-            XposedBridge.log(TAG + ": 闹钟已设 " + info.courseName + " @" + info.startTime
+            XposedBridge.log(TAG + ": 闹钟已设(AlarmClock) " + info.courseName + " @" + info.startTime
                     + (isConsecutive ? "（连续课程，上节下课触发）" : "")
                     + " 约 " + minsLeft + " 分钟后触发");
         } catch (Exception e) {
@@ -758,6 +781,38 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": 静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
             XposedBridge.log(TAG + ": scheduleMuteAlarm 失败 → " + e.getMessage());
+        }
+    }
+
+    /**
+     * 设置次日 00:01 的跨日重调闹钟。
+     * 链式调用：每次触发后在 ACTION_RESCHEDULE_DAILY handler 内再次调用本方法，
+     * 确保功能永久生效，无需重启 voiceassist。
+     * reqCode 固定为 0x99000001，不与课程/静音 alarm 冲突。
+     */
+    private void scheduleMidnightReschedule(Context ctx) {
+        try {
+            java.util.Calendar cal = java.util.Calendar.getInstance();
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 1);
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0);
+            cal.set(java.util.Calendar.MINUTE, 1);
+            cal.set(java.util.Calendar.SECOND, 0);
+            cal.set(java.util.Calendar.MILLISECOND, 0);
+            long triggerMs = cal.getTimeInMillis();
+            Intent intent = new Intent(ACTION_RESCHEDULE_DAILY);
+            intent.setPackage(TARGET_PACKAGE);
+            PendingIntent pi = PendingIntent.getBroadcast(ctx, 0x99000001, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, 0x99000002,
+                    new Intent(ACTION_RESCHEDULE_DAILY).setPackage(TARGET_PACKAGE),
+                    PendingIntent.FLAG_IMMUTABLE);
+            ctx.getSystemService(AlarmManager.class)
+               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            String fmt = new java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+                    .format(new java.util.Date(triggerMs));
+            XposedBridge.log(TAG + ": 跨日重调闹钟已设(AlarmClock) → " + fmt);
+        } catch (Exception e) {
+            XposedBridge.log(TAG + ": scheduleMidnightReschedule 失败 → " + e.getMessage());
         }
     }
 
@@ -1317,9 +1372,12 @@ public class MainHook implements IXposedHookLoadPackage {
                 int reqCode = id * 10 + state;
                 PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
                         PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x60000000,
+                        new Intent(ACTION_ISLAND_UPDATE).setPackage(TARGET_PACKAGE),
+                        PendingIntent.FLAG_IMMUTABLE);
                 AlarmManager am = ctx.getSystemService(AlarmManager.class);
-                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
-                XposedBridge.log(TAG + ": AlarmManager 已设定 state=" + state
+                am.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+                XposedBridge.log(TAG + ": AlarmManager(AlarmClock) 已设定 state=" + state
                         + " in " + (delayMs / 1000) + "s");
             } catch (Exception e) {
                 XposedBridge.log(TAG + ": scheduleIslandAlarm 失败 → " + e.getMessage());

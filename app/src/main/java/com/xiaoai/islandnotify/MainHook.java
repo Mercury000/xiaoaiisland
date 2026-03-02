@@ -106,6 +106,11 @@ public class MainHook implements IXposedHookLoadPackage {
         if (!TARGET_PACKAGE.equals(lpparam.packageName)) {
             return;
         }
+        // 只注入主进程（processName == packageName），子进程如 :push/:remote 跳过
+        // 各 OS 进程的 System.properties 相互独立，仅靠 HOOKED_KEY 无法去重跨进程重复
+        if (!TARGET_PACKAGE.equals(lpparam.processName)) {
+            return;
+        }
         // 同一进程可能因多 ClassLoader 被调用多次，只注册一次
         // 用 System.setProperty 而非 static 字段，确保跨 ClassLoader 生效
         if (System.getProperty(HOOKED_KEY) != null) return;

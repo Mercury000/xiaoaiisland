@@ -64,6 +64,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String ACTION_SYNC_PREFS = "com.xiaoai.islandnotify.ACTION_SYNC_PREFS";
     /** AlarmManager 闹钟触发岛状态更新的广播 Action */
     private static final String ACTION_ISLAND_UPDATE = "com.xiaoai.islandnotify.ACTION_ISLAND_UPDATE";
+    /** 触发目标应用发送测试通知的广播 Action */
+    private static final String ACTION_TEST_NOTIFY = "com.xiaoai.islandnotify.ACTION_TEST_NOTIFY";
     /** 跨 ClassLoader 的防重复注入标记 key（存于 boot classloader 的 System.properties） */
     private static final String HOOKED_KEY = "xiaoai.island.hooked";
 
@@ -102,6 +104,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 Context appCtx = (Context) param.thisObject;
                 IntentFilter filter = new IntentFilter(ACTION_SYNC_PREFS);
                 filter.addAction(ACTION_ISLAND_UPDATE);
+                filter.addAction(ACTION_TEST_NOTIFY);
                 BroadcastReceiver receiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
@@ -177,6 +180,38 @@ public class MainHook implements IXposedHookLoadPackage {
                             SharedPreferences prefs = context
                                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                             sendIslandUpdate(info, state, context, channelId, src, nm, tag, id, prefs);
+                        } else if (ACTION_TEST_NOTIFY.equals(intent.getAction())) {
+                            // 由模块 APP 触发，在目标进程内构造并发送测试通知
+                            String tCourseName = intent.getStringExtra("course_name");
+                            String tStartTime  = intent.getStringExtra("start_time");
+                            String tEndTime    = intent.getStringExtra("end_time");
+                            String tClassroom  = intent.getStringExtra("classroom");
+                            if (tCourseName == null || tCourseName.isEmpty()) tCourseName = "高等数学";
+                            if (tStartTime  == null || tStartTime.isEmpty())  tStartTime  = "00:00";
+                            if (tEndTime    == null || tEndTime.isEmpty())    tEndTime    = "00:00";
+                            if (tClassroom  == null || tClassroom.isEmpty())  tClassroom  = "教科A-101";
+
+                            final String TEST_CHANNEL_ID = "COURSE_SCHEDULER_REMINDER_sound";
+                            android.app.NotificationManager tnm =
+                                    context.getSystemService(android.app.NotificationManager.class);
+                            if (tnm == null) return;
+                            if (tnm.getNotificationChannel(TEST_CHANNEL_ID) == null) {
+                                android.app.NotificationChannel tch = new android.app.NotificationChannel(
+                                        TEST_CHANNEL_ID, "课程提醒", android.app.NotificationManager.IMPORTANCE_HIGH);
+                                tnm.createNotificationChannel(tch);
+                            }
+
+                            android.app.Notification tNotif = new android.app.Notification.Builder(context, TEST_CHANNEL_ID)
+                                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                                    .build();
+                            if (tNotif.extras == null) tNotif.extras = new android.os.Bundle();
+                            tNotif.extras.putString("xiaoai.test.course_name", tCourseName);
+                            tNotif.extras.putString("xiaoai.test.start_time",  tStartTime);
+                            tNotif.extras.putString("xiaoai.test.end_time",    tEndTime);
+                            tNotif.extras.putString("xiaoai.test.classroom",   tClassroom);
+
+                            tnm.notify(1001, tNotif);
+                            XposedBridge.log(TAG + ": 已在目标进程发出测试通知");
                         }
                     }
                 };
@@ -407,6 +442,17 @@ public class MainHook implements IXposedHookLoadPackage {
      * contentView 中有 "11:45 | 教室" 格式，可作补充来源。
      */
     private CourseInfo extractCourseInfo(Notification notification) {
+        // 优先读取测试广播注入的课程信息（来自目标进程测试通知）
+        if (notification.extras != null
+                && notification.extras.containsKey("xiaoai.test.course_name")) {
+            String name  = safeStr(notification.extras.getString("xiaoai.test.course_name"));
+            String start = safeStr(notification.extras.getString("xiaoai.test.start_time"));
+            String end   = safeStr(notification.extras.getString("xiaoai.test.end_time"));
+            String room  = safeStr(notification.extras.getString("xiaoai.test.classroom"));
+            XposedBridge.log(TAG + ": [测试通知] 直接读取 extras → 课程=" + name
+                    + " 开始=" + start + " 结束=" + end + " 教室=" + room);
+            return new CourseInfo(name, start, end, room);
+        }
         CourseInfo fromView = extractFromRemoteViews(notification);
         if (fromView != null) {
             XposedBridge.log(TAG + ": [RemoteViews] 精确提取 → 课程=" + fromView.courseName

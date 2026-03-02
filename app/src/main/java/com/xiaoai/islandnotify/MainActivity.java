@@ -77,7 +77,7 @@ public class MainActivity extends AppCompatActivity {
         // 测试通知：1分钟后上课（倒计时）
         findViewById(R.id.btn_send_test).setOnClickListener(v ->
                 requireNotifPermAndRun(() -> {
-                    sendTestNotification(60_000L);
+                    sendTestBroadcastToTarget(60_000L);
                     showTestHint("已发送测试通知（倒计时），请下拉通知栏查看超级岛效果");
                 }));
 
@@ -620,6 +620,38 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         action.run();
+    }
+
+    /**
+     * 向目标进程（com.miui.voiceassist）发送广播，由目标进程在其自身上下文中发出测试通知。
+     * 通知将经过完整的 Xposed Hook 路径，与真实课程提醒行为一致。
+     */
+    private void sendTestBroadcastToTarget(long startOffsetMs) {
+        android.widget.EditText etName      = findViewById(R.id.et_course_name);
+        android.widget.EditText etClassroom = findViewById(R.id.et_classroom);
+        String courseName = etName.getText() != null ? etName.getText().toString().trim() : "";
+        String classroom  = etClassroom.getText() != null ? etClassroom.getText().toString().trim() : "";
+        if (courseName.isEmpty()) courseName = "高等数学";
+        if (classroom.isEmpty())  classroom  = "教科A-101";
+
+        long now     = System.currentTimeMillis();
+        long startMs = now + startOffsetMs;
+        long endMs   = now + 2 * 60_000L;
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(startMs);
+        String startTime = String.format(java.util.Locale.getDefault(), "%02d:%02d",
+                cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE));
+        cal.setTimeInMillis(endMs);
+        String endTime = String.format(java.util.Locale.getDefault(), "%02d:%02d",
+                cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE));
+
+        Intent intent = new Intent("com.xiaoai.islandnotify.ACTION_TEST_NOTIFY");
+        intent.setPackage("com.miui.voiceassist");
+        intent.putExtra("course_name", courseName);
+        intent.putExtra("start_time",  startTime);
+        intent.putExtra("end_time",    endTime);
+        intent.putExtra("classroom",   classroom);
+        sendBroadcast(intent);
     }
 
     /**

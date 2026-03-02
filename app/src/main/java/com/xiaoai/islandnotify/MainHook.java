@@ -195,6 +195,22 @@ public class MainHook implements IXposedHookLoadPackage {
                                 if (newEnabled != sCustomReminderEnabled) {
                                     sCustomReminderEnabled = newEnabled;
                                     if (newEnabled) {
+                                        // 立即 cancel 小爱已在通知栏的课程提醒残留
+                                        try {
+                                            android.app.NotificationManager snm =
+                                                    context.getSystemService(android.app.NotificationManager.class);
+                                            if (snm != null) {
+                                                for (android.service.notification.StatusBarNotification sbn
+                                                        : snm.getActiveNotifications()) {
+                                                    android.app.Notification sn = sbn.getNotification();
+                                                    if ("COURSE_SCHEDULER_REMINDER_sound".equals(sn.getChannelId())
+                                                            && (sn.extras == null
+                                                                || !sn.extras.containsKey("xiaoai.test.course_name"))) {
+                                                        snm.cancel(sbn.getId());
+                                                    }
+                                                }
+                                            }
+                                        } catch (Exception ignored) {}
                                         registerCourseDataListener(context);
                                         scheduleTodayCourseReminders(context);
                                     } else {

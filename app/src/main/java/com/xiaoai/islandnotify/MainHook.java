@@ -333,13 +333,15 @@ public class MainHook implements IXposedHookLoadPackage {
                             if (tEndTime    == null || tEndTime.isEmpty())    tEndTime    = "00:00";
                             if (tClassroom  == null || tClassroom.isEmpty())  tClassroom  = "教科A-101";
 
-                            final String TEST_CHANNEL_ID = "COURSE_SCHEDULER_REMINDER_sound";
+                            // 独立测试通知渠道，不依赖 voiceassist 自带渠道（importance 不受控制）
+                            final String TEST_CHANNEL_ID = "xiaoai_course_reminder_alert";
                             android.app.NotificationManager tnm =
                                     context.getSystemService(android.app.NotificationManager.class);
                             if (tnm == null) return;
                             if (tnm.getNotificationChannel(TEST_CHANNEL_ID) == null) {
                                 android.app.NotificationChannel tch = new android.app.NotificationChannel(
                                         TEST_CHANNEL_ID, "课程提醒", android.app.NotificationManager.IMPORTANCE_HIGH);
+                                tch.enableVibration(true);
                                 tnm.createNotificationChannel(tch);
                             }
 
@@ -350,10 +352,8 @@ public class MainHook implements IXposedHookLoadPackage {
                                     .setContentText(tStartTime + " - " + tEndTime + "  " + tClassroom)
                                     .build();
                             if (tNotif.extras == null) tNotif.extras = new android.os.Bundle();
-                            // 清除 title/text 以匹配 voiceassist 真实通知（依靠 bigContentView）
-                            tNotif.extras.remove("android.title");
-                            tNotif.extras.remove("android.text");
-                            tNotif.extras.putBoolean("android.contains.customView", true);
+                            // 保留 title/text：MIUI 在解析岛 JSON 前先校验通知内容，
+                            // 删除 title/text 会导致 MIUI 将通知静默丢弃（「内容为空」）
                             tNotif.extras.putString("xiaoai.test.course_name", tCourseName);
                             tNotif.extras.putString("xiaoai.test.start_time",  tStartTime);
                             tNotif.extras.putString("xiaoai.test.end_time",    tEndTime);
@@ -394,13 +394,11 @@ public class MainHook implements IXposedHookLoadPackage {
                                             android.media.AudioManager auMgr =
                                                     (android.media.AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
                                             if (auMgr != null) {
-                                                int mode = auMgr.getRingerMode();
-                                                if (mode != android.media.AudioManager.RINGER_MODE_SILENT
-                                                        && mode != android.media.AudioManager.RINGER_MODE_VIBRATE) {
-                                                    sSavedRingVolume = auMgr.getStreamVolume(android.media.AudioManager.STREAM_RING);
-                                                }
+                                                // 仅在音量非零时保存（避免已静音时覆盖已保存值）
+                                                int curVol = auMgr.getStreamVolume(android.media.AudioManager.STREAM_RING);
+                                                if (curVol > 0) sSavedRingVolume = curVol;
+                                                // 纯音量操作：不改 RingerMode（避免 DND SecurityException）
                                                 auMgr.setStreamVolume(android.media.AudioManager.STREAM_RING, 0, 0);
-                                                auMgr.setRingerMode(android.media.AudioManager.RINGER_MODE_VIBRATE);
                                                 XposedBridge.log(TAG + ": 测试通知 → [内联立即静音] 保存音量=" + sSavedRingVolume);
                                             }
                                         } catch (Exception e) {
@@ -425,13 +423,16 @@ public class MainHook implements IXposedHookLoadPackage {
                             String crRoom  = safeStr(intent.getStringExtra("classroom"));
                             int    crId    = intent.getIntExtra("notif_id", 2001);
 
-                            final String CR_CH = "COURSE_SCHEDULER_REMINDER_sound";
+                            // 使用独立渠道（不依赖 voiceassist 自带的 COURSE_SCHEDULER_REMINDER_sound，
+                            // 因为该渠道由 voiceassist 自身创建，importance 不受我们控制）
+                            final String CR_CH = "xiaoai_course_reminder_alert";
                             android.app.NotificationManager crnm =
                                     context.getSystemService(android.app.NotificationManager.class);
                             if (crnm == null) return;
                             if (crnm.getNotificationChannel(CR_CH) == null) {
                                 android.app.NotificationChannel crch = new android.app.NotificationChannel(
                                         CR_CH, "课程提醒", android.app.NotificationManager.IMPORTANCE_HIGH);
+                                crch.enableVibration(true);
                                 crnm.createNotificationChannel(crch);
                             }
                             android.app.Notification crNotif = new android.app.Notification.Builder(context, CR_CH)
@@ -440,9 +441,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                     .setContentText(crStart + " - " + crEnd + "  " + crRoom)
                                     .build();
                             if (crNotif.extras == null) crNotif.extras = new android.os.Bundle();
-                            crNotif.extras.remove("android.title");
-                            crNotif.extras.remove("android.text");
-                            crNotif.extras.putBoolean("android.contains.customView", true);
+                            // 保留 title/text，防止 MIUI 静默丢弃内容为空的通知
                             crNotif.extras.putString("xiaoai.test.course_name", crName);
                             crNotif.extras.putString("xiaoai.test.start_time",  crStart);
                             crNotif.extras.putString("xiaoai.test.end_time",    crEnd);
@@ -456,33 +455,24 @@ public class MainHook implements IXposedHookLoadPackage {
                                 android.media.AudioManager auMgr =
                                         (android.media.AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
                                 if (auMgr != null) {
-                                    // 仅在非静音/非震动状态时保存，避免覆盖已保存的值
-                                    int curMode = auMgr.getRingerMode();
-                                    if (curMode != android.media.AudioManager.RINGER_MODE_SILENT
-                                            && curMode != android.media.AudioManager.RINGER_MODE_VIBRATE) {
-                                        sSavedRingVolume = auMgr.getStreamVolume(android.media.AudioManager.STREAM_RING);
-                                    }
-                                    // 先清零 ring 音量（flags=0 不弹 toast/音效），再切到震动模式
-                                    // 使用 VIBRATE 而非 SILENT：SILENT 需要 ACCESS_NOTIFICATION_POLICY(DND) 权限，
-                                    // voiceassist 进程无该权限会抛 SecurityException；VIBRATE 无此限制
+                                    // 仅在音量非零时保存，避免覆盖已保存值
+                                    int curVol = auMgr.getStreamVolume(android.media.AudioManager.STREAM_RING);
+                                    if (curVol > 0) sSavedRingVolume = curVol;
+                                    // 纯音量清零：不调用 setRingerMode，彻底避免 DND(ACCESS_NOTIFICATION_POLICY) 限制
                                     auMgr.setStreamVolume(android.media.AudioManager.STREAM_RING, 0, 0);
-                                    auMgr.setRingerMode(android.media.AudioManager.RINGER_MODE_VIBRATE);
-                                    XposedBridge.log(TAG + ": [DO_MUTE] 已静音(振动模式+音量0)，保存音量=" + sSavedRingVolume + " ← " + muteCourseName);
+                                    XposedBridge.log(TAG + ": [DO_MUTE] 已静音(音量→0)，保存音量=" + sSavedRingVolume + " ← " + muteCourseName);
                                 }
                             } catch (Exception e) {
                                 XposedBridge.log(TAG + ": [DO_MUTE] 失败 → " + e.getMessage());
                             }
                         } else if (ACTION_DO_UNMUTE.equals(intent.getAction())) {
-                            // AlarmManager 触发下课恢复：静默切回 NORMAL，再还原到静音前的音量
+                            // AlarmManager 触发下课恢复：纯音量操作，不改 RingerMode（避免 DND 权限问题）
                             String unmuteCourseName = intent.getStringExtra("course_name");
                             try {
                                 android.media.AudioManager auMgr =
                                         (android.media.AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
                                 if (auMgr != null) {
-                                    // 先保持 ring 音量为零切模式，flags=0 不播音效
-                                    auMgr.setStreamVolume(android.media.AudioManager.STREAM_RING, 0, 0);
-                                    auMgr.setRingerMode(android.media.AudioManager.RINGER_MODE_NORMAL);
-                                    // 还原到静音前保存的音量；未保存则备用 50%
+                                    // 不调用 setRingerMode，只还原音量；flags=0 不播音效
                                     int restoreVol = sSavedRingVolume > 0 ? sSavedRingVolume
                                             : Math.max(1, auMgr.getStreamMaxVolume(android.media.AudioManager.STREAM_RING) / 2);
                                     auMgr.setStreamVolume(android.media.AudioManager.STREAM_RING, restoreVol, 0);
@@ -745,6 +735,8 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /** 设置上课静音闹钟，发给 voiceassist 自身（系统应用，不受 MIUI 电池优化限制）。
+     * 使用 setAlarmClock （最高级闹钟 API）替代 setExactAndAllowWhileIdle：
+     * 系统保证不受 Doze/MIUI 电池优化延迟，状态栏闹钟图标触发后自动消失。
      * reqCode = alarmId | 0x10000000，与课前提醒不重叠。 */
     private void scheduleMuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
@@ -754,17 +746,23 @@ public class MainHook implements IXposedHookLoadPackage {
             intent.putExtra("course_name", courseName);
             PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            ctx.getSystemService(AlarmManager.class)
-               .setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
+            // 用一个不起眼的 show-intent：点击状态栏闹钟图标时什么都不做
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
+                    new Intent(ACTION_DO_MUTE).setPackage(TARGET_PACKAGE),
+                    PendingIntent.FLAG_IMMUTABLE);
+            AlarmManager.AlarmClockInfo clockInfo =
+                    new AlarmManager.AlarmClockInfo(triggerMs, showPi);
+            ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
             mScheduledMuteIds.add(alarmId);
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
-            XposedBridge.log(TAG + ": 静音闹钟已设 " + courseName + " 约 " + secsLeft + " 秒后触发");
+            XposedBridge.log(TAG + ": 静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
             XposedBridge.log(TAG + ": scheduleMuteAlarm 失败 → " + e.getMessage());
         }
     }
 
-    /** 设置下课取消静音闹钟，发给 voiceassist 自身。reqCode = alarmId | 0x20000000。 */
+    /** 设置下课取消静音闹钟，发给 voiceassist 自身。
+     * 使用 setAlarmClock 保证精确触发。reqCode = alarmId | 0x20000000。 */
     private void scheduleUnmuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
             int reqCode = alarmId | 0x20000000;
@@ -773,11 +771,15 @@ public class MainHook implements IXposedHookLoadPackage {
             intent.putExtra("course_name", courseName);
             PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            ctx.getSystemService(AlarmManager.class)
-               .setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
+                    new Intent(ACTION_DO_UNMUTE).setPackage(TARGET_PACKAGE),
+                    PendingIntent.FLAG_IMMUTABLE);
+            AlarmManager.AlarmClockInfo clockInfo =
+                    new AlarmManager.AlarmClockInfo(triggerMs, showPi);
+            ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
             mScheduledMuteIds.add(alarmId);
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
-            XposedBridge.log(TAG + ": 取消静音闹钟已设 " + courseName + " 约 " + secsLeft + " 秒后触发");
+            XposedBridge.log(TAG + ": 取消静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
             XposedBridge.log(TAG + ": scheduleUnmuteAlarm 失败 → " + e.getMessage());
         }
@@ -843,13 +845,9 @@ public class MainHook implements IXposedHookLoadPackage {
                             android.media.AudioManager auMgr =
                                     (android.media.AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
                             if (auMgr != null) {
-                                int mode = auMgr.getRingerMode();
-                                if (mode != android.media.AudioManager.RINGER_MODE_SILENT
-                                        && mode != android.media.AudioManager.RINGER_MODE_VIBRATE) {
-                                    sSavedRingVolume = auMgr.getStreamVolume(android.media.AudioManager.STREAM_RING);
-                                }
+                                int curVol = auMgr.getStreamVolume(android.media.AudioManager.STREAM_RING);
+                                if (curVol > 0) sSavedRingVolume = curVol;
                                 auMgr.setStreamVolume(android.media.AudioManager.STREAM_RING, 0, 0);
-                                auMgr.setRingerMode(android.media.AudioManager.RINGER_MODE_VIBRATE);
                             }
                         } catch (Exception e) {
                             XposedBridge.log(TAG + ": [立即静音] 失败 → " + e.getMessage());
@@ -881,22 +879,26 @@ public class MainHook implements IXposedHookLoadPackage {
      */
     private void sendCourseReminderNow(Context ctx, CourseInfo info, int notifId) {
         try {
-            final String CR_CH = "COURSE_SCHEDULER_REMINDER_sound";
+            // 使用独立渠道（不依赖 voiceassist 已创建的 COURSE_SCHEDULER_REMINDER_sound，
+            // 因为该渠道由 voiceassist 自身首次创建，importance 不受我们控制）
+            final String CR_CH = "xiaoai_course_reminder_alert";
             android.app.NotificationManager nm =
                     ctx.getSystemService(android.app.NotificationManager.class);
             if (nm == null) return;
-            // 取消小爱自己已发出的同频道通知（我方注入的带有 xiaoai.test.course_name 标记，跳过）
+            // 取消小爱自己已发出的旧提醒通知（所有我方注入前的原生通知）
             for (android.service.notification.StatusBarNotification sbn : nm.getActiveNotifications()) {
                 android.app.Notification n = sbn.getNotification();
-                if (CR_CH.equals(n.getChannelId())
+                String ch = safeStr(n.getChannelId());
+                if ((ch.equals("COURSE_SCHEDULER_REMINDER_sound") || ch.equals(CR_CH))
                         && (n.extras == null || !n.extras.containsKey("xiaoai.test.course_name"))) {
                     nm.cancel(sbn.getId());
-                    XposedBridge.log(TAG + ": 已 cancel 小爱同频道旧通知 id=" + sbn.getId());
+                    XposedBridge.log(TAG + ": 已 cancel 小爱旧提醒通知 id=" + sbn.getId());
                 }
             }
             if (nm.getNotificationChannel(CR_CH) == null) {
                 android.app.NotificationChannel ch = new android.app.NotificationChannel(
                         CR_CH, "课程提醒", android.app.NotificationManager.IMPORTANCE_HIGH);
+                ch.enableVibration(true);
                 nm.createNotificationChannel(ch);
             }
             android.app.Notification notif = new android.app.Notification.Builder(ctx, CR_CH)
@@ -905,9 +907,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     .setContentText(info.startTime + " - " + info.endTime + "  " + info.classroom)
                     .build();
             if (notif.extras == null) notif.extras = new android.os.Bundle();
-            notif.extras.remove("android.title");
-            notif.extras.remove("android.text");
-            notif.extras.putBoolean("android.contains.customView", true);
+            // 保留 title/text，防止 MIUI 静默丢弃内容为空的通知
             notif.extras.putString("xiaoai.test.course_name", info.courseName);
             notif.extras.putString("xiaoai.test.start_time",  info.startTime);
             notif.extras.putString("xiaoai.test.end_time",    info.endTime);
@@ -1071,7 +1071,9 @@ public class MainHook implements IXposedHookLoadPackage {
      */
     private boolean isScheduleNotification(Notification notification) {
         String channelId = safeStr(notification.getChannelId());
-        boolean hit = channelId.contains("COURSE_SCHEDULER_REMINDER");
+        // 匹配 voiceassist 自身的课程提醒渠道，以及我们自己的独立提醒渠道
+        boolean hit = channelId.contains("COURSE_SCHEDULER_REMINDER")
+                || channelId.equals("xiaoai_course_reminder_alert");
         if (hit) XposedBridge.log(TAG + ": 命中 channelId=" + channelId);
         return hit;
     }
@@ -1391,20 +1393,35 @@ public class MainHook implements IXposedHookLoadPackage {
     /**
      * 构建并发送更新后的岛通知。
      */
+    /**
+     * 岛状态更新专用渠道 ID（IMPORTANCE_LOW：无声无震，渠道级保证，不依赖 FLAG_ONLY_ALERT_ONCE）。
+     * 与 voiceassist 自带的 COURSE_SCHEDULER_REMINDER_sound 完全独立，不会被其 importance 覆盖。
+     */
+    private static final String ISLAND_UPDATE_CHANNEL = "xiaoai_island_update_silent";
+
     private void sendIslandUpdate(CourseInfo info, int state,
             Context ctx, String channelId, Notification src,
             android.app.NotificationManager nm, String tag, int id,
             android.content.SharedPreferences prefs) {
         try {
+            // 确保静音更新渠道存在（IMPORTANCE_LOW = 无声无震，不受 voiceassist 原渠道影响）
+            if (nm.getNotificationChannel(ISLAND_UPDATE_CHANNEL) == null) {
+                android.app.NotificationChannel uch = new android.app.NotificationChannel(
+                        ISLAND_UPDATE_CHANNEL, "岛状态更新",
+                        android.app.NotificationManager.IMPORTANCE_LOW);
+                uch.setSound(null, null);   // 渠道无声
+                uch.enableVibration(false); // 渠道无震
+                nm.createNotificationChannel(uch);
+            }
             String json = buildIslandJson(info, state, prefs);
-            Notification n = new Notification.Builder(ctx, channelId)
+            Notification n = new Notification.Builder(ctx, ISLAND_UPDATE_CHANNEL)
                     .setSmallIcon(src.getSmallIcon())
                     .setContentTitle(info.courseName)
                     .setContentText(info.startTime
                             + (info.endTime.isEmpty() ? "" : " | " + info.endTime)
                             + (info.classroom.isEmpty() ? "" : " " + info.classroom))
                     .setAutoCancel(true)
-                    .setOnlyAlertOnce(true)   // 更新超级岛状态时不重新播放铃声/震动
+                    .setOnlyAlertOnce(true)   // 双重保险
                     .build();
             n.extras.putString(KEY_FOCUS_PARAM, json);
             n.contentIntent = src.contentIntent;

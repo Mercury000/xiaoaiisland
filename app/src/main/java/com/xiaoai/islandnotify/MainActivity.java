@@ -767,9 +767,14 @@ public class MainActivity extends AppCompatActivity {
         if (classroom.isEmpty())  classroom  = "教科A-101";
 
         long now     = System.currentTimeMillis();
-        long startMs = now + startOffsetMs;
-        long endMs   = now + 2 * 60_000L;
+        // 对齐到整分钟（second=0, ms=0），与 MainHook.computeClassStartMs 行为一致，
+        // 避免 start_ms 带亚秒偏移导致静音闹钟在"整点"后若干秒才触发
         java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(now + startOffsetMs);
+        cal.set(java.util.Calendar.SECOND, 0);
+        cal.set(java.util.Calendar.MILLISECOND, 0);
+        long startMs = cal.getTimeInMillis();
+        long endMs   = startMs + 60_000L;   // 测试课程时长 1 分钟，同样整分钟对齐
         cal.setTimeInMillis(startMs);
         String startTime = String.format(java.util.Locale.getDefault(), "%02d:%02d",
                 cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE));

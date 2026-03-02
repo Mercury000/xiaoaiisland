@@ -90,6 +90,8 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 测试通知自增 ID，避免多次测试因相同 ID 互相替换 */
     private static final java.util.concurrent.atomic.AtomicInteger sTestNotifId =
             new java.util.concurrent.atomic.AtomicInteger(2001);
+    /** 上一条测试通知的 ID，用于发新测试前自动取消旧通知；-1 表示尚无 */
+    private static volatile int sLastTestNotifId = -1;
 
     /** 获取（或创建）防抖 Handler，保证在主 Looper 就绪后才初始化。 */
     private android.os.Handler getRescheduleHandler() {
@@ -284,8 +286,14 @@ public class MainHook implements IXposedHookLoadPackage {
                             tNotif.extras.putString("xiaoai.test.end_time",    tEndTime);
                             tNotif.extras.putString("xiaoai.test.classroom",   tClassroom);
 
-                            XposedBridge.log(TAG + ": 即将发出测试通知 → " + tCourseName + " @" + tStartTime);
                             int tNotifId = sTestNotifId.getAndIncrement();
+                            // 先取消上一条测试通知，避免堆积
+                            if (sLastTestNotifId != -1) {
+                                tnm.cancel(sLastTestNotifId);
+                                XposedBridge.log(TAG + ": 已取消上一条测试通知 id=" + sLastTestNotifId);
+                            }
+                            sLastTestNotifId = tNotifId;
+                            XposedBridge.log(TAG + ": 即将发出测试通知 → " + tCourseName + " @" + tStartTime);
                             tnm.notify(tNotifId, tNotif);
                             XposedBridge.log(TAG + ": 已在目标进程发出测试通知 id=" + tNotifId);
                         } else if (ACTION_COURSE_REMINDER.equals(intent.getAction())) {
@@ -372,16 +380,17 @@ public class MainHook implements IXposedHookLoadPackage {
             JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
             JSONArray courses      = data.getJSONArray("courses");
 
-            SharedPreferences prefs        = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            int reminderMinutes            = prefs.getInt(KEY_REMINDER_MINUTES, DEFAULT_REMINDER_MINUTES);
-            long nowMs                     = System.currentTimeMillis();
-            int scheduledCount             = 0;
+            SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            int reminderMinutes     = prefs.getInt(KEY_REMINDER_MINUTES, DEFAULT_REMINDER_MINUTES);
+            long nowMs              = System.currentTimeMillis();
+            long reminderMs         = (long) reminderMinutes * 60_000L;
 
+            // ── 第一遍：收集今日有效课程 [startMs, endMs, originalIndex] ──
+            java.util.List<long[]> todaySlots = new java.util.ArrayList<>();
             for (int i = 0; i < courses.length(); i++) {
                 JSONObject course = courses.getJSONObject(i);
                 if (course.getInt("day") != todayDay) continue;
 
-                // 判断是否在当前周
                 boolean inWeek = false;
                 for (String w : course.getString("weeks").split(",")) {
                     try { if (Integer.parseInt(w.trim()) == currentWeek) { inWeek = true; break; } }
@@ -396,18 +405,57 @@ public class MainHook implements IXposedHookLoadPackage {
 
                 String startTime = getSectionTime(sectionTimes, firstSec, true);
                 String endTime   = getSectionTime(sectionTimes, lastSec,  false);
-                if (startTime.isEmpty()) continue;
+                if (startTime.isEmpty() || endTime.isEmpty()) continue;
 
-                long startMs   = computeClassStartMs(startTime);
-                if (startMs < 0) continue;
-                long triggerMs = startMs - reminderMinutes * 60_000L;
-                if (triggerMs <= nowMs) continue; // 已过，跳过
+                long startMs = computeClassStartMs(startTime);
+                long endMs   = computeClassStartMs(endTime);
+                if (startMs < 0 || endMs < 0) continue;
 
+                todaySlots.add(new long[]{startMs, endMs, i});
+            }
+            // 按开始时间升序，确保连续课程检测的方向正确
+            todaySlots.sort((a, b) -> Long.compare(a[0], b[0]));
+
+            // ── 第二遍：逐课计算触发时间，检测连续课程 ──
+            int scheduledCount = 0;
+            for (int si = 0; si < todaySlots.size(); si++) {
+                long[] slot   = todaySlots.get(si);
+                long startMs  = slot[0];
+                long endMs    = slot[1];
+                int  idx      = (int) slot[2];
+
+                JSONObject course = courses.getJSONObject(idx);
+                String[] secs     = course.getString("sections").split(",");
+                int firstSec      = Integer.parseInt(secs[0].trim());
+                int lastSec       = Integer.parseInt(secs[secs.length - 1].trim());
+                String startTime  = getSectionTime(sectionTimes, firstSec, true);
+                String endTime    = getSectionTime(sectionTimes, lastSec,  false);
                 String courseName = course.getString("name");
                 String classroom  = course.optString("position", "");
                 CourseInfo info   = new CourseInfo(courseName, startTime, endTime, classroom);
                 int alarmId       = Math.abs((courseName + startTime).hashCode());
-                scheduleCourseReminderAlarm(ctx, info, triggerMs, alarmId);
+
+                // 默认触发时间：课程开始前 N 分钟
+                long triggerMs    = startMs - reminderMs;
+                boolean isConsecutive = false;
+
+                // 若上一门课与本节的课间 < 提醒分钟数，则视为连续课程
+                if (si > 0) {
+                    long prevEndMs = todaySlots.get(si - 1)[1];
+                    long breakMs   = startMs - prevEndMs;
+                    if (breakMs >= 0 && breakMs < reminderMs) {
+                        // 连续：在上节课下课时触发本节提醒
+                        triggerMs     = prevEndMs;
+                        isConsecutive = true;
+                        XposedBridge.log(TAG + ": [连续课程] " + courseName
+                                + " 课间=" + (breakMs / 60_000) + "min < 提醒"
+                                + reminderMinutes + "min，将在上节下课时触发");
+                    }
+                }
+
+                if (triggerMs <= nowMs) continue; // 已过，跳过
+
+                scheduleCourseReminderAlarm(ctx, info, triggerMs, alarmId, isConsecutive);
                 scheduledCount++;
             }
             XposedBridge.log(TAG + ": 今日课前提醒已调度 " + scheduledCount
@@ -437,23 +485,29 @@ public class MainHook implements IXposedHookLoadPackage {
         return "";
     }
 
-    /** 为单节课程排列一个 AlarmManager 精确唤醒闹钟（在 voiceassist 进程内）。 */
+    /**
+     * 为单节课程注册一个 AlarmManager 精确唤醒闹钟（在 voiceassist 进程内）。
+     * @param isConsecutive 是否为连续课程（课间 < 提醒分钟数，触发时间为上节下课时刻）
+     */
     private void scheduleCourseReminderAlarm(Context ctx, CourseInfo info,
-                                              long triggerMs, int alarmId) {
+                                              long triggerMs, int alarmId,
+                                              boolean isConsecutive) {
         try {
             Intent intent = new Intent(ACTION_COURSE_REMINDER);
             intent.setPackage(TARGET_PACKAGE);
-            intent.putExtra("course_name", info.courseName);
-            intent.putExtra("start_time",  info.startTime);
-            intent.putExtra("end_time",    info.endTime);
-            intent.putExtra("classroom",   info.classroom);
-            intent.putExtra("notif_id",    alarmId);
+            intent.putExtra("course_name",  info.courseName);
+            intent.putExtra("start_time",   info.startTime);
+            intent.putExtra("end_time",     info.endTime);
+            intent.putExtra("classroom",    info.classroom);
+            intent.putExtra("notif_id",     alarmId);
+            intent.putExtra("consecutive",  isConsecutive);
             PendingIntent pi = PendingIntent.getBroadcast(ctx, alarmId, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi);
             long minsLeft = (triggerMs - System.currentTimeMillis()) / 60_000;
             XposedBridge.log(TAG + ": 闹钟已设 " + info.courseName + " @" + info.startTime
+                    + (isConsecutive ? "（连续课程，上节下课触发）" : "")
                     + " 约 " + minsLeft + " 分钟后触发");
         } catch (Exception e) {
             XposedBridge.log(TAG + ": scheduleCourseReminderAlarm 失败 → " + e.getMessage());

@@ -137,30 +137,14 @@ public class MainActivity extends AppCompatActivity {
 
         // 三个阶段 SP 后缀：_pre=上课前  _active=上课中  _post=下课后
         final String[] SUFFIXES = {"_pre", "_active", "_post"};
-        // 各阶段 A/B/ticker 的默认值（默认样式）
+        // 各阶段 A/B/ticker 的默认值
         final String[] DEFAULT_A      = {"{教室}",             "{课名}",         "{课名}"};
         final String[] DEFAULT_B      = {"{开始}上课",         "{结束}下课",     "已经下课"};
         final String[] DEFAULT_TICKER = {"{教室}｜{开始}上课", "{课名}｜{结束}下课", "{课名}｜已经下课"};
-        // 等宽数字样式的默认值
-        final String[] DEFAULT_B_DIGITAL = {"{计时}后上课",     "{计时}后下课",   "{计时}已下课"};
         // 各阶段输入框 View ID
         final int[] IDS_A      = {R.id.et_tpl_a_pre,      R.id.et_tpl_a_active,      R.id.et_tpl_a_post};
         final int[] IDS_B      = {R.id.et_tpl_b_pre,      R.id.et_tpl_b_active,      R.id.et_tpl_b_post};
         final int[] IDS_TICKER = {R.id.et_tpl_ticker_pre,  R.id.et_tpl_ticker_active,  R.id.et_tpl_ticker_post};
-
-        // 样式选择器 View ID（新的并排布局）
-        final int[] IDS_STYLE_INPUT = {R.id.et_b_style_pre, R.id.et_b_style_active, R.id.et_b_style_post};
-        final int[] IDS_DEFAULT_LAYOUT = {R.id.til_b_default_pre, R.id.til_b_default_active, R.id.til_b_default_post};
-
-        // 后置小字输入框布局 View ID
-        final int[] IDS_SUFFIX_LAYOUT = {R.id.til_b_suffix_pre, R.id.til_b_suffix_active, R.id.til_b_suffix_post};
-
-        // 计时变量选择器 View ID（下拉选择器）
-        final int[] IDS_TIMER_VAR_LAYOUT = {R.id.tpl_b_timer_var_pre, R.id.tpl_b_timer_var_active, R.id.tpl_b_timer_var_post};
-        final int[] IDS_TIMER_VAR_INPUT = {R.id.et_b_timer_var_pre, R.id.et_b_timer_var_active, R.id.et_b_timer_var_post};
-
-        // 后置小字输入框 View ID
-        final int[] IDS_SUFFIX = {R.id.et_b_suffix_pre, R.id.et_b_suffix_active, R.id.et_b_suffix_post};
 
         SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);
         TextView tvHint        = findViewById(R.id.tv_save_hint);
@@ -169,45 +153,10 @@ public class MainActivity extends AppCompatActivity {
         for (int i = 0; i < 3; i++) {
             ((EditText) findViewById(IDS_A[i])).setText(
                     sp.getString("tpl_a"      + SUFFIXES[i], DEFAULT_A[i]));
+            ((EditText) findViewById(IDS_B[i])).setText(
+                    sp.getString("tpl_b"      + SUFFIXES[i], DEFAULT_B[i]));
             ((EditText) findViewById(IDS_TICKER[i])).setText(
                     sp.getString("tpl_ticker" + SUFFIXES[i], DEFAULT_TICKER[i]));
-
-            // 读取样式选择
-            String style = sp.getString("tpl_b_style" + SUFFIXES[i], "default");
-            if (style.equals("digital")) {
-                // 选择等宽数字样式
-                ((EditText) findViewById(IDS_STYLE_INPUT[i])).setText("等宽数字");
-
-                // 显示计时变量选择器和后置小字输入框，隐藏默认输入框
-                findViewById(IDS_TIMER_VAR_LAYOUT[i]).setVisibility(View.VISIBLE);
-                findViewById(IDS_DEFAULT_LAYOUT[i]).setVisibility(View.GONE);
-                findViewById(IDS_SUFFIX_LAYOUT[i]).setVisibility(View.VISIBLE);
-
-                // 读取计时变量选择
-                String timerVar = sp.getString("tpl_b_timer_var" + SUFFIXES[i], "{计时}");
-                ((EditText) findViewById(IDS_TIMER_VAR_INPUT[i])).setText(timerVar);
-
-                // 读取后置小字
-                String suffix = sp.getString("tpl_b_suffix" + SUFFIXES[i],
-                        i == 0 ? "后上课" : (i == 1 ? "后下课" : "已下课"));
-                ((EditText) findViewById(IDS_SUFFIX[i])).setText(suffix);
-
-                // 读取等宽数字样式的岛B文本（如果没有保存，则使用默认值）
-                String tplB = sp.getString("tpl_b" + SUFFIXES[i], DEFAULT_B_DIGITAL[i]);
-                ((EditText) findViewById(IDS_B[i])).setText(tplB);
-            } else {
-                // 选择默认样式
-                ((EditText) findViewById(IDS_STYLE_INPUT[i])).setText("默认样式");
-
-                // 显示默认输入框，隐藏计时变量选择器和后置小字输入框
-                findViewById(IDS_TIMER_VAR_LAYOUT[i]).setVisibility(View.GONE);
-                findViewById(IDS_DEFAULT_LAYOUT[i]).setVisibility(View.VISIBLE);
-                findViewById(IDS_SUFFIX_LAYOUT[i]).setVisibility(View.GONE);
-
-                // 读取默认样式的岛B文本
-                String tplB = sp.getString("tpl_b" + SUFFIXES[i], DEFAULT_B[i]);
-                ((EditText) findViewById(IDS_B[i])).setText(tplB);
-            }
         }
         swIconA.setChecked(sp.getBoolean("icon_a", true));
 
@@ -232,75 +181,6 @@ public class MainActivity extends AppCompatActivity {
         }
         swIconA.setOnCheckedChangeListener((b, checked) -> updateCustomDirtyIndicator());
 
-        // 为每个阶段添加样式选择器监听器（点击输入框弹出选择对话框）
-        for (int i = 0; i < 3; i++) {
-            final int stageIndex = i;
-            EditText styleInput = findViewById(IDS_STYLE_INPUT[i]);
-            styleInput.setOnClickListener(v -> {
-                // 创建选择对话框
-                String[] items = {"默认样式", "等宽数字"};
-                android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
-                builder.setTitle("选择样式")
-                        .setItems(items, (dialog, which) -> {
-                            String selected = items[which];
-                            styleInput.setText(selected);
-
-                            // 显示/隐藏相应的输入框
-                            boolean isDigital = selected.equals("等宽数字");
-                            findViewById(IDS_TIMER_VAR_LAYOUT[stageIndex]).setVisibility(isDigital ? View.VISIBLE : View.GONE);
-                            findViewById(IDS_DEFAULT_LAYOUT[stageIndex]).setVisibility(isDigital ? View.GONE : View.VISIBLE);
-                            findViewById(IDS_SUFFIX_LAYOUT[stageIndex]).setVisibility(isDigital ? View.VISIBLE : View.GONE);
-
-                            // 标记为有未保存的更改
-                            updateCustomDirtyIndicator();
-                        })
-                        .show();
-            });
-
-            // 为计时变量选择器（下拉选择器）添加点击事件
-            final int timerStageIndex = i;
-            EditText timerVarInput = findViewById(IDS_TIMER_VAR_INPUT[i]);
-            if (timerVarInput != null) {
-                timerVarInput.setOnClickListener(v -> {
-                    // 根据阶段创建不同的选项
-                    String[] items;
-                    if (timerStageIndex == 0) { // 上课前：计时（timer）、开始（digit）、结束（digit）
-                        items = new String[]{"{计时}", "{开始}", "{结束}"};
-                    } else if (timerStageIndex == 1) { // 上课中：正计时（timer）、倒计时（timer）、开始（digit）、结束（digit）
-                        items = new String[]{"{正计时}", "{倒计时}", "{开始}", "{结束}"};
-                    } else { // 下课后：计时（timer → 正计时）、开始（digit）、结束（digit）
-                        items = new String[]{"{计时}", "{开始}", "{结束}"};
-                    }
-
-                    android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
-                    builder.setTitle("选择变量")
-                            .setItems(items, (dialog, which) -> {
-                                String selected = items[which];
-                                timerVarInput.setText(selected);
-                                updateCustomDirtyIndicator();
-                            })
-                            .show();
-                });
-
-                // 添加文本变化监听器
-                timerVarInput.addTextChangedListener(new android.text.TextWatcher() {
-                    @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-                    @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
-                    @Override public void afterTextChanged(android.text.Editable s) {}
-                });
-            }
-
-            // 为后置小字输入框添加文本变化监听器
-            EditText suffixEditText = findViewById(IDS_SUFFIX[i]);
-            if (suffixEditText != null) {
-                suffixEditText.addTextChangedListener(new android.text.TextWatcher() {
-                    @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-                    @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
-                    @Override public void afterTextChanged(android.text.Editable s) {}
-                });
-            }
-        }
-
         findViewById(R.id.btn_save_custom).setOnClickListener(v -> {
 
             SharedPreferences.Editor ed = sp.edit();
@@ -310,43 +190,8 @@ public class MainActivity extends AppCompatActivity {
 
             for (int i = 0; i < 3; i++) {
                 String tplA      = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
+                String tplB      = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
                 String tplTicker = ((EditText) findViewById(IDS_TICKER[i])).getText().toString().trim();
-
-                // 检查当前选择的样式
-                String styleText = ((EditText) findViewById(IDS_STYLE_INPUT[i])).getText().toString().trim();
-                boolean isDigital = styleText.equals("等宽数字");
-
-                // 保存样式选择
-                ed.putString("tpl_b_style" + SUFFIXES[i], isDigital ? "digital" : "default");
-                sync.putExtra("tpl_b_style" + SUFFIXES[i], isDigital ? "digital" : "default");
-
-                String tplB;
-                if (isDigital) {
-                    // 等宽数字样式：保存计时变量和后置小字
-                    String timerVar = ((EditText) findViewById(IDS_TIMER_VAR_INPUT[i])).getText().toString().trim();
-                    if (timerVar.isEmpty()) {
-                        timerVar = "{计时}";
-                    }
-
-                    // 获取后置小字
-                    String suffix = ((EditText) findViewById(IDS_SUFFIX[i])).getText().toString().trim();
-                    if (suffix.isEmpty()) {
-                        suffix = i == 0 ? "后上课" : (i == 1 ? "后下课" : "已下课");
-                    }
-
-                    // 组合成完整的岛B文本：{计时} + 后置小字
-                    tplB = timerVar + suffix;
-
-                    // 保存计时变量和后置小字
-                    ed.putString("tpl_b_timer_var" + SUFFIXES[i], timerVar);
-                    ed.putString("tpl_b_suffix" + SUFFIXES[i], suffix);
-                    sync.putExtra("tpl_b_timer_var" + SUFFIXES[i], timerVar);
-                    sync.putExtra("tpl_b_suffix" + SUFFIXES[i], suffix);
-                } else {
-                    // 默认样式：使用原来的输入框
-                    tplB = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
-                }
-
                 ed.putString("tpl_a"      + SUFFIXES[i], tplA);
                 ed.putString("tpl_b"      + SUFFIXES[i], tplB);
                 ed.putString("tpl_ticker" + SUFFIXES[i], tplTicker);
@@ -377,21 +222,6 @@ public class MainActivity extends AppCompatActivity {
         final int[] IDS_A      = {R.id.et_tpl_a_pre,      R.id.et_tpl_a_active,      R.id.et_tpl_a_post};
         final int[] IDS_B      = {R.id.et_tpl_b_pre,      R.id.et_tpl_b_active,      R.id.et_tpl_b_post};
         final int[] IDS_TICKER = {R.id.et_tpl_ticker_pre,  R.id.et_tpl_ticker_active,  R.id.et_tpl_ticker_post};
-
-        // 样式选择器 View ID（新的并排布局）
-        final int[] IDS_STYLE_INPUT = {R.id.et_b_style_pre, R.id.et_b_style_active, R.id.et_b_style_post};
-        final int[] IDS_DEFAULT_LAYOUT = {R.id.til_b_default_pre, R.id.til_b_default_active, R.id.til_b_default_post};
-
-        // 后置小字输入框布局 View ID
-        final int[] IDS_SUFFIX_LAYOUT = {R.id.til_b_suffix_pre, R.id.til_b_suffix_active, R.id.til_b_suffix_post};
-
-        // 计时变量选择器 View ID（下拉选择器）
-        final int[] IDS_TIMER_VAR_LAYOUT = {R.id.tpl_b_timer_var_pre, R.id.tpl_b_timer_var_active, R.id.tpl_b_timer_var_post};
-        final int[] IDS_TIMER_VAR_INPUT = {R.id.et_b_timer_var_pre, R.id.et_b_timer_var_active, R.id.et_b_timer_var_post};
-
-        // 后置小字输入框 View ID
-        final int[] IDS_SUFFIX = {R.id.et_b_suffix_pre, R.id.et_b_suffix_active, R.id.et_b_suffix_post};
-
         SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);
 
         Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
@@ -399,43 +229,8 @@ public class MainActivity extends AppCompatActivity {
 
         for (int i = 0; i < 3; i++) {
             String tplA      = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
+            String tplB      = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
             String tplTicker = ((EditText) findViewById(IDS_TICKER[i])).getText().toString().trim();
-
-            // 检查当前选择的样式
-            String styleText = ((EditText) findViewById(IDS_STYLE_INPUT[i])).getText().toString().trim();
-            boolean isDigital = styleText.equals("等宽数字");
-
-            // 保存样式选择
-            ed.putString("tpl_b_style" + SUFFIXES[i], isDigital ? "digital" : "default");
-            sync.putExtra("tpl_b_style" + SUFFIXES[i], isDigital ? "digital" : "default");
-
-            String tplB;
-            if (isDigital) {
-                // 等宽数字样式：保存计时变量和后置小字
-                String timerVar = ((EditText) findViewById(IDS_TIMER_VAR_INPUT[i])).getText().toString().trim();
-                if (timerVar.isEmpty()) {
-                    timerVar = "{计时}";
-                }
-
-                // 获取后置小字
-                String suffix = ((EditText) findViewById(IDS_SUFFIX[i])).getText().toString().trim();
-                if (suffix.isEmpty()) {
-                    suffix = i == 0 ? "后上课" : (i == 1 ? "后下课" : "已下课");
-                }
-
-                // 组合成完整的岛B文本：{计时} + 后置小字
-                tplB = timerVar + suffix;
-
-                // 保存计时变量和后置小字
-                ed.putString("tpl_b_timer_var" + SUFFIXES[i], timerVar);
-                ed.putString("tpl_b_suffix" + SUFFIXES[i], suffix);
-                sync.putExtra("tpl_b_timer_var" + SUFFIXES[i], timerVar);
-                sync.putExtra("tpl_b_suffix" + SUFFIXES[i], suffix);
-            } else {
-                // 默认样式：使用原来的输入框
-                tplB = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
-            }
-
             ed.putString("tpl_a"      + SUFFIXES[i], tplA);
             ed.putString("tpl_b"      + SUFFIXES[i], tplB);
             ed.putString("tpl_ticker" + SUFFIXES[i], tplTicker);
@@ -463,63 +258,13 @@ public class MainActivity extends AppCompatActivity {
         final int[] IDS_A      = {R.id.et_tpl_a_pre,      R.id.et_tpl_a_active,      R.id.et_tpl_a_post};
         final int[] IDS_B      = {R.id.et_tpl_b_pre,      R.id.et_tpl_b_active,      R.id.et_tpl_b_post};
         final int[] IDS_TICKER = {R.id.et_tpl_ticker_pre,  R.id.et_tpl_ticker_active,  R.id.et_tpl_ticker_post};
-
-        // 样式选择器 View ID（新的并排布局）
-        final int[] IDS_STYLE_INPUT = {R.id.et_b_style_pre, R.id.et_b_style_active, R.id.et_b_style_post};
-
-        // 后置小字输入框布局 View ID
-        final int[] IDS_SUFFIX_LAYOUT = {R.id.til_b_suffix_pre, R.id.til_b_suffix_active, R.id.til_b_suffix_post};
-
-        // 计时变量选择器 View ID（下拉选择器）
-        final int[] IDS_TIMER_VAR_LAYOUT = {R.id.tpl_b_timer_var_pre, R.id.tpl_b_timer_var_active, R.id.tpl_b_timer_var_post};
-        final int[] IDS_TIMER_VAR_INPUT = {R.id.et_b_timer_var_pre, R.id.et_b_timer_var_active, R.id.et_b_timer_var_post};
-
-        // 后置小字输入框 View ID
-        final int[] IDS_SUFFIX = {R.id.et_b_suffix_pre, R.id.et_b_suffix_active, R.id.et_b_suffix_post};
-
         for (int i = 0; i < 3; i++) {
             String curA = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
+            String curB = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
             String curT = ((EditText) findViewById(IDS_TICKER[i])).getText().toString().trim();
             String sA = sp.getString("tpl_a" + SUFFIXES[i], "");
+            String sB = sp.getString("tpl_b" + SUFFIXES[i], "");
             String sT = sp.getString("tpl_ticker" + SUFFIXES[i], "");
-
-            // 检查样式选择
-            String styleText = ((EditText) findViewById(IDS_STYLE_INPUT[i])).getText().toString().trim();
-            boolean isDigital = styleText.equals("等宽数字");
-            String savedStyle = sp.getString("tpl_b_style" + SUFFIXES[i], "default");
-            if (!savedStyle.equals(isDigital ? "digital" : "default")) return true;
-
-            // 检查岛B内容
-            String curB;
-            String sB;
-            if (isDigital) {
-                // 等宽数字样式：检查计时变量和后置小字
-                // 从下拉选择器读取计时变量
-                String timerVar = ((EditText) findViewById(IDS_TIMER_VAR_INPUT[i])).getText().toString().trim();
-                if (timerVar.isEmpty()) {
-                    timerVar = "{计时}";
-                }
-
-                // 获取后置小字
-                String suffix = ((EditText) findViewById(IDS_SUFFIX[i])).getText().toString().trim();
-                if (suffix.isEmpty()) {
-                    suffix = i == 0 ? "后上课" : (i == 1 ? "后下课" : "已下课");
-                }
-
-                // 组合成完整的岛B文本：{计时} + 后置小字
-                curB = timerVar + suffix;
-
-                // 从SharedPreferences读取保存的值
-                String savedTimerVar = sp.getString("tpl_b_timer_var" + SUFFIXES[i], "{计时}");
-                String savedSuffix = sp.getString("tpl_b_suffix" + SUFFIXES[i],
-                        i == 0 ? "后上课" : (i == 1 ? "后下课" : "已下课"));
-                sB = savedTimerVar + savedSuffix;
-            } else {
-                // 默认样式：使用原来的输入框
-                curB = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
-                sB = sp.getString("tpl_b" + SUFFIXES[i], "");
-            }
-
             if (!curA.equals(sA) || !curB.equals(sB) || !curT.equals(sT)) return true;
         }
         SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);

@@ -120,6 +120,13 @@ public class MainHook implements IXposedHookLoadPackage {
     private static volatile int  sSavedRingVolume = -1;
     /** 已调度的静音/取消静音 alarm reqCode 集合，用于批量取消 */
     private final java.util.Set<Integer> mScheduledMuteIds = new java.util.HashSet<>();
+    /** 有连续后续课程的通知 alarmId 集合：injectIslandParams 跳过 cancel alarm 注册，
+     *  防止中间课程通知被提前清除；cancel 由 consecutive 更新路径接管后统一重建。 */
+    private final java.util.Set<Integer> mConsecutiveAnchors =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+    /** 通知 id → 当前持有该通知的课程名，防止旧课程的陈旧 STATE_FINISHED 广播在新课更新后覆写岛 */
+    private final java.util.Map<Integer, String> mNotifCourseOwner =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 获取（或创建）防抖 Handler，保证在主 Looper 就绪后才初始化。 */
     private android.os.Handler getRescheduleHandler() {
@@ -343,6 +350,14 @@ public class MainHook implements IXposedHookLoadPackage {
                                 XposedBridge.log(TAG + ": 闹钟回调时通知已消失，跳过 state=" + state);
                                 return;
                             }
+                            // 连续课程防竞争：若此通知已被新课接管，拒绝旧课陈旧的 STATE_FINISHED 广播
+                            String staleOwner = mNotifCourseOwner.get(id);
+                            if (staleOwner != null && !staleOwner.equals(courseName)) {
+                                XposedBridge.log(TAG + ": [跳过陈旧state] state=" + state
+                                        + " id=" + id + " (" + courseName + ") 已被「"
+                                        + staleOwner + "」接管，忽略");
+                                return;
+                            }
                             SharedPreferences prefs = context
                                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                             sendIslandUpdate(info, state, context, channelId, src, nm, tag, id, prefs);
@@ -460,6 +475,17 @@ public class MainHook implements IXposedHookLoadPackage {
                                             PREFS_NAME, Context.MODE_PRIVATE);
                                     int    prevId  = prevSbn.getId();
                                     String prevTag = prevSbn.getTag();
+                                    // ① 更新所有权：阻止旧课陈旧的 STATE_FINISHED 广播在新课更新后覆写岛
+                                    mNotifCourseOwner.put(prevId, crName);
+                                    // ② 主动取消旧课的 STATE_ELAPSED/FINISHED 闹钟，彻底消除竞争
+                                    AlarmManager staleAm = context.getSystemService(AlarmManager.class);
+                                    for (int ss = 1; ss <= 2; ss++) {
+                                        PendingIntent stalePi = PendingIntent.getBroadcast(context,
+                                                prevId * 10 + ss,
+                                                new Intent(ACTION_ISLAND_UPDATE).setPackage(TARGET_PACKAGE),
+                                                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+                                        if (stalePi != null) { staleAm.cancel(stalePi); stalePi.cancel(); }
+                                    }
                                     sendIslandUpdate(newInfo, STATE_COUNTDOWN, context,
                                             prevSbn.getNotification().getChannelId(),
                                             prevSbn.getNotification(), crnm,
@@ -538,6 +564,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                     context.getSystemService(android.app.NotificationManager.class);
                             if (cancelTag != null) cnm.cancel(cancelTag, cancelId);
                             else                   cnm.cancel(cancelId);
+                            mNotifCourseOwner.remove(cancelId); // 清除所有权，允许后续重建同 id 通知
                             XposedBridge.log(TAG + ": 通知定时取消 [" + phase + "] id=" + cancelId);
                         }
                     }
@@ -648,7 +675,9 @@ public class MainHook implements IXposedHookLoadPackage {
             todaySlots.sort((a, b) -> Long.compare(a[0], b[0]));
 
             // ── 第二遍：逐课计算触发时间，检测连续课程 ──
+            mConsecutiveAnchors.clear(); // 每次重新调度前重置锚点集合
             int scheduledCount = 0;
+            int prevLoopAlarmId = -1;     // 上一课的 alarmId，用于连续检测时标记锚点
             for (int si = 0; si < todaySlots.size(); si++) {
                 long[] slot   = todaySlots.get(si);
                 long startMs  = slot[0];
@@ -678,11 +707,14 @@ public class MainHook implements IXposedHookLoadPackage {
                         // 连续：在上节课下课时触发本节提醒
                         triggerMs     = prevEndMs;
                         isConsecutive = true;
+                        // 上一课有连续后续，标记为锚点：injectIslandParams 跳过其 cancel alarm
+                        if (prevLoopAlarmId != -1) mConsecutiveAnchors.add(prevLoopAlarmId);
                         XposedBridge.log(TAG + ": [连续课程] " + courseName
                                 + " 课间=" + (breakMs / 60_000) + "min < 提醒"
                                 + reminderMinutes + "min，将在上节下课时触发");
                     }
                 }
+                prevLoopAlarmId = alarmId; // 始终更新，供下次迭代判断
 
                 if (triggerMs <= nowMs) {
                     // 已进入提醒窗口且课程未开始 → 立即补发通知
@@ -1293,6 +1325,8 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": 解析结果 → 课程=" + info.courseName
                     + " 时间=" + info.startTime + " 结束=" + info.endTime
                     + " 教室=" + info.classroom);
+            // 记录此通知 id 的当前课程持有者，用于防止连续课程切换时旧课状态广播覆写新课岛
+            mNotifCourseOwner.put(notifId, info.courseName);
 
             // ── 1. 计算开始时间戳 ─────────────────────────────────────
             long startMs = computeClassStartMs(info.startTime);
@@ -1346,9 +1380,14 @@ public class MainHook implements IXposedHookLoadPackage {
                 }
 
                 // 6c. 通知取消闹钟（三个阶段各自独立调度，先触发者生效）
-                // 使用 Android 原生 nm.cancel，不依赖 JSON timeout 字段
-                scheduleNotifCancelAlarms(ctx, prefs, notifTag, notifId,
-                        System.currentTimeMillis(), startMs, endMs2);
+                // 锚点课程（有连续后续课）跳过此处注册，防止中间课程通知被提前清除
+                // cancel 由 consecutive 路径在每次接管时用新课时间重建
+                if (!mConsecutiveAnchors.contains(notifId)) {
+                    scheduleNotifCancelAlarms(ctx, prefs, notifTag, notifId,
+                            System.currentTimeMillis(), startMs, endMs2);
+                } else {
+                    XposedBridge.log(TAG + ": [锚点课程] id=" + notifId + " 跳过 cancel alarm，等待 consecutive 路径接管");
+                }
             }
 
             XposedBridge.log(TAG + ": 注入成功");

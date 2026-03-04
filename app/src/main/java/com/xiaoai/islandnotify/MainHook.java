@@ -676,6 +676,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 if (startSemMs > 0 && startSemMs < 10_000_000_000L) startSemMs *= 1000L;
                 currentWeek = getCurrentWeek(startSemMs);
             }
+            JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
             JSONArray courses      = data.getJSONArray("courses");
 
             SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);

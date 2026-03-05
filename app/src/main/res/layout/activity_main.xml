@@ -20,13 +20,6 @@
             android:layout_height="?attr/actionBarSize"
             app:title="课程表超级岛" />
 
-        <com.google.android.material.tabs.TabLayout
-            android:id="@+id/tab_layout"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:tabMode="fixed"
-            app:tabGravity="fill" />
-
     </com.google.android.material.appbar.AppBarLayout>
 
     <!-- 主内容区（跟随 AppBar 滚动） -->

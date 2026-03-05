@@ -43,6 +43,8 @@ public class HolidayManager {
     public static class HolidayEntry {
         /** ISO 日期字符串，格式 "2026-01-01" */
         public String date;
+        /** 结束日期（用于连续假期），单日则为空 */
+        public String endDate;
         /** 假期名称，如 "元旦节" */
         public String name;
         /** TYPE_HOLIDAY / TYPE_WORKSWAP */
@@ -60,8 +62,9 @@ public class HolidayManager {
 
         public HolidayEntry() {}
 
-        public HolidayEntry(String date, String name, int type, boolean isCustom) {
+        public HolidayEntry(String date, String endDate, String name, int type, boolean isCustom) {
             this.date     = date;
+            this.endDate  = endDate;
             this.name     = name;
             this.type     = type;
             this.isCustom = isCustom;
@@ -71,6 +74,7 @@ public class HolidayManager {
             try {
                 JSONObject j = new JSONObject();
                 j.put("date", date);
+                j.put("endDate", endDate != null ? endDate : "");
                 j.put("name", name);
                 j.put("type", type);
                 j.put("fw",   followWeek);
@@ -85,6 +89,7 @@ public class HolidayManager {
         static HolidayEntry fromJson(JSONObject j) {
             HolidayEntry e    = new HolidayEntry();
             e.date            = j.optString("date", "");
+            e.endDate         = j.optString("endDate", "");
             e.name            = j.optString("name", "");
             e.type            = j.optInt("type",   TYPE_HOLIDAY);
             e.followWeek      = j.optInt("fw",     -1);
@@ -99,6 +104,18 @@ public class HolidayManager {
             String[] wds = {"", "周一", "周二", "周三", "周四", "周五", "周六", "周日"};
             String wd = (followWeekday >= 1 && followWeekday <= 7) ? wds[followWeekday] : "周?";
             return "第" + followWeek + "周 " + wd;
+        }
+
+        /** 判断指定日期是否落在本条目的日期范围内 */
+        public boolean isMatch(String targetDate) {
+            if (targetDate == null || targetDate.isEmpty()) return false;
+            // 单日匹配
+            if (date != null && date.equals(targetDate)) return true;
+            // 范围匹配
+            if (date != null && endDate != null && !endDate.isEmpty()) {
+                return targetDate.compareTo(date) >= 0 && targetDate.compareTo(endDate) <= 0;
+            }
+            return false;
         }
     }
 
@@ -143,7 +160,7 @@ public class HolidayManager {
         try {
             int year = Integer.parseInt(date.substring(0, 4));
             for (HolidayEntry e : loadEntries(ctx, year))
-                if (e.date.equals(date) && e.type == TYPE_HOLIDAY) return true;
+                if (e.type == TYPE_HOLIDAY && e.isMatch(date)) return true;
         } catch (Exception ignored) {}
         return false;
     }
@@ -156,7 +173,7 @@ public class HolidayManager {
         try {
             int year = Integer.parseInt(date.substring(0, 4));
             for (HolidayEntry e : loadEntries(ctx, year))
-                if (e.date.equals(date) && e.type == TYPE_WORKSWAP) return e;
+                if (e.type == TYPE_WORKSWAP && e.isMatch(date)) return e;
         } catch (Exception ignored) {}
         return null;
     }
@@ -260,12 +277,50 @@ public class HolidayManager {
                 }
             } catch (Exception ignored) {}
         }
-        return result;
+        return mergeConsecutiveEntries(result);
     }
 
     private static void addEntry(List<HolidayEntry> list, String date, String name, boolean isHoliday) {
         if (date == null || !date.matches("\\d{4}-\\d{2}-\\d{2}")) return;
         if (name == null || name.isEmpty()) name = date;
-        list.add(new HolidayEntry(date, name, isHoliday ? TYPE_HOLIDAY : TYPE_WORKSWAP, false));
+        list.add(new HolidayEntry(date, "", name, isHoliday ? TYPE_HOLIDAY : TYPE_WORKSWAP, false));
+    }
+
+    /** 合并相邻且相同属性的假期为连休 */
+    private static List<HolidayEntry> mergeConsecutiveEntries(List<HolidayEntry> list) {
+        if (list.isEmpty()) return list;
+        java.util.Collections.sort(list, (a, b) -> a.date.compareTo(b.date));
+        List<HolidayEntry> merged = new ArrayList<>();
+        HolidayEntry current = null;
+        for (HolidayEntry e : list) {
+            if (current == null) {
+                current = e;
+                merged.add(current);
+            } else {
+                if (current.type == e.type && current.name.equals(e.name) && current.isCustom == e.isCustom
+                        && current.followWeek == e.followWeek && current.followWeekday == e.followWeekday) {
+                    String lastDate = (current.endDate != null && !current.endDate.isEmpty()) ? current.endDate : current.date;
+                    if (isAdjacentDay(lastDate, e.date)) {
+                        current.endDate = e.date;
+                        continue;
+                    }
+                }
+                current = e;
+                merged.add(current);
+            }
+        }
+        return merged;
+    }
+
+    private static boolean isAdjacentDay(String d1, String d2) {
+        try {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+            long t1 = sdf.parse(d1).getTime();
+            long t2 = sdf.parse(d2).getTime();
+            // 考虑时差及夏令时，20-28 小时视为相邻
+            return Math.abs(t2 - t1) <= 100000000L && Math.abs(t2 - t1) >= 70000000L;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

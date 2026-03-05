@@ -1,10 +1,26 @@
 package com.xiaoai.islandnotify;
 
+import android.app.AlertDialog;
+import android.app.DatePickerDialog;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.DatePicker;
+import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.Spinner;
+import android.widget.TextView;
+import android.widget.Toast;
 import android.content.res.ColorStateList;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -97,6 +113,30 @@ public class MainActivity extends AppCompatActivity {
         // 设置 Toolbar 为 ActionBar
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
+
+        // 设置边缘到边缘沉浸式（Edge-to-Edge）
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.coordinator_root), (v, insets) -> {
+            androidx.core.graphics.Insets systemBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            
+            // 顶栏避让状态栏
+            findViewById(R.id.app_bar).setPadding(0, systemBars.top, 0, 0);
+
+            // 底部 Tab栏 避让导航栏（小白条）
+            View tabLayout = findViewById(R.id.tab_layout);
+            if (tabLayout != null) {
+                tabLayout.setPadding(0, 0, 0, systemBars.bottom);
+            }
+
+            // 中间滚动区域增加底部 padding，防止被 Tab栏和小白条挡住
+            View scrollView = findViewById(R.id.scroll_view);
+            if (scrollView != null) {
+                // 预留 Tab 高度 (通常约 56dp) + 小白条高度
+                int tabHeight = Math.round(56 * getResources().getDisplayMetrics().density);
+                scrollView.setPadding(0, 0, 0, tabHeight + systemBars.bottom);
+            }
+            return insets;
+        });
 
         // 测试通知：1分钟后上课（倒计时）
         findViewById(R.id.btn_send_test).setOnClickListener(v ->
@@ -1128,7 +1168,7 @@ public class MainActivity extends AppCompatActivity {
         android.widget.LinearLayout row = new android.widget.LinearLayout(this);
         row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dpToPx(6), 0, dpToPx(6));
+        row.setPadding(0, dpToPx(8), 0, dpToPx(8));
 
         // 信息区
         android.widget.LinearLayout textArea = new android.widget.LinearLayout(this);
@@ -1138,12 +1178,18 @@ public class MainActivity extends AppCompatActivity {
         textArea.setLayoutParams(lp);
 
         TextView tvMain = new TextView(this);
-        tvMain.setText(entry.date + "  " + entry.name);
+        tvMain.setTextSize(15f);
+        tvMain.setTypeface(null, android.graphics.Typeface.BOLD);
+        String dateDesc = entry.date;
+        if (entry.endDate != null && !entry.endDate.isEmpty() && !entry.endDate.equals(entry.date)) {
+            dateDesc += " ~ " + entry.endDate.substring(5); // 简写结束日期
+        }
+        tvMain.setText(dateDesc + "  " + entry.name);
         textArea.addView(tvMain);
 
         TextView tvTag = new TextView(this);
         tvTag.setTextSize(11f);
-        tvTag.setText(entry.isCustom ? "自定义" : "API");
+        tvTag.setText(entry.isCustom ? "自定义节假日" : "API 节假日");
         tvTag.setTextColor(entry.isCustom ? 0xFF7965AF : 0xFF389E0D);
         textArea.addView(tvTag);
 
@@ -1154,10 +1200,12 @@ public class MainActivity extends AppCompatActivity {
                 com.google.android.material.R.attr.materialButtonOutlinedStyle);
         btnDel.setText("删除");
         btnDel.setTextSize(12f);
+        btnDel.setStrokeColor(ColorStateList.valueOf(0xFFBA1A1A));
+        btnDel.setTextColor(0xFFBA1A1A);
         android.widget.LinearLayout.LayoutParams dp =
                 new android.widget.LinearLayout.LayoutParams(
                         android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+                        dpToPx(36));
         dp.setMarginStart(dpToPx(8));
         btnDel.setLayoutParams(dp);
         btnDel.setOnClickListener(v -> {
@@ -1179,7 +1227,7 @@ public class MainActivity extends AppCompatActivity {
         android.widget.LinearLayout row = new android.widget.LinearLayout(this);
         row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dpToPx(6), 0, dpToPx(2));
+        row.setPadding(0, dpToPx(8), 0, dpToPx(4));
 
         // 信息区
         android.widget.LinearLayout textArea = new android.widget.LinearLayout(this);
@@ -1189,18 +1237,20 @@ public class MainActivity extends AppCompatActivity {
         textArea.setLayoutParams(lp);
 
         TextView tvMain = new TextView(this);
-        tvMain.setText(entry.date + "  " + entry.name);
+        tvMain.setTextSize(15f);
+        tvMain.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvMain.setText(entry.date + " " + entry.name);
         textArea.addView(tvMain);
 
         TextView tvFollow = new TextView(this);
-        tvFollow.setTextSize(12f);
-        tvFollow.setText("→ 按" + entry.followDesc() + "的课表上课");
+        tvFollow.setTextSize(13f);
+        tvFollow.setText("替换为: " + entry.followDesc());
         tvFollow.setTextColor(0xFF6750A4);
         textArea.addView(tvFollow);
 
         TextView tvTag = new TextView(this);
         tvTag.setTextSize(11f);
-        tvTag.setText(entry.isCustom ? "自定义" : "API");
+        tvTag.setText(entry.isCustom ? "自定义调休" : "API 调休");
         tvTag.setTextColor(entry.isCustom ? 0xFF7965AF : 0xFF389E0D);
         textArea.addView(tvTag);
 
@@ -1211,6 +1261,7 @@ public class MainActivity extends AppCompatActivity {
                 com.google.android.material.R.attr.materialButtonOutlinedStyle);
         btnEdit.setText("编辑");
         btnEdit.setTextSize(12f);
+        btnEdit.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(36)));
         btnEdit.setOnClickListener(v -> showAddWorkSwapDialog(entry));
         row.addView(btnEdit);
 
@@ -1219,10 +1270,12 @@ public class MainActivity extends AppCompatActivity {
                 com.google.android.material.R.attr.materialButtonOutlinedStyle);
         btnDel.setText("删除");
         btnDel.setTextSize(12f);
+        btnDel.setStrokeColor(ColorStateList.valueOf(0xFFBA1A1A));
+        btnDel.setTextColor(0xFFBA1A1A);
         android.widget.LinearLayout.LayoutParams dp =
                 new android.widget.LinearLayout.LayoutParams(
                         android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+                        dpToPx(36));
         dp.setMarginStart(dpToPx(4));
         btnDel.setLayoutParams(dp);
         btnDel.setOnClickListener(v -> {
@@ -1243,18 +1296,44 @@ public class MainActivity extends AppCompatActivity {
     private void showAddHolidayDialog(HolidayManager.HolidayEntry editEntry) {
         android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
         layout.setOrientation(android.widget.LinearLayout.VERTICAL);
-        int p = dpToPx(20);
-        layout.setPadding(p, dpToPx(8), p, 0);
+        int p = dpToPx(24);
+        layout.setPadding(p, dpToPx(16), p, 0);
 
-        EditText etDate = new EditText(this);
-        etDate.setHint("日期 (yyyy-MM-dd)");
-        etDate.setSingleLine(true);
-        etDate.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
-        if (editEntry != null) etDate.setText(editEntry.date);
-        layout.addView(etDate);
+        final String[] startDate = {editEntry != null ? editEntry.date : mCurrentHolidayYear + "-01-01"};
+        final String[] endDate = {editEntry != null && editEntry.endDate != null ? editEntry.endDate : ""};
+
+        MaterialButton btnStartDate = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnStartDate.setText("开始日期: " + startDate[0]);
+        btnStartDate.setAllCaps(false);
+        layout.addView(btnStartDate);
+
+        MaterialButton btnEndDate = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnEndDate.setText("结束日期: " + (endDate[0].isEmpty() ? "仅当天" : endDate[0]));
+        btnEndDate.setAllCaps(false);
+        LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        elp.topMargin = dpToPx(8);
+        btnEndDate.setLayoutParams(elp);
+        layout.addView(btnEndDate);
+
+        btnStartDate.setOnClickListener(v -> {
+            String[] parts = startDate[0].split("-");
+            new DatePickerDialog(this, (view, year, month, dayOfMonth) -> {
+                startDate[0] = String.format("%04d-%02d-%02d", year, month + 1, dayOfMonth);
+                btnStartDate.setText("开始日期: " + startDate[0]);
+            }, Integer.parseInt(parts[0]), Integer.parseInt(parts[1]) - 1, Integer.parseInt(parts[2])).show();
+        });
+
+        btnEndDate.setOnClickListener(v -> {
+            String base = endDate[0].isEmpty() ? startDate[0] : endDate[0];
+            String[] parts = base.split("-");
+            new DatePickerDialog(this, (view, year, month, dayOfMonth) -> {
+                endDate[0] = String.format("%04d-%02d-%02d", year, month + 1, dayOfMonth);
+                btnEndDate.setText("结束日期: " + endDate[0]);
+            }, Integer.parseInt(parts[0]), Integer.parseInt(parts[1]) - 1, Integer.parseInt(parts[2])).show();
+        });
 
         EditText etName = new EditText(this);
-        etName.setHint("名称（如：元旦节）");
+        etName.setHint("名称（如：春节、放假）");
         etName.setSingleLine(true);
         android.widget.LinearLayout.LayoutParams np = new android.widget.LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1268,17 +1347,12 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(editEntry == null ? "新增节假日" : "编辑节假日")
                 .setView(layout)
                 .setPositiveButton("确定", (d, w) -> {
-                    String date = etDate.getText().toString().trim();
                     String name = etName.getText().toString().trim();
-                    if (!date.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                        Toast.makeText(this, "日期格式有误（yyyy-MM-dd）", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    if (name.isEmpty()) name = date;
+                    if (name.isEmpty()) name = "节假日";
                     List<HolidayManager.HolidayEntry> all = HolidayManager.loadEntries(this, mCurrentHolidayYear);
                     if (editEntry != null) all.remove(editEntry);
                     HolidayManager.HolidayEntry e =
-                            new HolidayManager.HolidayEntry(date, name, HolidayManager.TYPE_HOLIDAY, true);
+                            new HolidayManager.HolidayEntry(startDate[0], endDate[0], name, HolidayManager.TYPE_HOLIDAY, true);
                     all.add(e);
                     all.sort((a, b) -> a.date.compareTo(b.date));
                     HolidayManager.saveEntries(this, mCurrentHolidayYear, all);
@@ -1293,17 +1367,26 @@ public class MainActivity extends AppCompatActivity {
     private void showAddWorkSwapDialog(HolidayManager.HolidayEntry editEntry) {
         android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
         layout.setOrientation(android.widget.LinearLayout.VERTICAL);
-        int p = dpToPx(20);
-        layout.setPadding(p, dpToPx(8), p, dpToPx(8));
+        int p = dpToPx(24);
+        layout.setPadding(p, dpToPx(16), p, dpToPx(8));
 
-        EditText etDate = new EditText(this);
-        etDate.setHint("日期 (yyyy-MM-dd)");
-        etDate.setSingleLine(true);
-        if (editEntry != null) etDate.setText(editEntry.date);
-        layout.addView(etDate);
+        final String[] date = {editEntry != null ? editEntry.date : mCurrentHolidayYear + "-01-01"};
+
+        MaterialButton btnDate = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnDate.setText("选择日期: " + date[0]);
+        btnDate.setAllCaps(false);
+        layout.addView(btnDate);
+
+        btnDate.setOnClickListener(v -> {
+            String[] parts = date[0].split("-");
+            new DatePickerDialog(this, (view, year, month, dayOfMonth) -> {
+                date[0] = String.format("%04d-%02d-%02d", year, month + 1, dayOfMonth);
+                btnDate.setText("选择日期: " + date[0]);
+            }, Integer.parseInt(parts[0]), Integer.parseInt(parts[1]) - 1, Integer.parseInt(parts[2])).show();
+        });
 
         EditText etName = new EditText(this);
-        etName.setHint("名称（如：春节调休）");
+        etName.setHint("名称（如：补周一课）");
         etName.setSingleLine(true);
         android.widget.LinearLayout.LayoutParams np = new android.widget.LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1315,6 +1398,7 @@ public class MainActivity extends AppCompatActivity {
 
         TextView tvDesc = new TextView(this);
         tvDesc.setText("当天按以下周次/星期的课表上课：");
+        tvDesc.setTextSize(13f);
         android.widget.LinearLayout.LayoutParams tp = new android.widget.LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1364,20 +1448,15 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(editEntry == null ? "新增调休工作日" : "编辑调休工作日")
                 .setView(layout)
                 .setPositiveButton("确定", (d, w) -> {
-                    String date = etDate.getText().toString().trim();
                     String name = etName.getText().toString().trim();
-                    if (!date.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                        Toast.makeText(this, "日期格式有误（yyyy-MM-dd）", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    if (name.isEmpty()) name = date;
+                    if (name.isEmpty()) name = "调休工作日";
                     int week = spinnerWeek.getSelectedItemPosition() + 1;
                     int wd   = spinnerWd.getSelectedItemPosition()   + 1;
                     List<HolidayManager.HolidayEntry> all =
                             HolidayManager.loadEntries(this, mCurrentHolidayYear);
                     if (editEntry != null) all.remove(editEntry);
                     HolidayManager.HolidayEntry e =
-                            new HolidayManager.HolidayEntry(date, name, HolidayManager.TYPE_WORKSWAP, true);
+                            new HolidayManager.HolidayEntry(date[0], "", name, HolidayManager.TYPE_WORKSWAP, true);
                     e.followWeek    = week;
                     e.followWeekday = wd;
                     all.add(e);

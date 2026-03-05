@@ -27,14 +27,15 @@
         android:id="@+id/scroll_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:clipChildren="false"
         android:clipToPadding="false"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-        <LinearLayout
+        <FrameLayout
             android:id="@+id/container_settings_root"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
+            android:clipChildren="false"
             android:paddingHorizontal="16dp"
             android:paddingTop="8dp"
             android:paddingBottom="32dp">
@@ -1226,7 +1227,7 @@
 
                             <com.google.android.material.button.MaterialButton
                                 android:id="@+id/btn_clear_all_holiday"
-                                style="@style/Widget.Material3.Button.TonalButton"
+                                style="@style/Widget.Material3.Button"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginStart="8dp"
@@ -1389,7 +1390,7 @@
             </LinearLayout>
             <!-- ─────────────── End 假期/调休 ─────────────── -->
 
-        </LinearLayout>
+        </FrameLayout>
     </androidx.core.widget.NestedScrollView>
 
     <!-- 底部 Tab 导航 -->
@@ -1400,6 +1401,7 @@
         android:layout_gravity="bottom"
         style="@style/Widget.Material3.TabLayout"
         app:tabMode="fixed"
-        app:tabGravity="fill" />
+        app:tabGravity="fill"
+        app:tabIndicatorHeight="0dp" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

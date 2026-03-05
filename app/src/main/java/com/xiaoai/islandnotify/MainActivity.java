@@ -1042,20 +1042,33 @@ public class MainActivity extends AppCompatActivity {
 
         View outView = showSettings ? holidayView : settingsView;
         View inView  = showSettings ? settingsView : holidayView;
+        // 正值 = 设置在左(0)，假期在右(1)；向右滑为正方向
+        float sign = showSettings ? 1f : -1f;
+
         if (outView.getVisibility() == View.GONE) {
-            // 初始化时直接设置，无动画
+            // 初始化时直接到位，无动画
+            inView.setTranslationX(0f);
             inView.setVisibility(View.VISIBLE);
-            inView.setAlpha(1f);
             outView.setVisibility(View.GONE);
             return;
         }
-        outView.animate().alpha(0f).setDuration(160)
+        View parent = (View) settingsView.getParent();
+        float w = (parent != null && parent.getWidth() > 0) ? parent.getWidth() : 1080f;
+        // 取消之前可能未结束的动画
+        outView.animate().cancel();
+        inView.animate().cancel();
+        inView.setTranslationX(-sign * w);
+        inView.setVisibility(View.VISIBLE);
+        android.view.animation.Interpolator interp =
+                new android.view.animation.DecelerateInterpolator(1.5f);
+        outView.animate().translationX(sign * w).setDuration(300)
+                .setInterpolator(interp)
                 .withEndAction(() -> {
                     outView.setVisibility(View.GONE);
-                    inView.setAlpha(0f);
-                    inView.setVisibility(View.VISIBLE);
-                    inView.animate().alpha(1f).setDuration(160).start();
+                    outView.setTranslationX(0f);
                 }).start();
+        inView.animate().translationX(0f).setDuration(300)
+                .setInterpolator(interp).start();
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1134,8 +1147,19 @@ public class MainActivity extends AppCompatActivity {
                     HolidayManager.mergeAndSave(this, year, apiEntries);
                     syncHolidayToHook(year);
                     int hCount = 0, wCount = 0;
-                    for (HolidayManager.HolidayEntry e : apiEntries)
-                        if (e.type == HolidayManager.TYPE_HOLIDAY) hCount++; else wCount++;
+                    java.text.SimpleDateFormat sCnt =
+                            new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault());
+                    for (HolidayManager.HolidayEntry e : apiEntries) {
+                        int days = 1;
+                        if (e.endDate != null && !e.endDate.isEmpty()) {
+                            try {
+                                java.util.Date d1 = sCnt.parse(e.date);
+                                java.util.Date d2 = sCnt.parse(e.endDate);
+                                days = (int) ((d2.getTime() - d1.getTime()) / 86400000L) + 1;
+                            } catch (Exception ignored) {}
+                        }
+                        if (e.type == HolidayManager.TYPE_HOLIDAY) hCount += days; else wCount += days;
+                    }
                     int fH = hCount, fW = wCount;
                     runOnUiThread(() -> {
                         renderHolidayLists();
@@ -1307,7 +1331,12 @@ public class MainActivity extends AppCompatActivity {
         TextView tvMain = new TextView(this);
         tvMain.setTextSize(15f);
         tvMain.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvMain.setText(entry.date + " " + entry.name);
+        String wsDateLabel;
+        if (entry.endDate != null && !entry.endDate.isEmpty())
+            wsDateLabel = formatShortDate(entry.date) + "\u2013" + formatShortDate(entry.endDate);
+        else
+            wsDateLabel = formatShortDate(entry.date);
+        tvMain.setText(wsDateLabel + "  " + entry.name);
         textArea.addView(tvMain);
 
         TextView tvFollow = new TextView(this);

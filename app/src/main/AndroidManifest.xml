@@ -3,6 +3,8 @@
 
     <!-- Android 13+ 发送通知需要此权限 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 获取节假日数据 -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- 上课静音：修改铃声模式 -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 上课静音：Android 6+ 切换静音需要「勿扰」权限声明（用户需在设置中手动授权） -->
@@ -61,6 +63,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
+
+        <!-- 接收目标进程发来的总周数更新 -->
+        <receiver android:name=".TotalWeekReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="com.xiaoai.islandnotify.ACTION_UPDATE_TOTAL_WEEK" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

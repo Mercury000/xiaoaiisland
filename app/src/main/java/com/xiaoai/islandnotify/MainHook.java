@@ -225,6 +225,17 @@ public class MainHook implements IXposedHookLoadPackage {
                                         intent.getBooleanExtra(KEY_DND_MODE, false));
                             }
                             ed.apply();
+                            // 同步假期数据（2025–2028）到 island_holiday 文件
+                            for (int yr = 2025; yr <= 2028; yr++) {
+                                String hKey = HolidayManager.EXTRA_LIST_PREFIX + yr;
+                                if (intent.hasExtra(hKey)) {
+                                    String hJson = intent.getStringExtra(hKey);
+                                    context.getSharedPreferences(HolidayManager.PREFS_HOLIDAY,
+                                            Context.MODE_PRIVATE)
+                                           .edit().putString("list_" + yr, hJson).apply();
+                                    XposedBridge.log(TAG + ": 假期数据已同步 " + yr + "年");
+                                }
+                            }
                             // 同步内存开关
                             if (intent.hasExtra(KEY_MUTE_ENABLED))
                                 sMuteEnabled   = intent.getBooleanExtra(KEY_MUTE_ENABLED, false);
@@ -595,6 +606,18 @@ public class MainHook implements IXposedHookLoadPackage {
             cancelAllScheduledAlarms(ctx);
             mScheduledAlarmIds.clear();
 
+            // ── 2b. 节假日 / 调休 检查 ─────────────────────────────────────────
+            java.text.SimpleDateFormat holidayFmt =
+                    new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+            String todayDateStr = holidayFmt.format(new java.util.Date());
+            // 节假日：取消旧闹钟后直接返回，不发任何提醒
+            if (HolidayManager.isHoliday(ctx, todayDateStr)) {
+                XposedBridge.log(TAG + ": 今日 " + todayDateStr + " 为节假日，跳过课前提醒调度");
+                return;
+            }
+            // 调休工作日：记录替换信息，后续覆盖 todayDay / currentWeek
+            HolidayManager.HolidayEntry workSwapDay = HolidayManager.getWorkSwap(ctx, todayDateStr);
+
             // 今天是星期几（课程数据: 1=周一, 7=周日）
             java.util.Calendar cal = java.util.Calendar.getInstance();
             int calDay   = cal.get(java.util.Calendar.DAY_OF_WEEK);
@@ -606,7 +629,7 @@ public class MainHook implements IXposedHookLoadPackage {
             // 优先使用服务端返回的 presentWeek（已处理开学延期、调课周等特殊情况）；
             // 若为 0 或缺失，回退到本地根据 startSemester 推算。
             int presentWeek = setting.optInt("presentWeek", 0);
-            final int currentWeek;
+            int currentWeek;
             if (presentWeek > 0) {
                 currentWeek = presentWeek;
             } else {
@@ -614,10 +637,32 @@ public class MainHook implements IXposedHookLoadPackage {
                 if (startSemMs > 0 && startSemMs < 10_000_000_000L) startSemMs *= 1000L;
                 currentWeek = getCurrentWeek(startSemMs);
             }
+            // 调休工作日：将当天星期和周次替换为指定的调休酬条件
+            if (workSwapDay != null && workSwapDay.followWeek > 0 && workSwapDay.followWeekday > 0) {
+                XposedBridge.log(TAG + ": 今日 " + todayDateStr + " 为调休工作日，"
+                        + "按\u7b2c" + workSwapDay.followWeek + "周 " + workSwapDay.followDesc() + " 调度");
+                todayDay    = workSwapDay.followWeekday;
+                currentWeek = workSwapDay.followWeek;
+            }
+            // 超出学期总周数则本学期已结束，无需调度任何课程
+            int totalWeek = setting.optInt("totalWeek", 0);
+            if (totalWeek > 0 && currentWeek > totalWeek) {
+                XposedBridge.log(TAG + ": 当前第 " + currentWeek + " 周，已超过学期总周数 "
+                        + totalWeek + "，跳过调度");
+                return;
+            }
             JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
             JSONArray courses      = data.getJSONArray("courses");
 
             SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            // 将学期总周数写入 voiceassist 自己的 island_custom（作为备份），并广播给模块 UI
+            if (totalWeek > 0) {
+                prefs.edit().putInt("course_total_week", totalWeek).apply();
+                Intent twIntent = new Intent(TotalWeekReceiver.ACTION_UPDATE_TOTAL_WEEK);
+                twIntent.setPackage(MODULE_PKG);
+                twIntent.putExtra("course_total_week", totalWeek);
+                ctx.sendBroadcast(twIntent);
+            }
             int reminderMinutes     = prefs.getInt(KEY_REMINDER_MINUTES, DEFAULT_REMINDER_MINUTES);
             long nowMs              = System.currentTimeMillis();
             long reminderMs         = (long) reminderMinutes * 60_000L;
@@ -726,15 +771,16 @@ public class MainHook implements IXposedHookLoadPackage {
             org.json.JSONObject root    = new org.json.JSONObject(beanJson);
             org.json.JSONObject data    = root.getJSONObject("data");
             org.json.JSONObject setting = data.getJSONObject("setting");
-            // 只取影响调度的字段拼接成稳定字符串
+            // presentWeek 每周变化一次（周次推进），必须纳入哈希否则新周课表不重调度
+            // updateTime / level / rtPresentWeek 每次写盘都变，仍排除
             String stable = data.optJSONArray("courses").toString()
                     + setting.optString("sectionTimes")
                     + setting.optString("startSemester")
                     + setting.optString("totalWeek")
-                    + setting.optString("weekStart");
+                    + setting.optString("weekStart")
+                    + setting.optInt("presentWeek", 0);
             return stable.hashCode();
         } catch (Throwable e) {
-            // 解析失败时退化为全文 hash，保证不会永久卡死
             return beanJson.hashCode();
         }
     }

@@ -34,6 +34,22 @@ import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputLayout;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.tabs.TabLayout;
+
+import android.app.AlertDialog;
+import android.view.Gravity;
+import android.widget.ArrayAdapter;
+import android.widget.LinearLayout;
+import android.widget.Spinner;
+import android.widget.Toast;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 模块主界面
@@ -50,8 +66,15 @@ public class MainActivity extends AppCompatActivity {
     // 保存按钮引用与脏状态
     private MaterialButton btnSaveCustom;
     private MaterialButton btnSaveTimeout;
-    private boolean customDirty = false;
+    private boolean customDirty  = false;
     private boolean timeoutDirty = false;
+
+    // 假期/调休 Tab 相关成员
+    private int           mCurrentHolidayYear;
+    private LinearLayout  mLlHolidayList;
+    private LinearLayout  mLlWorkswapList;
+    private TextView      mTvHolidayEmpty;
+    private TextView      mTvWorkswapEmpty;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,6 +112,8 @@ public class MainActivity extends AppCompatActivity {
         initMuteCard();
         initHideIconSwitch();
         initAboutSection(); // 初始化关于页面的版本信息
+        setupTabs();
+        initHolidayTab();
     }
 
     @Override
@@ -921,6 +946,481 @@ public class MainActivity extends AppCompatActivity {
         TextView tv = findViewById(R.id.tv_test_hint);
         tv.setText(msg);
         tv.setVisibility(View.VISIBLE);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────
+    // Tab 切换
+    // ─────────────────────────────────────────────────────────────
+
+    private static final int[] SETTINGS_CARD_IDS = {
+            R.id.card_status, R.id.card_test, R.id.card_custom,
+            R.id.card_timeout, R.id.card_reminder, R.id.card_mute, R.id.card_about
+    };
+
+    private void setupTabs() {
+        TabLayout tabLayout = findViewById(R.id.tab_layout);
+        tabLayout.addTab(tabLayout.newTab().setText("设置"));
+        tabLayout.addTab(tabLayout.newTab().setText("假期/调休"));
+        showSettingsTab(true);
+
+        tabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
+            @Override
+            public void onTabSelected(TabLayout.Tab tab) {
+                showSettingsTab(tab.getPosition() == 0);
+            }
+            @Override public void onTabUnselected(TabLayout.Tab tab) {}
+            @Override public void onTabReselected(TabLayout.Tab tab) {}
+        });
+    }
+
+    private void showSettingsTab(boolean showSettings) {
+        for (int id : SETTINGS_CARD_IDS) {
+            View v = findViewById(id);
+            if (v != null) v.setVisibility(showSettings ? View.VISIBLE : View.GONE);
+        }
+        View hContainer = findViewById(R.id.container_holiday);
+        if (hContainer != null)
+            hContainer.setVisibility(showSettings ? View.GONE : View.VISIBLE);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 假期/调休 Tab 初始化
+    // ─────────────────────────────────────────────────────────────
+
+    private void initHolidayTab() {
+        // 默认年份：取当前年
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        mCurrentHolidayYear = cal.get(java.util.Calendar.YEAR);
+
+        // View 引用
+        mLlHolidayList    = findViewById(R.id.ll_holiday_list);
+        mLlWorkswapList   = findViewById(R.id.ll_workswap_list);
+        mTvHolidayEmpty   = findViewById(R.id.tv_holiday_empty);
+        mTvWorkswapEmpty  = findViewById(R.id.tv_workswap_empty);
+        TextView tvFetchHint = findViewById(R.id.tv_holiday_fetch_hint);
+
+        // ── 年份选择（自由输入） ───────────────────────────────────
+        EditText etYear = findViewById(R.id.et_holiday_year);
+        etYear.setText(String.valueOf(mCurrentHolidayYear));
+        etYear.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {}
+            @Override public void afterTextChanged(android.text.Editable s) {
+                String t = s.toString().trim();
+                if (t.length() == 4) {
+                    try {
+                        int y = Integer.parseInt(t);
+                        if (y >= 2020 && y <= 2099) {
+                            mCurrentHolidayYear = y;
+                            renderHolidayLists();
+                        }
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        });
+
+        // ── 从网络获取 ─────────────────────────────────────────────
+        findViewById(R.id.btn_fetch_holiday).setOnClickListener(v -> {
+            tvFetchHint.setText("正在获取…");
+            tvFetchHint.setVisibility(View.VISIBLE);
+            int year = mCurrentHolidayYear;
+            new Thread(() -> {
+                try {
+                    URL url = new URL("https://unpkg.com/holiday-calendar@1.3.0/data/CN/" + year + ".json");
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(10_000);
+                    conn.setReadTimeout(10_000);
+                    conn.setRequestProperty("User-Agent", "XiaoaiIsland/1.0");
+                    BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(conn.getInputStream(), "UTF-8"));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) sb.append(line);
+                    reader.close();
+                    conn.disconnect();
+
+                    List<HolidayManager.HolidayEntry> apiEntries =
+                            HolidayManager.parseApiResponse(sb.toString());
+
+                    // 合并：保留用户自定义条目，替换/追加 API 条目（按日期去重 API 部分）
+                    List<HolidayManager.HolidayEntry> existing =
+                            HolidayManager.loadEntries(this, year);
+                    List<HolidayManager.HolidayEntry> merged = new ArrayList<>();
+                    // 先保留自定义
+                    for (HolidayManager.HolidayEntry e : existing) {
+                        if (e.isCustom) merged.add(e);
+                    }
+                    // 追加 API 条目（若自定义里没有同日期的则直接加，否则跳过）
+                    for (HolidayManager.HolidayEntry ae : apiEntries) {
+                        boolean conflict = false;
+                        for (HolidayManager.HolidayEntry ce : merged) {
+                            if (ce.date.equals(ae.date)) { conflict = true; break; }
+                        }
+                        if (!conflict) merged.add(ae);
+                    }
+                    merged.sort((a, b) -> a.date.compareTo(b.date));
+
+                    HolidayManager.saveEntries(this, year, merged);
+                    syncHolidayToHook(year);
+
+                    int hCount = 0, wCount = 0;
+                    for (HolidayManager.HolidayEntry e : apiEntries)
+                        if (e.type == HolidayManager.TYPE_HOLIDAY) hCount++; else wCount++;
+                    int finalHCount = hCount, finalWCount = wCount;
+
+                    runOnUiThread(() -> {
+                        renderHolidayLists();
+                        tvFetchHint.setText("获取成功：节假日 " + finalHCount + " 天，调休工作日 " + finalWCount + " 天");
+                        tvFetchHint.setVisibility(View.VISIBLE);
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> {
+                        tvFetchHint.setText("获取失败：" + e.getMessage());
+                        tvFetchHint.setVisibility(View.VISIBLE);
+                    });
+                }
+            }).start();
+        });
+
+        // ── 新增节假日 ─────────────────────────────────────────────
+        findViewById(R.id.btn_add_holiday).setOnClickListener(v ->
+                showAddHolidayDialog(null));
+
+        // ── 新增调休工作日 ─────────────────────────────────────────
+        findViewById(R.id.btn_add_workswap).setOnClickListener(v ->
+                showAddWorkSwapDialog(null));
+
+        // 初始渲染
+        renderHolidayLists();
+    }
+
+    // ── 渲染列表 ───────────────────────────────────────────────────
+
+    private void renderHolidayLists() {
+        if (mLlHolidayList == null) return;
+        List<HolidayManager.HolidayEntry> all = HolidayManager.loadEntries(this, mCurrentHolidayYear);
+
+        List<HolidayManager.HolidayEntry> holidays  = new ArrayList<>();
+        List<HolidayManager.HolidayEntry> workswaps = new ArrayList<>();
+        for (HolidayManager.HolidayEntry e : all) {
+            if (e.type == HolidayManager.TYPE_HOLIDAY) holidays.add(e);
+            else                                       workswaps.add(e);
+        }
+
+        // 节假日列表
+        mLlHolidayList.removeAllViews();
+        for (HolidayManager.HolidayEntry e : holidays)
+            mLlHolidayList.addView(createHolidayRow(e, all));
+        mTvHolidayEmpty.setVisibility(holidays.isEmpty() ? View.VISIBLE : View.GONE);
+
+        // 调休工作日列表
+        mLlWorkswapList.removeAllViews();
+        for (HolidayManager.HolidayEntry e : workswaps)
+            mLlWorkswapList.addView(createWorkSwapRow(e, all));
+        mTvWorkswapEmpty.setVisibility(workswaps.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    /** 节假日条目行视图 */
+    private View createHolidayRow(HolidayManager.HolidayEntry entry,
+                                   List<HolidayManager.HolidayEntry> all) {
+        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+        row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dpToPx(6), 0, dpToPx(6));
+
+        // 信息区
+        android.widget.LinearLayout textArea = new android.widget.LinearLayout(this);
+        textArea.setOrientation(android.widget.LinearLayout.VERTICAL);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        textArea.setLayoutParams(lp);
+
+        TextView tvMain = new TextView(this);
+        tvMain.setText(entry.date + "  " + entry.name);
+        textArea.addView(tvMain);
+
+        TextView tvTag = new TextView(this);
+        tvTag.setTextSize(11f);
+        tvTag.setText(entry.isCustom ? "自定义" : "API");
+        tvTag.setTextColor(entry.isCustom ? 0xFF7965AF : 0xFF389E0D);
+        textArea.addView(tvTag);
+
+        row.addView(textArea);
+
+        // 删除按钮
+        MaterialButton btnDel = new MaterialButton(this, null,
+                com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnDel.setText("删除");
+        btnDel.setTextSize(12f);
+        android.widget.LinearLayout.LayoutParams dp =
+                new android.widget.LinearLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        dp.setMarginStart(dpToPx(8));
+        btnDel.setLayoutParams(dp);
+        btnDel.setOnClickListener(v -> {
+            all.remove(entry);
+            HolidayManager.saveEntries(this, mCurrentHolidayYear, all);
+            syncHolidayToHook(mCurrentHolidayYear);
+            renderHolidayLists();
+        });
+        row.addView(btnDel);
+        return row;
+    }
+
+    /** 调休工作日条目行视图（带编辑按钮） */
+    private View createWorkSwapRow(HolidayManager.HolidayEntry entry,
+                                    List<HolidayManager.HolidayEntry> all) {
+        android.widget.LinearLayout container = new android.widget.LinearLayout(this);
+        container.setOrientation(android.widget.LinearLayout.VERTICAL);
+
+        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+        row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dpToPx(6), 0, dpToPx(2));
+
+        // 信息区
+        android.widget.LinearLayout textArea = new android.widget.LinearLayout(this);
+        textArea.setOrientation(android.widget.LinearLayout.VERTICAL);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        textArea.setLayoutParams(lp);
+
+        TextView tvMain = new TextView(this);
+        tvMain.setText(entry.date + "  " + entry.name);
+        textArea.addView(tvMain);
+
+        TextView tvFollow = new TextView(this);
+        tvFollow.setTextSize(12f);
+        tvFollow.setText("→ 按" + entry.followDesc() + "的课表上课");
+        tvFollow.setTextColor(0xFF6750A4);
+        textArea.addView(tvFollow);
+
+        TextView tvTag = new TextView(this);
+        tvTag.setTextSize(11f);
+        tvTag.setText(entry.isCustom ? "自定义" : "API");
+        tvTag.setTextColor(entry.isCustom ? 0xFF7965AF : 0xFF389E0D);
+        textArea.addView(tvTag);
+
+        row.addView(textArea);
+
+        // 编辑按钮
+        MaterialButton btnEdit = new MaterialButton(this, null,
+                com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnEdit.setText("编辑");
+        btnEdit.setTextSize(12f);
+        btnEdit.setOnClickListener(v -> showAddWorkSwapDialog(entry));
+        row.addView(btnEdit);
+
+        // 删除按钮
+        MaterialButton btnDel = new MaterialButton(this, null,
+                com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        btnDel.setText("删除");
+        btnDel.setTextSize(12f);
+        android.widget.LinearLayout.LayoutParams dp =
+                new android.widget.LinearLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        dp.setMarginStart(dpToPx(4));
+        btnDel.setLayoutParams(dp);
+        btnDel.setOnClickListener(v -> {
+            all.remove(entry);
+            HolidayManager.saveEntries(this, mCurrentHolidayYear, all);
+            syncHolidayToHook(mCurrentHolidayYear);
+            renderHolidayLists();
+        });
+        row.addView(btnDel);
+
+        container.addView(row);
+        return container;
+    }
+
+    // ── 新增/编辑对话框 ──────────────────────────────────────────────
+
+    /** 弹出新增/编辑节假日对话框 */
+    private void showAddHolidayDialog(HolidayManager.HolidayEntry editEntry) {
+        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
+        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int p = dpToPx(20);
+        layout.setPadding(p, dpToPx(8), p, 0);
+
+        EditText etDate = new EditText(this);
+        etDate.setHint("日期 (yyyy-MM-dd)");
+        etDate.setSingleLine(true);
+        etDate.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        if (editEntry != null) etDate.setText(editEntry.date);
+        layout.addView(etDate);
+
+        EditText etName = new EditText(this);
+        etName.setHint("名称（如：元旦节）");
+        etName.setSingleLine(true);
+        android.widget.LinearLayout.LayoutParams np = new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        np.topMargin = dpToPx(12);
+        etName.setLayoutParams(np);
+        if (editEntry != null) etName.setText(editEntry.name);
+        layout.addView(etName);
+
+        new AlertDialog.Builder(this)
+                .setTitle(editEntry == null ? "新增节假日" : "编辑节假日")
+                .setView(layout)
+                .setPositiveButton("确定", (d, w) -> {
+                    String date = etDate.getText().toString().trim();
+                    String name = etName.getText().toString().trim();
+                    if (!date.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                        Toast.makeText(this, "日期格式有误（yyyy-MM-dd）", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (name.isEmpty()) name = date;
+                    List<HolidayManager.HolidayEntry> all = HolidayManager.loadEntries(this, mCurrentHolidayYear);
+                    if (editEntry != null) all.remove(editEntry);
+                    HolidayManager.HolidayEntry e =
+                            new HolidayManager.HolidayEntry(date, name, HolidayManager.TYPE_HOLIDAY, true);
+                    all.add(e);
+                    all.sort((a, b) -> a.date.compareTo(b.date));
+                    HolidayManager.saveEntries(this, mCurrentHolidayYear, all);
+                    syncHolidayToHook(mCurrentHolidayYear);
+                    renderHolidayLists();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 弹出新增/编辑调休工作日对话框 */
+    private void showAddWorkSwapDialog(HolidayManager.HolidayEntry editEntry) {
+        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
+        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int p = dpToPx(20);
+        layout.setPadding(p, dpToPx(8), p, dpToPx(8));
+
+        EditText etDate = new EditText(this);
+        etDate.setHint("日期 (yyyy-MM-dd)");
+        etDate.setSingleLine(true);
+        if (editEntry != null) etDate.setText(editEntry.date);
+        layout.addView(etDate);
+
+        EditText etName = new EditText(this);
+        etName.setHint("名称（如：春节调休）");
+        etName.setSingleLine(true);
+        android.widget.LinearLayout.LayoutParams np = new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        np.topMargin = dpToPx(12);
+        etName.setLayoutParams(np);
+        if (editEntry != null) etName.setText(editEntry.name);
+        layout.addView(etName);
+
+        TextView tvDesc = new TextView(this);
+        tvDesc.setText("当天按以下周次/星期的课表上课：");
+        android.widget.LinearLayout.LayoutParams tp = new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        tp.topMargin = dpToPx(16);
+        tp.bottomMargin = dpToPx(6);
+        tvDesc.setLayoutParams(tp);
+        layout.addView(tvDesc);
+
+        // 周次 + 星期 选择行
+        android.widget.LinearLayout followRow = new android.widget.LinearLayout(this);
+        followRow.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        followRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView tvPre = new TextView(this); tvPre.setText("第 ");
+        followRow.addView(tvPre);
+
+        Spinner spinnerWeek = new Spinner(this);
+        int maxWeek = readTotalWeekFromCourseData();
+        String[] weekItems = new String[maxWeek];
+        for (int i = 0; i < maxWeek; i++) weekItems[i] = String.valueOf(i + 1);
+        ArrayAdapter<String> wkAdp = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, weekItems);
+        wkAdp.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerWeek.setAdapter(wkAdp);
+        if (editEntry != null && editEntry.followWeek >= 1 && editEntry.followWeek <= maxWeek)
+            spinnerWeek.setSelection(editEntry.followWeek - 1);
+        followRow.addView(spinnerWeek);
+
+        TextView tvMid = new TextView(this); tvMid.setText(" 周 ");
+        followRow.addView(tvMid);
+
+        Spinner spinnerWd = new Spinner(this);
+        String[] wdItems = {"周一", "周二", "周三", "周四", "周五", "周六", "周日"};
+        ArrayAdapter<String> wdAdp = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, wdItems);
+        wdAdp.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerWd.setAdapter(wdAdp);
+        if (editEntry != null && editEntry.followWeekday >= 1 && editEntry.followWeekday <= 7)
+            spinnerWd.setSelection(editEntry.followWeekday - 1);
+        followRow.addView(spinnerWd);
+
+        TextView tvSuf = new TextView(this); tvSuf.setText(" 的课表");
+        followRow.addView(tvSuf);
+        layout.addView(followRow);
+
+        new AlertDialog.Builder(this)
+                .setTitle(editEntry == null ? "新增调休工作日" : "编辑调休工作日")
+                .setView(layout)
+                .setPositiveButton("确定", (d, w) -> {
+                    String date = etDate.getText().toString().trim();
+                    String name = etName.getText().toString().trim();
+                    if (!date.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                        Toast.makeText(this, "日期格式有误（yyyy-MM-dd）", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (name.isEmpty()) name = date;
+                    int week = spinnerWeek.getSelectedItemPosition() + 1;
+                    int wd   = spinnerWd.getSelectedItemPosition()   + 1;
+                    List<HolidayManager.HolidayEntry> all =
+                            HolidayManager.loadEntries(this, mCurrentHolidayYear);
+                    if (editEntry != null) all.remove(editEntry);
+                    HolidayManager.HolidayEntry e =
+                            new HolidayManager.HolidayEntry(date, name, HolidayManager.TYPE_WORKSWAP, true);
+                    e.followWeek    = week;
+                    e.followWeekday = wd;
+                    all.add(e);
+                    all.sort((a, b) -> a.date.compareTo(b.date));
+                    HolidayManager.saveEntries(this, mCurrentHolidayYear, all);
+                    syncHolidayToHook(mCurrentHolidayYear);
+                    renderHolidayLists();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ── 同步到 Hook 进程 ─────────────────────────────────────────────
+
+    /**
+     * 将指定年份的假期数据广播到 voiceassist 进程，使课前提醒调度能感知节假日 / 调休。
+     */
+    private void syncHolidayToHook(int year) {
+        List<HolidayManager.HolidayEntry> entries = HolidayManager.loadEntries(this, year);
+        String json = HolidayManager.entriesToJson(entries);
+        Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
+        sync.setPackage("com.miui.voiceassist");
+        sync.putExtra(HolidayManager.EXTRA_LIST_PREFIX + year, json);
+        sendBroadcast(sync);
+    }
+
+    // ── 工具 ─────────────────────────────────────────────────────────
+
+    /** 读取目标进程通过广播同步到本地的学期总周数；失败时返回 30。 */
+    private int readTotalWeekFromCourseData() {
+        try {
+            SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            int tw = sp.getInt("course_total_week", 0);
+            android.util.Log.d("IslandNotify", "readTotalWeek: local tw=" + tw);
+            if (tw > 0) return tw;
+        } catch (Throwable e) {
+            android.util.Log.e("IslandNotify", "readTotalWeek failed: " + e);
+        }
+        return 30;
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
     // ─────────────────────────────────────────────────────────────

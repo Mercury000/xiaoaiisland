@@ -804,12 +804,21 @@ public class MainActivity extends AppCompatActivity {
     // ─────────────────────────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────
 
-    /** 初始化关于页面，动态显示版本号 */
+    /** 初始化关于页面，动态显示版本号、作者跳转 */
     private void initAboutSection() {
         TextView versionText = findViewById(R.id.version_text);
-        if (versionText != null) {
-            String versionName = getAppVersionName();
-            versionText.setText(versionName);
+        if (versionText != null) versionText.setText(getAppVersionName());
+
+        TextView tvAuthor = findViewById(R.id.tv_author);
+        if (tvAuthor != null) {
+            tvAuthor.setOnClickListener(v -> {
+                try {
+                    android.content.Intent intent = new android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://www.coolapk.com/u/3336736"));
+                    startActivity(intent);
+                } catch (Exception ignored) {}
+            });
         }
     }
 
@@ -960,19 +969,21 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int[] SETTINGS_CARD_IDS = {
             R.id.card_status, R.id.card_test, R.id.card_custom,
-            R.id.card_timeout, R.id.card_reminder, R.id.card_mute, R.id.card_about
+            R.id.card_timeout, R.id.card_reminder, R.id.card_mute
     };
+    private int mCurrentTabIndex = -1;
 
     private void setupTabs() {
         TabLayout tabLayout = findViewById(R.id.tab_layout);
         tabLayout.addTab(tabLayout.newTab().setText("设置"));
         tabLayout.addTab(tabLayout.newTab().setText("假期/调休"));
-        showSettingsTab(true);
+        tabLayout.addTab(tabLayout.newTab().setText("关于"));
+        showTab(0);
 
         tabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(TabLayout.Tab tab) {
-                showSettingsTab(tab.getPosition() == 0);
+                showTab(tab.getPosition());
             }
             @Override public void onTabUnselected(TabLayout.Tab tab) {}
             @Override public void onTabReselected(TabLayout.Tab tab) {}
@@ -1006,33 +1017,34 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void showSettingsTab(boolean showSettings) {
-        View settingsView = findViewById(R.id.container_settings);
-        View holidayView  = findViewById(R.id.container_holiday);
-        if (settingsView == null || holidayView == null) return;
+    private void showTab(int newIndex) {
+        int[] ids = {R.id.container_settings, R.id.container_holiday, R.id.container_about};
+        View[] tabs = new View[ids.length];
+        for (int i = 0; i < ids.length; i++) tabs[i] = findViewById(ids[i]);
+        if (tabs[0] == null) return;
 
-        View outView = showSettings ? holidayView : settingsView;
-        View inView  = showSettings ? settingsView : holidayView;
-        // 正值 = 设置在左(0)，假期在右(1)；向右滑为正方向
-        float sign = showSettings ? 1f : -1f;
-
-        if (outView.getVisibility() == View.GONE) {
-            // 初始化时直接到位，无动画
-            inView.setTranslationX(0f);
-            inView.setVisibility(View.VISIBLE);
-            outView.setVisibility(View.GONE);
+        if (mCurrentTabIndex == -1) {
+            for (int i = 0; i < tabs.length; i++) {
+                tabs[i].setTranslationX(0f);
+                tabs[i].setVisibility(i == newIndex ? View.VISIBLE : View.GONE);
+            }
+            mCurrentTabIndex = newIndex;
             return;
         }
-        View parent = (View) settingsView.getParent();
+        if (newIndex == mCurrentTabIndex) return;
+
+        View outView = tabs[mCurrentTabIndex];
+        View inView  = tabs[newIndex];
+        float sign = newIndex > mCurrentTabIndex ? 1f : -1f;
+        View parent = (View) tabs[0].getParent();
         float w = (parent != null && parent.getWidth() > 0) ? parent.getWidth() : 1080f;
-        // 取消之前可能未结束的动画
         outView.animate().cancel();
         inView.animate().cancel();
-        inView.setTranslationX(-sign * w);
+        inView.setTranslationX(sign * w);
         inView.setVisibility(View.VISIBLE);
         android.view.animation.Interpolator interp =
                 new android.view.animation.DecelerateInterpolator(1.5f);
-        outView.animate().translationX(sign * w).setDuration(300)
+        outView.animate().translationX(-sign * w).setDuration(300)
                 .setInterpolator(interp)
                 .withEndAction(() -> {
                     outView.setVisibility(View.GONE);
@@ -1040,6 +1052,7 @@ public class MainActivity extends AppCompatActivity {
                 }).start();
         inView.animate().translationX(0f).setDuration(300)
                 .setInterpolator(interp).start();
+        mCurrentTabIndex = newIndex;
     }
 
     // ─────────────────────────────────────────────────────────────

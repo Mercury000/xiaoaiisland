@@ -1,14 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Android 13+ 发送通知需要此权限 -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 获取节假日数据 -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- 上课静音：修改铃声模式 -->
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <!-- 上课静音：Android 6+ 切换静音需要「勿扰」权限声明（用户需在设置中手动授权） -->
-    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
     <application
         android:label="@string/app_name"

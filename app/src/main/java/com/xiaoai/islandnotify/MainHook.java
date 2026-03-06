@@ -106,8 +106,6 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String KEY_MUTE_MINS_BEFORE      = "mute_mins_before";   // 上课前多少分钟静音
     private static final String KEY_UNMUTE_ENABLED        = "unmute_enabled";
     private static final String KEY_UNMUTE_MINS_AFTER     = "unmute_mins_after";  // 下课后多少分钟取消静音
-    /** 旧版 dnd_mode 迁移用键名（仅用于读取旧值，写入已废弃） */
-    private static final String LEGACY_KEY_DND_MODE       = "dnd_mode";
     private static final String KEY_DND_ENABLED           = "dnd_enabled";        // 勿扰独立开关
     private static final String KEY_DND_MINS_BEFORE       = "dnd_mins_before";    // 上课前多少分钟开启勿扰
     private static final String KEY_UNDND_ENABLED         = "undnd_enabled";      // 下课自动关闭勿扰
@@ -664,9 +662,8 @@ public class MainHook implements IXposedHookLoadPackage {
                 }
                 // 动态定位小米内部 SettingsUtil（change 方法），用于静音/勿扰模式切换，结果按版本号缓存
                 MiuiSettingsInvoker.init(appCtx, appCtx.getClassLoader());
-                // 从 SP 读取开关状态（先迁移旧版字段）
+                // 从 SP 读取开关状态
                 SharedPreferences initPrefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                migrateLegacyDndMode(initPrefs); // 迁移 dnd_mode → 独立勿扰开关（仅执行一次）
                 sMuteEnabled           = initPrefs.getBoolean(KEY_MUTE_ENABLED, false);
                 sUnmuteEnabled         = initPrefs.getBoolean(KEY_UNMUTE_ENABLED, false);
                 sDndEnabled    = initPrefs.getBoolean(KEY_DND_ENABLED,    false);
@@ -1124,33 +1121,6 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Exception e) {
             XposedBridge.log(TAG + ": scheduleDndOffAlarm 失败 → " + e.getMessage());
         }
-    }
-
-    /**
-     * 迁移旧版 dnd_mode 字段（升级兼容，仅执行一次后删除旧键）。
-     * 旧版 dnd_mode=true 表示「仅使用勿扰」；新版静音与勿扰完全独立于各自开关。
-     * 迁移规则：
-     *   dnd_mode=true  → dnd_enabled/undnd_enabled 继承旧版 mute_enabled/unmute_enabled；
-     *                    dnd_mins_before/undnd_mins_after 继承旧版 mute_mins_before/unmute_mins_after；
-     *                    原静音开关重置为 false（旧版勿扰模式下静音未启用）。
-     *   dnd_mode=false → 仅静音模式，字段不变，直接删除旧键即可。
-     */
-    private void migrateLegacyDndMode(SharedPreferences sp) {
-        if (!sp.contains(LEGACY_KEY_DND_MODE)) return; // 已迁移或全新安装，无需处理
-        boolean wasDnd = sp.getBoolean(LEGACY_KEY_DND_MODE, false);
-        SharedPreferences.Editor ed = sp.edit();
-        if (wasDnd) {
-            // 旧版勿扰模式 → 迁移为新版独立勿扰开关，继承旧版时间配置
-            ed.putBoolean(KEY_DND_ENABLED,   sp.getBoolean(KEY_MUTE_ENABLED,   false));
-            ed.putBoolean(KEY_UNDND_ENABLED, sp.getBoolean(KEY_UNMUTE_ENABLED, false));
-            ed.putInt(KEY_DND_MINS_BEFORE,   sp.getInt(KEY_MUTE_MINS_BEFORE,   0));
-            ed.putInt(KEY_UNDND_MINS_AFTER,  sp.getInt(KEY_UNMUTE_MINS_AFTER,  0));
-            // 旧版勿扰模式下静音未启用，迁移后保持关闭（静音/勿扰现在独立）
-            ed.putBoolean(KEY_MUTE_ENABLED,   false);
-            ed.putBoolean(KEY_UNMUTE_ENABLED, false);
-        }
-        ed.remove(LEGACY_KEY_DND_MODE).apply(); // 删除旧字段，防止重复迁移
-        XposedBridge.log(TAG + ": [迁移] dnd_mode → 独立勿扰开关 wasDnd=" + wasDnd);
     }
 
     /** 在 voiceassist 进程内执行静音/恢复铃声。 */

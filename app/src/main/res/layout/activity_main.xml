@@ -831,30 +831,7 @@
                         android:textAppearance="?attr/textAppearanceLabelLarge"
                         android:textColor="?attr/colorPrimary" />
 
-                    <!-- 静音 / 勿扰 模式选择 -->
-                    <RadioGroup
-                        android:id="@+id/rg_mute_mode"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:layout_marginTop="10dp">
-
-                        <RadioButton
-                            android:id="@+id/rb_mode_silent"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="静音"
-                            android:checked="true" />
-
-                        <RadioButton
-                            android:id="@+id/rb_mode_dnd"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="勿扰（DND）" />
-
-                    </RadioGroup>
+                    <!-- ══ 自动静音 ══ -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -869,17 +846,15 @@
                             android:orientation="vertical">
 
                             <TextView
-                                android:id="@+id/tv_mute_switch_title"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="上课自动静音"
                                 android:textAppearance="?attr/textAppearanceBodyMedium" />
 
                             <TextView
-                                android:id="@+id/tv_mute_switch_desc"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="在课程开始前指定时间将手机调为静音"
+                                android:text="课程开始前指定时间将手机调为静音"
                                 android:textAppearance="?attr/textAppearanceBodySmall"
                                 android:textColor="?attr/colorOnSurfaceVariant" />
 
@@ -892,7 +867,7 @@
 
                     </LinearLayout>
 
-                    <!-- 静音分钟数（仅 sw_mute_enabled 开启时显示） -->
+                    <!-- 静音提前分钟数（sw_mute_enabled 开启时显示） -->
                     <LinearLayout
                         android:id="@+id/ll_mute_content"
                         android:layout_width="match_parent"
@@ -909,7 +884,6 @@
                             android:layout_marginTop="4dp">
 
                             <TextView
-                                android:id="@+id/tv_mute_mins_label"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
@@ -937,18 +911,13 @@
 
                     </LinearLayout>
 
-                    <com.google.android.material.divider.MaterialDivider
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:layout_marginBottom="12dp" />
-
-                    <!-- 取消静音 / 解除勿扰 开关 -->
+                    <!-- 下课恢复铃声 -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:gravity="center_vertical">
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="8dp">
 
                         <LinearLayout
                             android:layout_width="0dp"
@@ -957,17 +926,15 @@
                             android:orientation="vertical">
 
                             <TextView
-                                android:id="@+id/tv_unmute_switch_title"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="下课自动恢复铃声"
                                 android:textAppearance="?attr/textAppearanceBodyMedium" />
 
                             <TextView
-                                android:id="@+id/tv_unmute_switch_desc"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="在课程结束后指定时间将手机恢复为正常响铃"
+                                android:text="课程结束后指定时间恢复正常响铃"
                                 android:textAppearance="?attr/textAppearanceBodySmall"
                                 android:textColor="?attr/colorOnSurfaceVariant" />
 
@@ -980,7 +947,7 @@
 
                     </LinearLayout>
 
-                    <!-- 取消静音分钟数（仅 sw_unmute_enabled 开启时显示） -->
+                    <!-- 恢复铃声延迟分钟数（sw_unmute_enabled 开启时显示） -->
                     <LinearLayout
                         android:id="@+id/ll_unmute_content"
                         android:layout_width="match_parent"
@@ -997,7 +964,6 @@
                             android:layout_marginTop="4dp">
 
                             <TextView
-                                android:id="@+id/tv_unmute_mins_label"
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
@@ -1025,13 +991,179 @@
 
                     </LinearLayout>
 
+                    <com.google.android.material.divider.MaterialDivider
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:layout_marginBottom="4dp" />
+
+                    <!-- ══ 自动勿扰（DND）══ -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="8dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="上课自动开启勿扰"
+                                android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="课程开始前指定时间开启勿扰（DND）模式"
+                                android:textAppearance="?attr/textAppearanceBodySmall"
+                                android:textColor="?attr/colorOnSurfaceVariant" />
+
+                        </LinearLayout>
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/sw_dnd_enabled"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" />
+
+                    </LinearLayout>
+
+                    <!-- 开启勿扰提前分钟数（sw_dnd_enabled 开启时显示） -->
+                    <LinearLayout
+                        android:id="@+id/ll_dnd_content"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:layout_marginTop="8dp"
+                        android:visibility="gone">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginTop="4dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="上课前多少分钟开启勿扰"
+                                android:textAppearance="?attr/textAppearanceBodySmall"
+                                android:textColor="?attr/colorOnSurfaceVariant" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                                android:layout_width="96dp"
+                                android:layout_height="wrap_content">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_dnd_mins_before"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="number"
+                                    android:maxLength="3"
+                                    android:text="0"
+                                    android:gravity="center" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <!-- 下课关闭勿扰 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="8dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="下课自动关闭勿扰"
+                                android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="课程结束后指定时间关闭勿扰，恢复正常通知"
+                                android:textAppearance="?attr/textAppearanceBodySmall"
+                                android:textColor="?attr/colorOnSurfaceVariant" />
+
+                        </LinearLayout>
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/sw_undnd_enabled"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" />
+
+                    </LinearLayout>
+
+                    <!-- 关闭勿扰延迟分钟数（sw_undnd_enabled 开启时显示） -->
+                    <LinearLayout
+                        android:id="@+id/ll_undnd_content"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:layout_marginTop="8dp"
+                        android:visibility="gone">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginTop="4dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="下课后多少分钟关闭勿扰"
+                                android:textAppearance="?attr/textAppearanceBodySmall"
+                                android:textColor="?attr/colorOnSurfaceVariant" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                                android:layout_width="96dp"
+                                android:layout_height="wrap_content">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_undnd_mins_after"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="number"
+                                    android:maxLength="3"
+                                    android:text="0"
+                                    android:gravity="center" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_save_mute"
                         style="@style/Widget.Material3.Button"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="14dp"
-                        android:text="保存静音设置" />
+                        android:text="保存设置" />
 
                     <TextView
                         android:id="@+id/tv_mute_hint"

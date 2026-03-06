@@ -39,7 +39,15 @@ public class MainHook implements IXposedHookLoadPackage {
     /** AlarmManager 触发上课静音（发给 voiceassist 自身，不受 MIUI 电池限制） */
     private static final String ACTION_DO_MUTE   = "com.xiaoai.islandnotify.DO_MUTE";
     /** AlarmManager 触发下课解除静音（发给 voiceassist 自身，不受 MIUI 电池限制） */
-    private static final String ACTION_DO_UNMUTE = "com.xiaoai.islandnotify.DO_UNMUTE";
+    private static final String ACTION_DO_UNMUTE    = "com.xiaoai.islandnotify.DO_UNMUTE";
+    /** AlarmManager 触发上课开启勿扰（DND） */
+    private static final String ACTION_DO_DND_ON    = "com.xiaoai.islandnotify.DO_DND_ON";
+    /** AlarmManager 触发下课关闭勿扰（DND） */
+    private static final String ACTION_DO_DND_OFF   = "com.xiaoai.islandnotify.DO_DND_OFF";
+    /** 超级岛按钮手动触发：立即应用所有已配置的静音/勿扰 */
+    private static final String ACTION_MANUAL_MUTE   = "com.xiaoai.islandnotify.MANUAL_MUTE";
+    /** 超级岛按钮手动触发：立即解除所有已配置的静音/勿扰 */
+    private static final String ACTION_MANUAL_UNMUTE = "com.xiaoai.islandnotify.MANUAL_UNMUTE";
     /** 每日 00:01 跨日重调广播 Action（链式保证次日课程 alarm 不丢失） */
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
     /** 通知定时取消广播 Action（替代 Handler.postDelayed，setAlarmClock 保证精确触发） */
@@ -98,15 +106,23 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String KEY_MUTE_MINS_BEFORE      = "mute_mins_before";   // 上课前多少分钟静音
     private static final String KEY_UNMUTE_ENABLED        = "unmute_enabled";
     private static final String KEY_UNMUTE_MINS_AFTER     = "unmute_mins_after";  // 下课后多少分钟取消静音
-    private static final String KEY_DND_MODE              = "dnd_mode";           // true=勿扰(DND), false=静音（默认）
-    private static final int    DEFAULT_MUTE_MINS_BEFORE  = 0;   // 默认：上课时才静音
-    private static final int    DEFAULT_UNMUTE_MINS_AFTER = 0;   // 默认：下课立即恢复
+    /** 旧版 dnd_mode 迁移用键名（仅用于读取旧值，写入已废弃） */
+    private static final String LEGACY_KEY_DND_MODE       = "dnd_mode";
+    private static final String KEY_DND_ENABLED           = "dnd_enabled";        // 勿扰独立开关
+    private static final String KEY_DND_MINS_BEFORE       = "dnd_mins_before";    // 上课前多少分钟开启勿扰
+    private static final String KEY_UNDND_ENABLED         = "undnd_enabled";      // 下课自动关闭勿扰
+    private static final String KEY_UNDND_MINS_AFTER      = "undnd_mins_after";   // 下课后多少分钟关闭勿扰
+    private static final int    DEFAULT_MUTE_MINS_BEFORE  = 0;
+    private static final int    DEFAULT_UNMUTE_MINS_AFTER = 0;
+    private static final int    DEFAULT_DND_MINS_BEFORE   = 0;
+    private static final int    DEFAULT_UNDND_MINS_AFTER  = 0;
     /** 静音功能开关（volatile，跨 Xposed 回调线程读取） */
     private static volatile boolean sMuteEnabled   = false;
     /** 取消静音功能开关 */
     private static volatile boolean sUnmuteEnabled = false;
-    /** 勿扰模式开关：true=启用 DND（勿扰），false=静音（默认） */
-    private static volatile boolean sDndMode       = false;
+    /** 勿扰独立开关（与静音相互独立，可同时启用） */
+    private static volatile boolean sDndEnabled    = false;
+    private static volatile boolean sUnDndEnabled  = false;
     /** 已调度的静音/取消静音 alarm reqCode 集合，用于批量取消 */
     private final java.util.Set<Integer> mScheduledMuteIds = new java.util.HashSet<>();
     /** 有连续后续课程的通知 alarmId 集合：injectIslandParams 跳过 cancel alarm 注册，
@@ -170,6 +186,10 @@ public class MainHook implements IXposedHookLoadPackage {
                 filter.addAction(ACTION_COURSE_REMINDER);
                 filter.addAction(ACTION_DO_MUTE);
                 filter.addAction(ACTION_DO_UNMUTE);
+                filter.addAction(ACTION_DO_DND_ON);
+                filter.addAction(ACTION_DO_DND_OFF);
+                filter.addAction(ACTION_MANUAL_MUTE);
+                filter.addAction(ACTION_MANUAL_UNMUTE);
                 filter.addAction(ACTION_RESCHEDULE_DAILY);
                 filter.addAction(ACTION_NOTIF_CANCEL);
                 BroadcastReceiver receiver = new BroadcastReceiver() {
@@ -220,9 +240,21 @@ public class MainHook implements IXposedHookLoadPackage {
                                 ed.putInt(KEY_UNMUTE_MINS_AFTER,
                                         intent.getIntExtra(KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER));
                             }
-                            if (intent.hasExtra(KEY_DND_MODE)) {
-                                ed.putBoolean(KEY_DND_MODE,
-                                        intent.getBooleanExtra(KEY_DND_MODE, false));
+                            if (intent.hasExtra(KEY_DND_ENABLED)) {
+                                ed.putBoolean(KEY_DND_ENABLED,
+                                        intent.getBooleanExtra(KEY_DND_ENABLED, false));
+                            }
+                            if (intent.hasExtra(KEY_DND_MINS_BEFORE)) {
+                                ed.putInt(KEY_DND_MINS_BEFORE,
+                                        intent.getIntExtra(KEY_DND_MINS_BEFORE, DEFAULT_DND_MINS_BEFORE));
+                            }
+                            if (intent.hasExtra(KEY_UNDND_ENABLED)) {
+                                ed.putBoolean(KEY_UNDND_ENABLED,
+                                        intent.getBooleanExtra(KEY_UNDND_ENABLED, false));
+                            }
+                            if (intent.hasExtra(KEY_UNDND_MINS_AFTER)) {
+                                ed.putInt(KEY_UNDND_MINS_AFTER,
+                                        intent.getIntExtra(KEY_UNDND_MINS_AFTER, DEFAULT_UNDND_MINS_AFTER));
                             }
                             ed.apply();
                             // 同步假期数据（2025–2028）到 island_holiday 文件
@@ -241,24 +273,29 @@ public class MainHook implements IXposedHookLoadPackage {
                                 sMuteEnabled   = intent.getBooleanExtra(KEY_MUTE_ENABLED, false);
                             if (intent.hasExtra(KEY_UNMUTE_ENABLED))
                                 sUnmuteEnabled = intent.getBooleanExtra(KEY_UNMUTE_ENABLED, false);
-                            if (intent.hasExtra(KEY_DND_MODE))
-                                sDndMode       = intent.getBooleanExtra(KEY_DND_MODE, false);
-                            // 提醒分钟数或静音参数变化时重新调度（仅自定义模式已开启）
+                            if (intent.hasExtra(KEY_DND_ENABLED))
+                                sDndEnabled    = intent.getBooleanExtra(KEY_DND_ENABLED, false);
+                            if (intent.hasExtra(KEY_UNDND_ENABLED))
+                                sUnDndEnabled  = intent.getBooleanExtra(KEY_UNDND_ENABLED, false);
+                            // 提醒分钟数或静音参数变化时重新调度
                             boolean muteSettingChanged = intent.hasExtra(KEY_MUTE_ENABLED)
                                     || intent.hasExtra(KEY_MUTE_MINS_BEFORE)
                                     || intent.hasExtra(KEY_UNMUTE_ENABLED)
                                     || intent.hasExtra(KEY_UNMUTE_MINS_AFTER)
-                                    || intent.hasExtra(KEY_DND_MODE);
+                                    || intent.hasExtra(KEY_DND_ENABLED)
+                                    || intent.hasExtra(KEY_DND_MINS_BEFORE)
+                                    || intent.hasExtra(KEY_UNDND_ENABLED)
+                                    || intent.hasExtra(KEY_UNDND_MINS_AFTER);
                             // 课前提醒分钟数变化时重新调度
                             if (intent.hasExtra(KEY_REMINDER_MINUTES)) {
                                 mLastCourseDataHash = 0; // 提醒分钟数改变，强制重调
                                 scheduleTodayCourseReminders(context, null);
                             }
-                            // 静音设置变化时独立重调（不依赖自定义提醒开关）
+                            // 静音/勿扰设置变化时独立重调
                             if (muteSettingChanged) {
                                 scheduleTodayMuteAlarms(context);
-                                // 管理 FileObserver：静音启用时启动，两者都关闭时（且提醒也关）才停
-                                if (sMuteEnabled || sUnmuteEnabled) {
+                                // 管理 FileObserver：任一功能启用时启动，全部关闭时才停
+                                if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
                                     registerCourseDataListener(context); // 内部防重复
                                 } else {
                                     if (mCourseDataObserver != null) {
@@ -374,32 +411,49 @@ public class MainHook implements IXposedHookLoadPackage {
                             // 分钟数直接从 intent 读取（MainActivity 调用时已携带），不读 SP，消除跨进程缓存旧值问题
                             boolean tMuteEnabled   = intent.getBooleanExtra("mute_enabled",   sMuteEnabled);
                             boolean tUnmuteEnabled = intent.getBooleanExtra("unmute_enabled", sUnmuteEnabled);
-                            if (tMuteEnabled || tUnmuteEnabled) {
-                                int  tMuteBefore  = intent.getIntExtra(KEY_MUTE_MINS_BEFORE,  DEFAULT_MUTE_MINS_BEFORE);
-                                int  tUnmuteAfter = intent.getIntExtra(KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER);
-                                long tNow         = System.currentTimeMillis();
-                                // 使用 MainActivity 传来的精确毫秒时间戳，与真实调度逻辑完全一致：
-                                //   muteTrigger   = classStart - muteMinsBefore * 60s
-                                //   unmuteTrigger = classEnd   + unmuteMinsAfter * 60s
-                                long classStartMs   = intent.getLongExtra("start_ms", tNow + 60_000L);
-                                long classEndMs     = intent.getLongExtra("end_ms",   tNow + 120_000L);
-                                long tMuteTrigger   = classStartMs - (long) tMuteBefore  * 60_000L;
-                                long tUnmuteTrigger = classEndMs   + (long) tUnmuteAfter * 60_000L;
-                                int  tAlarmId       = Math.abs(("test_" + tCourseName).hashCode());
-                                long tMuteSecsLeft   = (tMuteTrigger   - tNow) / 1_000;
-                                long tUnmuteSecsLeft = (tUnmuteTrigger - tNow) / 1_000;
-                                if (tMuteEnabled) {
-                                    if (tMuteTrigger <= tNow) {
-                                        // 静音时刻已过 → 立即静音
-                                        applyMuteState(context, true, tCourseName);
-                                    } else {
-                                        scheduleMuteAlarm(context, tCourseName, tMuteTrigger, tAlarmId);
-                                        XposedBridge.log(TAG + ": 测试通知 → 静音闹钟已调度，" + tMuteSecsLeft + " 秒后触发");
+                            boolean tDndEnabled    = intent.getBooleanExtra("dnd_enabled",    sDndEnabled);
+                            boolean tUnDndEnabled  = intent.getBooleanExtra("undnd_enabled",  sUnDndEnabled);
+                            if (tMuteEnabled || tUnmuteEnabled || tDndEnabled || tUnDndEnabled) {
+                                long tNow       = System.currentTimeMillis();
+                                // 使用 MainActivity 传来的精确毫秒时间戳，与真实调度逻辑完全一致
+                                long classStartMs = intent.getLongExtra("start_ms", tNow + 60_000L);
+                                long classEndMs   = intent.getLongExtra("end_ms",   tNow + 120_000L);
+                                int  tAlarmId     = Math.abs(("test_" + tCourseName).hashCode());
+                                if (tMuteEnabled || tUnmuteEnabled) {
+                                    int  tMuteBefore    = intent.getIntExtra(KEY_MUTE_MINS_BEFORE,  DEFAULT_MUTE_MINS_BEFORE);
+                                    int  tUnmuteAfter   = intent.getIntExtra(KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER);
+                                    long tMuteTrigger   = classStartMs - (long) tMuteBefore  * 60_000L;
+                                    long tUnmuteTrigger = classEndMs   + (long) tUnmuteAfter * 60_000L;
+                                    if (tMuteEnabled) {
+                                        if (tMuteTrigger <= tNow) {
+                                            applyMuteState(context, true, tCourseName);
+                                        } else {
+                                            scheduleMuteAlarm(context, tCourseName, tMuteTrigger, tAlarmId);
+                                            XposedBridge.log(TAG + ": 测试 → 静音将在 " + (tMuteTrigger - tNow) / 1_000 + " 秒后触发");
+                                        }
+                                    }
+                                    if (tUnmuteEnabled) {
+                                        scheduleUnmuteAlarm(context, tCourseName, tUnmuteTrigger, tAlarmId);
+                                        XposedBridge.log(TAG + ": 测试 → 取消静音将在 " + (tUnmuteTrigger - tNow) / 1_000 + " 秒后触发");
                                     }
                                 }
-                                if (tUnmuteEnabled) {
-                                    scheduleUnmuteAlarm(context, tCourseName, tUnmuteTrigger, tAlarmId);
-                                    XposedBridge.log(TAG + ": 测试通知 → 取消静音闹钟已调度，" + tUnmuteSecsLeft + " 秒后触发");
+                                if (tDndEnabled || tUnDndEnabled) {
+                                    int  tDndBefore    = intent.getIntExtra(KEY_DND_MINS_BEFORE,  DEFAULT_DND_MINS_BEFORE);
+                                    int  tUnDndAfter   = intent.getIntExtra(KEY_UNDND_MINS_AFTER, DEFAULT_UNDND_MINS_AFTER);
+                                    long tDndTrigger   = classStartMs - (long) tDndBefore  * 60_000L;
+                                    long tUnDndTrigger = classEndMs   + (long) tUnDndAfter * 60_000L;
+                                    if (tDndEnabled) {
+                                        if (tDndTrigger <= tNow) {
+                                            applyDndState(context, true, tCourseName);
+                                        } else {
+                                            scheduleDndOnAlarm(context, tCourseName, tDndTrigger, tAlarmId);
+                                            XposedBridge.log(TAG + ": 测试 → 勿扰将在 " + (tDndTrigger - tNow) / 1_000 + " 秒后触发");
+                                        }
+                                    }
+                                    if (tUnDndEnabled) {
+                                        scheduleDndOffAlarm(context, tCourseName, tUnDndTrigger, tAlarmId);
+                                        XposedBridge.log(TAG + ": 测试 → 关闭勿扰将在 " + (tUnDndTrigger - tNow) / 1_000 + " 秒后触发");
+                                    }
                                 }
                             }
                         } else if (ACTION_COURSE_REMINDER.equals(intent.getAction())) {
@@ -496,21 +550,32 @@ public class MainHook implements IXposedHookLoadPackage {
                             crnm.notify(crId, crNotif);
                             XposedBridge.log(TAG + ": 课前提醒通知已发送 → " + crName + " @" + crStart);
                         } else if (ACTION_DO_MUTE.equals(intent.getAction())) {
-                            String muteCourseName = intent.getStringExtra("course_name");
-                            applyMuteState(context, true, muteCourseName);
+                            applyMuteState(context, true, intent.getStringExtra("course_name"));
                         } else if (ACTION_DO_UNMUTE.equals(intent.getAction())) {
-                            String unmuteCourseName = intent.getStringExtra("course_name");
-                            applyMuteState(context, false, unmuteCourseName);
+                            applyMuteState(context, false, intent.getStringExtra("course_name"));
+                        } else if (ACTION_DO_DND_ON.equals(intent.getAction())) {
+                            applyDndState(context, true, intent.getStringExtra("course_name"));
+                        } else if (ACTION_DO_DND_OFF.equals(intent.getAction())) {
+                            applyDndState(context, false, intent.getStringExtra("course_name"));
+                        } else if (ACTION_MANUAL_MUTE.equals(intent.getAction())) {
+                            String mn = intent.getStringExtra("course_name");
+                            if (sMuteEnabled || sUnmuteEnabled) applyMuteState(context, true, mn);
+                            if (sDndEnabled  || sUnDndEnabled)  applyDndState(context, true, mn);
+                        } else if (ACTION_MANUAL_UNMUTE.equals(intent.getAction())) {
+                            String mn = intent.getStringExtra("course_name");
+                            if (sMuteEnabled || sUnmuteEnabled) applyMuteState(context, false, mn);
+                            if (sDndEnabled  || sUnDndEnabled)  applyDndState(context, false, mn);
                         } else if (ACTION_RESCHEDULE_DAILY.equals(intent.getAction())) {
                             // 每日 00:01 跨日重调：重新同步开关状态，重新调度当日 alarm，再链式设置下一个 00:01
                             XposedBridge.log(TAG + ": [跨日重调] 触发，重新调度今日课程/静音闹钟");
                             SharedPreferences dp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                             sMuteEnabled   = dp.getBoolean(KEY_MUTE_ENABLED,   false);
                             sUnmuteEnabled = dp.getBoolean(KEY_UNMUTE_ENABLED, false);
-                            sDndMode       = dp.getBoolean(KEY_DND_MODE,       false);
+                            sDndEnabled    = dp.getBoolean(KEY_DND_ENABLED,    false);
+                            sUnDndEnabled  = dp.getBoolean(KEY_UNDND_ENABLED,  false);
                             mLastCourseDataHash = 0; // 跨日强制重调，忽略内容哈希缓存
                             scheduleTodayCourseReminders(context, null);
-                            if (sMuteEnabled || sUnmuteEnabled) {
+                            if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
                                 scheduleTodayMuteAlarms(context);
                             }
                             // 链式调度下一个 00:01
@@ -537,15 +602,17 @@ public class MainHook implements IXposedHookLoadPackage {
                 }
                 // 动态定位小米内部 SettingsUtil（change 方法），用于静音/勿扰模式切换，结果按版本号缓存
                 MiuiSettingsInvoker.init(appCtx, appCtx.getClassLoader());
-                // 从 SP 读取开关状态
+                // 从 SP 读取开关状态（先迁移旧版字段）
                 SharedPreferences initPrefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                migrateLegacyDndMode(initPrefs); // 迁移 dnd_mode → 独立勿扰开关（仅执行一次）
                 sMuteEnabled           = initPrefs.getBoolean(KEY_MUTE_ENABLED, false);
                 sUnmuteEnabled         = initPrefs.getBoolean(KEY_UNMUTE_ENABLED, false);
-                sDndMode               = initPrefs.getBoolean(KEY_DND_MODE, false);
+                sDndEnabled    = initPrefs.getBoolean(KEY_DND_ENABLED,    false);
+                sUnDndEnabled  = initPrefs.getBoolean(KEY_UNDND_ENABLED,  false);
                 // 课前提醒始终开启，无条件调度
                 scheduleTodayCourseReminders(appCtx, null);
-                // 静音功能独立于自定义提醒开关
-                if (sMuteEnabled || sUnmuteEnabled) {
+                // 静音/勿扰功能独立于自定义提醒开关
+                if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
                     scheduleTodayMuteAlarms(appCtx);
                 }
                 // FileObserver：常住监听 CourseData 变化
@@ -849,9 +916,13 @@ public class MainHook implements IXposedHookLoadPackage {
         try {
             AlarmManager am = ctx.getSystemService(AlarmManager.class);
             for (int id : mScheduledMuteIds) {
-                for (String action : new String[]{ACTION_DO_MUTE, ACTION_DO_UNMUTE}) {
-                    int reqCode = action.equals(ACTION_DO_MUTE)
-                            ? (id | 0x10000000) : (id | 0x20000000);
+                for (String action : new String[]{ACTION_DO_MUTE, ACTION_DO_UNMUTE, ACTION_DO_DND_ON, ACTION_DO_DND_OFF}) {
+                    int aid = id & 0x00FFFFFF;
+                    int reqCode;
+                    if      (action.equals(ACTION_DO_MUTE))    reqCode = aid | 0x01000000;
+                    else if (action.equals(ACTION_DO_UNMUTE))  reqCode = aid | 0x02000000;
+                    else if (action.equals(ACTION_DO_DND_ON))  reqCode = aid | 0x03000000;
+                    else                                        reqCode = aid | 0x04000000;
                     Intent dummy = new Intent(action);
                     dummy.setPackage(TARGET_PACKAGE);
                     PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, dummy,
@@ -867,12 +938,10 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /** 设置上课静音闹钟，发给 voiceassist 自身（系统应用，不受 MIUI 电池优化限制）。
-     * 使用 setAlarmClock （最高级闹钟 API）替代 setExactAndAllowWhileIdle：
-     * 系统保证不受 Doze/MIUI 电池优化延迟，状态栏闹钟图标触发后自动消失。
-     * reqCode = alarmId | 0x10000000，与课前提醒不重叠。 */
+     * reqCode = (alarmId & 0x00FFFFFF) | 0x01000000，与课前提醒不重叠。 */
     private void scheduleMuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
-            int reqCode = alarmId | 0x10000000;
+            int reqCode = (alarmId & 0x00FFFFFF) | 0x01000000;
             Intent intent = new Intent(ACTION_DO_MUTE);
             intent.setPackage(TARGET_PACKAGE);
             intent.putExtra("course_name", courseName);
@@ -925,11 +994,10 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 设置下课取消静音闹钟，发给 voiceassist 自身。
-     * 使用 setAlarmClock 保证精确触发。reqCode = alarmId | 0x20000000。 */
+    /** 设置下课取消静音闹钟。reqCode = (alarmId & 0x00FFFFFF) | 0x02000000。 */
     private void scheduleUnmuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
-            int reqCode = alarmId | 0x20000000;
+            int reqCode = (alarmId & 0x00FFFFFF) | 0x02000000;
             Intent intent = new Intent(ACTION_DO_UNMUTE);
             intent.setPackage(TARGET_PACKAGE);
             intent.putExtra("course_name", courseName);
@@ -949,30 +1017,97 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /**
-     * 在 voiceassist 进程内执行静音/恢复。
-     * 三层回退：① setRingerMode  ② setStreamVolume  ③ adjustStreamVolume(ADJUST_MUTE)
-     */
-    private void applyMuteState(Context ctx, boolean mute, String courseName) {
-        XposedBridge.log(TAG + ": applyMuteState mute=" + mute + " ← " + courseName);
-        boolean invokerOk = sDndMode
-                ? MiuiSettingsInvoker.applyDnd(ctx, mute)
-                : MiuiSettingsInvoker.applyMute(ctx, mute);
-        String modeTip = mute ? (sDndMode ? "开启勿扰" : "静音") : (sDndMode ? "关闭勿扰" : "恢复铃声");
-        if (invokerOk) {
-            XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker 成功");
-        } else {
-            XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker 失败 ← " + courseName);
+    /** 设置上课开启勿扰闹钟。reqCode = (alarmId & 0x00FFFFFF) | 0x03000000。 */
+    private void scheduleDndOnAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
+        try {
+            int reqCode = (alarmId & 0x00FFFFFF) | 0x03000000;
+            Intent intent = new Intent(ACTION_DO_DND_ON);
+            intent.setPackage(TARGET_PACKAGE);
+            intent.putExtra("course_name", courseName);
+            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
+                    new Intent(ACTION_DO_DND_ON).setPackage(TARGET_PACKAGE),
+                    PendingIntent.FLAG_IMMUTABLE);
+            ctx.getSystemService(AlarmManager.class)
+               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            mScheduledMuteIds.add(alarmId);
+            long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
+            XposedBridge.log(TAG + ": 开启勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
+        } catch (Exception e) {
+            XposedBridge.log(TAG + ": scheduleDndOnAlarm 失败 → " + e.getMessage());
         }
     }
 
+    /** 设置下课关闭勿扰闹钟。reqCode = (alarmId & 0x00FFFFFF) | 0x04000000。 */
+    private void scheduleDndOffAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
+        try {
+            int reqCode = (alarmId & 0x00FFFFFF) | 0x04000000;
+            Intent intent = new Intent(ACTION_DO_DND_OFF);
+            intent.setPackage(TARGET_PACKAGE);
+            intent.putExtra("course_name", courseName);
+            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
+                    new Intent(ACTION_DO_DND_OFF).setPackage(TARGET_PACKAGE),
+                    PendingIntent.FLAG_IMMUTABLE);
+            ctx.getSystemService(AlarmManager.class)
+               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            mScheduledMuteIds.add(alarmId);
+            long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
+            XposedBridge.log(TAG + ": 关闭勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
+        } catch (Exception e) {
+            XposedBridge.log(TAG + ": scheduleDndOffAlarm 失败 → " + e.getMessage());
+        }
+    }
+
+    /**
+     * 迁移旧版 dnd_mode 字段（升级兼容，仅执行一次后删除旧键）。
+     * 旧版 dnd_mode=true 表示「仅使用勿扰」；新版静音与勿扰完全独立于各自开关。
+     * 迁移规则：
+     *   dnd_mode=true  → dnd_enabled/undnd_enabled 继承旧版 mute_enabled/unmute_enabled；
+     *                    dnd_mins_before/undnd_mins_after 继承旧版 mute_mins_before/unmute_mins_after；
+     *                    原静音开关重置为 false（旧版勿扰模式下静音未启用）。
+     *   dnd_mode=false → 仅静音模式，字段不变，直接删除旧键即可。
+     */
+    private void migrateLegacyDndMode(SharedPreferences sp) {
+        if (!sp.contains(LEGACY_KEY_DND_MODE)) return; // 已迁移或全新安装，无需处理
+        boolean wasDnd = sp.getBoolean(LEGACY_KEY_DND_MODE, false);
+        SharedPreferences.Editor ed = sp.edit();
+        if (wasDnd) {
+            // 旧版勿扰模式 → 迁移为新版独立勿扰开关，继承旧版时间配置
+            ed.putBoolean(KEY_DND_ENABLED,   sp.getBoolean(KEY_MUTE_ENABLED,   false));
+            ed.putBoolean(KEY_UNDND_ENABLED, sp.getBoolean(KEY_UNMUTE_ENABLED, false));
+            ed.putInt(KEY_DND_MINS_BEFORE,   sp.getInt(KEY_MUTE_MINS_BEFORE,   0));
+            ed.putInt(KEY_UNDND_MINS_AFTER,  sp.getInt(KEY_UNMUTE_MINS_AFTER,  0));
+            // 旧版勿扰模式下静音未启用，迁移后保持关闭（静音/勿扰现在独立）
+            ed.putBoolean(KEY_MUTE_ENABLED,   false);
+            ed.putBoolean(KEY_UNMUTE_ENABLED, false);
+        }
+        ed.remove(LEGACY_KEY_DND_MODE).apply(); // 删除旧字段，防止重复迁移
+        XposedBridge.log(TAG + ": [迁移] dnd_mode → 独立勿扰开关 wasDnd=" + wasDnd);
+    }
+
+    /** 在 voiceassist 进程内执行静音/恢复铃声。 */
+    private void applyMuteState(Context ctx, boolean mute, String courseName) {
+        String modeTip = mute ? "静音" : "恢复铃声";
+        boolean ok = MiuiSettingsInvoker.applyMute(ctx, mute);
+        XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
+    }
+
+    /** 在 voiceassist 进程内开启/关闭勿扰（DND）模式。 */
+    private void applyDndState(Context ctx, boolean enable, String courseName) {
+        String modeTip = enable ? "开启勿扰" : "关闭勿扰";
+        boolean ok = MiuiSettingsInvoker.applyDnd(ctx, enable);
+        XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
+    }
     /**
      * 独立读取 CourseData 并调度今日静音/取消静音闹钟。
      * 完全独立于自定义提醒开关，两者可单独启用。
      */
     private void scheduleTodayMuteAlarms(Context ctx) {
         cancelAllMuteAlarms(ctx);           // 先无条件取消旧闹钟，防止关闭静音后残留
-        if (!sMuteEnabled && !sUnmuteEnabled) return;
+        if (!sMuteEnabled && !sUnmuteEnabled && !sDndEnabled && !sUnDndEnabled) return;
         try {
             @SuppressWarnings("deprecation")
             SharedPreferences coursePrefs = ctx.getSharedPreferences(
@@ -995,6 +1130,8 @@ public class MainHook implements IXposedHookLoadPackage {
             SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             int muteMinsBefore  = prefs.getInt(KEY_MUTE_MINS_BEFORE,  DEFAULT_MUTE_MINS_BEFORE);
             int unmuteMinsAfter = prefs.getInt(KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER);
+            int dndMinsBefore   = prefs.getInt(KEY_DND_MINS_BEFORE,   DEFAULT_DND_MINS_BEFORE);
+            int unDndMinsAfter  = prefs.getInt(KEY_UNDND_MINS_AFTER,  DEFAULT_UNDND_MINS_AFTER);
             long nowMs = System.currentTimeMillis();
             int count  = 0;
 
@@ -1035,8 +1172,24 @@ public class MainHook implements IXposedHookLoadPackage {
                         count++;
                     }
                 }
+                if (sDndEnabled) {
+                    long dndTriggerMs = startMs - (long) dndMinsBefore * 60_000L;
+                    if (dndTriggerMs <= nowMs && nowMs < endMs) {
+                        applyDndState(ctx, true, courseName);
+                    } else if (dndTriggerMs > nowMs) {
+                        scheduleDndOnAlarm(ctx, courseName, dndTriggerMs, alarmId);
+                        count++;
+                    }
+                }
+                if (sUnDndEnabled) {
+                    long unDndTriggerMs = endMs + (long) unDndMinsAfter * 60_000L;
+                    if (unDndTriggerMs > nowMs) {
+                        scheduleDndOffAlarm(ctx, courseName, unDndTriggerMs, alarmId);
+                        count++;
+                    }
+                }
             }
-            XposedBridge.log(TAG + ": 静音闹钟已调度 " + count + " 个");
+            XposedBridge.log(TAG + ": 静音/勿扰闹钟已调度 " + count + " 个");
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": scheduleTodayMuteAlarms 失败 → " + e.getMessage());
         }
@@ -1473,10 +1626,17 @@ public class MainHook implements IXposedHookLoadPackage {
 
         // ── actionInfo ────────────────────────────────────────────
         // 发给 voiceassist 自身进程内的广播接收器（同进程，无跨包权限问题）
-        String muteAction  = isFinished ? ACTION_DO_UNMUTE : ACTION_DO_MUTE;
-        String actionTitle = isFinished
-                ? (sDndMode ? "解除勿扰" : "解除静音")
-                : (sDndMode ? "上课勿扰" : "上课静音");
+        boolean hasMute = sMuteEnabled || sUnmuteEnabled;
+        boolean hasDnd  = sDndEnabled  || sUnDndEnabled;
+        String muteAction = isFinished ? ACTION_MANUAL_UNMUTE : ACTION_MANUAL_MUTE;
+        String actionTitle;
+        if (hasMute && hasDnd) {
+            actionTitle = isFinished ? "解除静默" : "上课静默";
+        } else if (hasDnd) {
+            actionTitle = isFinished ? "解除勿扰" : "上课勿扰";
+        } else {
+            actionTitle = isFinished ? "解除静音" : "上课静音";
+        }
         JSONObject actionInfo = new JSONObject();
         actionInfo.put("actionIntentType", 2);
         actionInfo.put("actionIntent",

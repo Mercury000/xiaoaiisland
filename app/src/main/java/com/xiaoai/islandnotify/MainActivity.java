@@ -33,7 +33,6 @@ import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageView;
-import android.widget.RadioGroup;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -652,59 +651,45 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+    /**
      * 初始化「上课免打扰」卡片。
-     * 支持静音/勿扰两种模式，与课前提醒卡片完全独立。
+     * 静音与勿扰（DND）完全独立，可同时启用，各自独立配置触发时间。
      */
     private void initMuteCard() {
         SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        // 迁移旧版 dnd_mode 字段（升级兼容，仅执行一次）
+        migrateLegacyDndMode(sp);
 
-        RadioGroup     rgMuteMode    = findViewById(R.id.rg_mute_mode);
         SwitchMaterial swMute        = findViewById(R.id.sw_mute_enabled);
         View           llMute        = findViewById(R.id.ll_mute_content);
         EditText       etMuteBefore  = findViewById(R.id.et_mute_mins_before);
         SwitchMaterial swUnmute      = findViewById(R.id.sw_unmute_enabled);
         View           llUnmute      = findViewById(R.id.ll_unmute_content);
         EditText       etUnmuteAfter = findViewById(R.id.et_unmute_mins_after);
+        SwitchMaterial swDnd         = findViewById(R.id.sw_dnd_enabled);
+        View           llDnd         = findViewById(R.id.ll_dnd_content);
+        EditText       etDndBefore   = findViewById(R.id.et_dnd_mins_before);
+        SwitchMaterial swUnDnd       = findViewById(R.id.sw_undnd_enabled);
+        View           llUnDnd       = findViewById(R.id.ll_undnd_content);
+        EditText       etUnDndAfter  = findViewById(R.id.et_undnd_mins_after);
         TextView       tvMuteHint    = findViewById(R.id.tv_mute_hint);
-        TextView       tvMuteSwitchTitle   = findViewById(R.id.tv_mute_switch_title);
-        TextView       tvMuteSwitchDesc    = findViewById(R.id.tv_mute_switch_desc);
-        TextView       tvUnmuteSwitchTitle = findViewById(R.id.tv_unmute_switch_title);
-        TextView       tvUnmuteSwitchDesc  = findViewById(R.id.tv_unmute_switch_desc);
-        TextView       tvMuteMinsLabel     = findViewById(R.id.tv_mute_mins_label);
-        TextView       tvUnmuteMinsLabel   = findViewById(R.id.tv_unmute_mins_label);
 
-        boolean savedMuteEnabled   = sp.getBoolean("mute_enabled", false);
-        int     savedMuteBefore    = sp.getInt("mute_mins_before", 0);
-        boolean savedUnmuteEnabled = sp.getBoolean("unmute_enabled", false);
-        int     savedUnmuteAfter   = sp.getInt("unmute_mins_after", 0);
-        boolean savedDndMode       = sp.getBoolean("dnd_mode", false);
+        // 加载已保存状态
+        swMute.setChecked(sp.getBoolean("mute_enabled", false));
+        llMute.setVisibility(swMute.isChecked() ? View.VISIBLE : View.GONE);
+        etMuteBefore.setText(String.valueOf(sp.getInt("mute_mins_before", 0)));
 
-        // 根据已保存的模式初始化 RadioGroup 和描述文字
-        rgMuteMode.check(savedDndMode ? R.id.rb_mode_dnd : R.id.rb_mode_silent);
-        applyMuteModeLabels(savedDndMode, tvMuteSwitchTitle, tvMuteSwitchDesc,
-                tvUnmuteSwitchTitle, tvUnmuteSwitchDesc, tvMuteMinsLabel, tvUnmuteMinsLabel);
+        swUnmute.setChecked(sp.getBoolean("unmute_enabled", false));
+        llUnmute.setVisibility(swUnmute.isChecked() ? View.VISIBLE : View.GONE);
+        etUnmuteAfter.setText(String.valueOf(sp.getInt("unmute_mins_after", 0)));
 
-        swMute.setChecked(savedMuteEnabled);
-        llMute.setVisibility(savedMuteEnabled ? View.VISIBLE : View.GONE);
-        etMuteBefore.setText(String.valueOf(savedMuteBefore));
+        swDnd.setChecked(sp.getBoolean("dnd_enabled", false));
+        llDnd.setVisibility(swDnd.isChecked() ? View.VISIBLE : View.GONE);
+        etDndBefore.setText(String.valueOf(sp.getInt("dnd_mins_before", 0)));
 
-        swUnmute.setChecked(savedUnmuteEnabled);
-        llUnmute.setVisibility(savedUnmuteEnabled ? View.VISIBLE : View.GONE);
-        etUnmuteAfter.setText(String.valueOf(savedUnmuteAfter));
-
-        // 静音/勿扰 模式选择
-        rgMuteMode.setOnCheckedChangeListener((group, checkedId) -> {
-            boolean isDnd = (checkedId == R.id.rb_mode_dnd);
-            sp.edit().putBoolean("dnd_mode", isDnd).apply();
-            applyMuteModeLabels(isDnd, tvMuteSwitchTitle, tvMuteSwitchDesc,
-                    tvUnmuteSwitchTitle, tvUnmuteSwitchDesc, tvMuteMinsLabel, tvUnmuteMinsLabel);
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("dnd_mode", isDnd);
-            sendBroadcast(sync);
-            tvMuteHint.setText(isDnd ? "已切换为勿扰模式，超级岛将显示「上课勿扰」" : "已切换为静音模式，超级岛将显示「上课静音」");
-            tvMuteHint.setVisibility(View.VISIBLE);
-        });
+        swUnDnd.setChecked(sp.getBoolean("undnd_enabled", false));
+        llUnDnd.setVisibility(swUnDnd.isChecked() ? View.VISIBLE : View.GONE);
+        etUnDndAfter.setText(String.valueOf(sp.getInt("undnd_mins_after", 0)));
 
         // 静音开关
         swMute.setOnCheckedChangeListener((btn, checked) -> {
@@ -726,35 +711,51 @@ public class MainActivity extends AppCompatActivity {
             sendBroadcast(sync);
         });
 
-        // 保存静音时间设置
+        // 勿扰开关
+        swDnd.setOnCheckedChangeListener((btn, checked) -> {
+            llDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
+            sp.edit().putBoolean("dnd_enabled", checked).apply();
+            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
+            sync.setPackage("com.miui.voiceassist");
+            sync.putExtra("dnd_enabled", checked);
+            sendBroadcast(sync);
+        });
+
+        // 取消勿扰开关
+        swUnDnd.setOnCheckedChangeListener((btn, checked) -> {
+            llUnDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
+            sp.edit().putBoolean("undnd_enabled", checked).apply();
+            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
+            sync.setPackage("com.miui.voiceassist");
+            sync.putExtra("undnd_enabled", checked);
+            sendBroadcast(sync);
+        });
+
+        // 保存时间设置（静音 + 勿扰共 4 个字段）
         findViewById(R.id.btn_save_mute).setOnClickListener(v -> {
-            int muteBefore;
-            int unmuteAfter;
-            try {
-                muteBefore = Integer.parseInt(
-                        etMuteBefore.getText() != null ? etMuteBefore.getText().toString().trim() : "0");
-                if (muteBefore < 0) muteBefore = 0;
-                if (muteBefore > 60) muteBefore = 60;
-            } catch (NumberFormatException e) { muteBefore = 0; }
-            try {
-                unmuteAfter = Integer.parseInt(
-                        etUnmuteAfter.getText() != null ? etUnmuteAfter.getText().toString().trim() : "0");
-                if (unmuteAfter < 0) unmuteAfter = 0;
-                if (unmuteAfter > 60) unmuteAfter = 60;
-            } catch (NumberFormatException e) { unmuteAfter = 0; }
+            int muteBefore  = parseMinutes(etMuteBefore);
+            int unmuteAfter = parseMinutes(etUnmuteAfter);
+            int dndBefore   = parseMinutes(etDndBefore);
+            int unDndAfter  = parseMinutes(etUnDndAfter);
 
             etMuteBefore.setText(String.valueOf(muteBefore));
             etUnmuteAfter.setText(String.valueOf(unmuteAfter));
+            etDndBefore.setText(String.valueOf(dndBefore));
+            etUnDndAfter.setText(String.valueOf(unDndAfter));
 
             sp.edit()
-              .putInt("mute_mins_before", muteBefore)
+              .putInt("mute_mins_before",  muteBefore)
               .putInt("unmute_mins_after", unmuteAfter)
+              .putInt("dnd_mins_before",   dndBefore)
+              .putInt("undnd_mins_after",  unDndAfter)
               .apply();
 
             Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
             sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("mute_mins_before", muteBefore);
+            sync.putExtra("mute_mins_before",  muteBefore);
             sync.putExtra("unmute_mins_after", unmuteAfter);
+            sync.putExtra("dnd_mins_before",   dndBefore);
+            sync.putExtra("undnd_mins_after",  unDndAfter);
             sendBroadcast(sync);
 
             tvMuteHint.setText("设置已保存并重新调度");
@@ -762,26 +763,34 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    /** 根据当前模式更新静音卡片内的描述文字 */
-    private void applyMuteModeLabels(boolean isDnd,
-            TextView tvMuteSwitchTitle, TextView tvMuteSwitchDesc,
-            TextView tvUnmuteSwitchTitle, TextView tvUnmuteSwitchDesc,
-            TextView tvMuteMinsLabel, TextView tvUnmuteMinsLabel) {
-        if (isDnd) {
-            tvMuteSwitchTitle.setText("上课自动开启勿扰");
-            tvMuteSwitchDesc.setText("在课程开始前指定时间开启勿扰（DND）模式");
-            tvUnmuteSwitchTitle.setText("下课自动关闭勿扰");
-            tvUnmuteSwitchDesc.setText("在课程结束后指定时间关闭勿扰，恢复正常通知");
-            if (tvMuteMinsLabel   != null) tvMuteMinsLabel.setText("上课前多少分钟开启勿扰");
-            if (tvUnmuteMinsLabel != null) tvUnmuteMinsLabel.setText("下课后多少分钟关闭勿扰");
-        } else {
-            tvMuteSwitchTitle.setText("上课自动静音");
-            tvMuteSwitchDesc.setText("在课程开始前指定时间将手机调为静音");
-            tvUnmuteSwitchTitle.setText("下课自动恢复铃声");
-            tvUnmuteSwitchDesc.setText("在课程结束后指定时间将手机恢复为正常响铃");
-            if (tvMuteMinsLabel   != null) tvMuteMinsLabel.setText("上课前多少分钟静音");
-            if (tvUnmuteMinsLabel != null) tvUnmuteMinsLabel.setText("下课后多少分钟恢复铃声");
+    /** 解析 EditText 中的分钟数（0–60），非法输入返回 0 */
+    private static int parseMinutes(EditText et) {
+        try {
+            int v = Integer.parseInt(et.getText() != null ? et.getText().toString().trim() : "0");
+            return Math.max(0, Math.min(60, v));
+        } catch (NumberFormatException e) { return 0; }
+    }
+
+    /**
+     * 迁移旧版 dnd_mode 字段（升级兼容，仅执行一次删除旧键）。
+     * 旧版 dnd_mode=true  → 仅勿扰模式；迁移为 dnd_enabled/undnd_enabled，继承旧版时间配置。
+     * 旧版 dnd_mode=false → 仅静音模式；删除旧键即可，静音字段不变。
+     */
+    private void migrateLegacyDndMode(SharedPreferences sp) {
+        if (!sp.contains("dnd_mode")) return; // 已迁移或全新安装
+        boolean wasDnd = sp.getBoolean("dnd_mode", false);
+        SharedPreferences.Editor ed = sp.edit();
+        if (wasDnd) {
+            // 旧版勿扰模式 → 迁移为新版独立勿扰开关，继承旧版时间配置
+            ed.putBoolean("dnd_enabled",    sp.getBoolean("mute_enabled",   false));
+            ed.putBoolean("undnd_enabled",  sp.getBoolean("unmute_enabled", false));
+            ed.putInt("dnd_mins_before",    sp.getInt("mute_mins_before",   0));
+            ed.putInt("undnd_mins_after",   sp.getInt("unmute_mins_after",  0));
+            // 旧版勿扰模式下静音未启用，迁移后保持静音/勿扰独立
+            ed.putBoolean("mute_enabled",   false);
+            ed.putBoolean("unmute_enabled", false);
         }
+        ed.remove("dnd_mode").apply(); // 删除旧字段，防止重复迁移
     }
 
     private void initHideIconSwitch() {
@@ -866,6 +875,10 @@ public class MainActivity extends AppCompatActivity {
         int     muteBefore    = sp.getInt("mute_mins_before",    0);
         boolean unmuteEnabled = sp.getBoolean("unmute_enabled", false);
         int     unmuteAfter   = sp.getInt("unmute_mins_after",   0);
+        boolean dndEnabled    = sp.getBoolean("dnd_enabled",    false);
+        int     dndBefore     = sp.getInt("dnd_mins_before",    0);
+        boolean unDndEnabled  = sp.getBoolean("undnd_enabled",  false);
+        int     unDndAfter    = sp.getInt("undnd_mins_after",   0);
 
         Intent intent = new Intent("com.xiaoai.islandnotify.ACTION_TEST_NOTIFY");
         intent.setPackage("com.miui.voiceassist");
@@ -877,6 +890,10 @@ public class MainActivity extends AppCompatActivity {
         intent.putExtra("mute_mins_before",  muteBefore);
         intent.putExtra("unmute_enabled",    unmuteEnabled);
         intent.putExtra("unmute_mins_after", unmuteAfter);
+        intent.putExtra("dnd_enabled",       dndEnabled);
+        intent.putExtra("dnd_mins_before",   dndBefore);
+        intent.putExtra("undnd_enabled",     unDndEnabled);
+        intent.putExtra("undnd_mins_after",  unDndAfter);
         // 把精确的课程开始/结束毫秒时间戳带入，让 voiceassist 端完全复用真实调度逻辑
         intent.putExtra("start_ms", startMs);
         intent.putExtra("end_ms",   endMs);

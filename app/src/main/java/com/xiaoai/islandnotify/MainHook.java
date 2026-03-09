@@ -871,10 +871,11 @@ public class MainHook implements IXposedHookLoadPackage {
                 prevLoopAlarmId = alarmId; // 始终更新，供下次迭代判断
 
                 if (triggerMs <= nowMs) {
-                    // 已进入提醒窗口且课程未开始 → 立即补发通知
-                    if (nowMs < startMs) {
+                    // 在提醒窗口内或课程进行中（含进程重启场景）→ 立即补发通知
+                    if (nowMs < endMs) {
                         sendCourseReminderNow(ctx, info, alarmId);
-                        XposedBridge.log(TAG + ": [窗口内补发] " + courseName + " @" + startTime);
+                        String label = (nowMs < startMs) ? "[窗口内补发]" : "[上课中补发]";
+                        XposedBridge.log(TAG + ": " + label + " " + courseName + " @" + startTime);
                         scheduledCount++;
                     }
                     continue;
@@ -1229,6 +1230,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (unmuteTriggerMs > nowMs) {
                         scheduleUnmuteAlarm(ctx, courseName, unmuteTriggerMs, alarmId);
                         count++;
+                    } else if (nowMs >= endMs) {
+                        // 下课时间已过且解除静音时间也已过（如进程重启场景）→ 立即恢复铃声
+                        applyMuteState(ctx, false, courseName);
                     }
                 }
                 if (sDndEnabled) {
@@ -1245,6 +1249,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (unDndTriggerMs > nowMs) {
                         scheduleDndOffAlarm(ctx, courseName, unDndTriggerMs, alarmId);
                         count++;
+                    } else if (nowMs >= endMs) {
+                        // 下课时间已过且关闭勿扰时间也已过（如进程重启场景）→ 立即关闭勿扰
+                        applyDndState(ctx, false, courseName);
                     }
                 }
             }
@@ -1461,8 +1468,8 @@ public class MainHook implements IXposedHookLoadPackage {
                     } catch (Throwable ignored) {}
                     XposedBridge.log(TAG + ": CourseData.xml 已变化，重新调度课前提醒");
                     scheduleTodayCourseReminders(ctx, bj);
-                    if (sMuteEnabled || sUnmuteEnabled) {
-                        XposedBridge.log(TAG + ": CourseData.xml 已变化，重新调度静音闹钟");
+                    if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
+                        XposedBridge.log(TAG + ": CourseData.xml 已变化，重新调度静音/勿扰闹钟");
                         scheduleTodayMuteAlarms(ctx);
                     }
                 }, mRescheduleToken, RESCHEDULE_DEBOUNCE_MS);

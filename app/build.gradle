@@ -70,7 +70,19 @@ if (isDebugBuild) {
     debugVersion = generateVersion('debug')
 }
 
-// 如果都没有匹配，默认生成release版本号
+// 读取现有版本号（不自增），用于 Gradle 配置阶段非构建任务的求值
+def readExistingVersion(buildType) {
+    def versionPropsFile = rootProject.file('version.properties')
+    def versionProps = new Properties()
+    if (versionPropsFile.exists()) {
+        versionPropsFile.withInputStream { versionProps.load(it) }
+    }
+    def prefix = buildType == 'release' ? 'RELEASE_' : 'DEBUG_'
+    def code = (versionProps[prefix + 'VERSION_CODE'] ?: '2000000001').toInteger()
+    def name = versionProps[prefix + 'VERSION_NAME'] ?: code.toString()
+    return [code: code, name: name, displayName: name + (buildType == 'debug' ? '_debug' : '')]
+}
+
 def vCode, vName, displayVName
 if (isReleaseBuild && releaseVersion) {
     vCode = releaseVersion.code
@@ -81,11 +93,11 @@ if (isReleaseBuild && releaseVersion) {
     vName = debugVersion.name
     displayVName = debugVersion.displayName
 } else {
-    // 默认情况，生成release版本号
-    def defaultVersion = generateVersion('release')
-    vCode = defaultVersion.code
-    vName = defaultVersion.name
-    displayVName = defaultVersion.displayName
+    // 配置阶段（非构建 task）：只读不写，不触发计数自增
+    def existing = readExistingVersion('release')
+    vCode = existing.code
+    vName = existing.name
+    displayVName = existing.displayName
 }
 
 android {

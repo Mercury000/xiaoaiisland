@@ -10,6 +10,7 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
+import android.net.Uri;
 import android.service.notification.StatusBarNotification;
 
 import org.json.JSONArray;
@@ -180,7 +181,6 @@ public class MainHook implements IXposedHookLoadPackage {
         if (System.getProperty(HOOKED_KEY) != null) return;
         System.setProperty(HOOKED_KEY, "1");
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
-        MiuiSettingsInvoker.init(null, lpparam.classLoader); // 预初始化设置工具类
         hookApplicationOnCreate(lpparam);
         hookNotifyMethods(lpparam);
     }
@@ -317,24 +317,13 @@ public class MainHook implements IXposedHookLoadPackage {
                                     || intent.hasExtra(KEY_DND_MINS_BEFORE)
                                     || intent.hasExtra(KEY_UNDND_ENABLED)
                                     || intent.hasExtra(KEY_UNDND_MINS_AFTER);
-                            // 课前提醒分钟数变化时重新调度
-                            if (intent.hasExtra(KEY_REMINDER_MINUTES)) {
-                                mLastCourseDataHash = 0; // 提醒分钟数改变，强制重调
-                                scheduleTodayCourseReminders(context, null);
+                            boolean reminderSettingChanged = intent.hasExtra(KEY_REMINDER_MINUTES);
+                            
+                            if (reminderSettingChanged || muteSettingChanged) {
+                                // 偏好变化触发重新调度，顺便触发主动更新保证数据最新
+                                safeReschedule(context, "island_sync_prefs", true);
                             }
-                            // 静音/勿扰设置变化时独立重调
-                            if (muteSettingChanged) {
-                                scheduleTodayMuteAlarms(context);
-                                // 管理 FileObserver：任一功能启用时启动，全部关闭时才停
-                                if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
-                                    registerCourseDataListener(context); // 内部防重复
-                                } else {
-                                    if (mCourseDataObserver != null) {
-                                        mCourseDataObserver.stopWatching();
-                                        mCourseDataObserver = null;
-                                    }
-                                }
-                            }
+
                             // 叫醒闹钟设置变化时重新调度
                             boolean wakeupSettingChanged = intent.hasExtra(KEY_WAKEUP_MORNING_ENABLED)
                                     || intent.hasExtra(KEY_WAKEUP_MORNING_LAST_SEC)
@@ -625,9 +614,7 @@ public class MainHook implements IXposedHookLoadPackage {
                             if (sDndEnabled  || sUnDndEnabled)  applyDndState(context, false, mn);
                         } else if (ACTION_RESCHEDULE_DAILY.equals(intent.getAction())) {
                             // 每日 00:01 跨日重调：触发主动更新，重新同步开关状态，重新调度当日 alarm
-                            XposedBridge.log(TAG + ": [跨日重调] 触发，触发主动更新并重新调度");
-                            TimeTableHelperInvoker.triggerUpdate(context, "island_reschedule_daily", false);
-                            
+                            XposedBridge.log(TAG + ": [跨日重调] 触发，同步配置并执行主动重调度");
                             SharedPreferences dp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                             sMuteEnabled   = dp.getBoolean(KEY_MUTE_ENABLED,   false);
                             sUnmuteEnabled = dp.getBoolean(KEY_UNMUTE_ENABLED, false);
@@ -635,17 +622,8 @@ public class MainHook implements IXposedHookLoadPackage {
                             sUnDndEnabled  = dp.getBoolean(KEY_UNDND_ENABLED,  false);
                             sWakeupMorningEnabled   = dp.getBoolean(KEY_WAKEUP_MORNING_ENABLED,   false);
                             sWakeupAfternoonEnabled = dp.getBoolean(KEY_WAKEUP_AFTERNOON_ENABLED, false);
-                            mLastCourseDataHash = 0; // 跨日强制重调，忽略内容哈希缓存
                             
-                            // 延时执行真实的调度，留出 5s 给更新网络请求
-                            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                                scheduleTodayCourseReminders(context, null);
-                                if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
-                                    scheduleTodayMuteAlarms(context);
-                                }
-                                scheduleTodayWakeupAlarms(context);
-                                scheduleMidnightReschedule(context);
-                            }, 5000);
+                            safeReschedule(context, "island_reschedule_daily", true);
                         } else if (ACTION_NOTIF_CANCEL.equals(intent.getAction())) {
                             // AlarmClock 触发通知定时取消
                             int    cancelId  = intent.getIntExtra("notif_id", -1);
@@ -667,10 +645,6 @@ public class MainHook implements IXposedHookLoadPackage {
                     appCtx.registerReceiver(receiver, filter);
                 }
                 XposedBridge.log(TAG + ": [Application] 广播接收器已注册");
-
-                // 初始化 TimeTableHelperInvoker 并触发首次主动更新
-                TimeTableHelperInvoker.init(appCtx, lpparam.classLoader);
-                TimeTableHelperInvoker.triggerUpdate(appCtx, "island_startup", false);
                 // 动态定位小米内部 SettingsUtil（change 方法），用于静音/勿扰模式切换，结果按版本号缓存
                 MiuiSettingsInvoker.init(appCtx, appCtx.getClassLoader());
                 // 从 SP 读取开关状态
@@ -679,17 +653,11 @@ public class MainHook implements IXposedHookLoadPackage {
                 sUnmuteEnabled         = initPrefs.getBoolean(KEY_UNMUTE_ENABLED, false);
                 sDndEnabled    = initPrefs.getBoolean(KEY_DND_ENABLED,    false);
                 sUnDndEnabled  = initPrefs.getBoolean(KEY_UNDND_ENABLED,  false);
-                sWakeupMorningEnabled   = initPrefs.getBoolean(KEY_WAKEUP_MORNING_ENABLED,   false);
-                sWakeupAfternoonEnabled = initPrefs.getBoolean(KEY_WAKEUP_AFTERNOON_ENABLED, false);
-                // 课前提醒始终开启，无条件调度
-                scheduleTodayCourseReminders(appCtx, null);
-                // 静音/勿扰功能独立于自定义提醒开关
-                if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
-                    scheduleTodayMuteAlarms(appCtx);
-                }
                 scheduleTodayWakeupAlarms(appCtx);
-                // FileObserver：常住监听 CourseData 变化
+                // 启动 CourseData 监听
                 registerCourseDataListener(appCtx);
+                // 执行启动时主动更新与重调度
+                safeReschedule(appCtx, "island_startup", true);
                 // 初始化课表内容哈希，确保 FileObserver 首次触发时能正确跳过未实质变动的写入。
                 try {
                     @SuppressWarnings("deprecation")
@@ -707,9 +675,40 @@ public class MainHook implements IXposedHookLoadPackage {
         });
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 课前提醒调度（读取 CourseData.xml，按 section 时间触发）
-    // ═══════════════════════════════════════════════════════════════
+    /**
+     * 统一重调度逻辑：
+     * 1. 触发 proactive 主动更新（可选）。
+     * 2. 强制清除哈希（mLastCourseDataHash=0），确保后续 FileObserver 或延时任务必执行。
+     * 3. 立即执行一次调度（即刻响应）。
+     * 4. 5秒后再次执行调度（等待网络更新完成）。
+     */
+    private void safeReschedule(Context context, String from, boolean proactive) {
+        if (proactive) {
+            TimeTableHelperInvoker.init(context, context.getClassLoader());
+            TimeTableHelperInvoker.triggerUpdate(context, from, false);
+        }
+        mLastCourseDataHash = 0;
+        
+        // 立即执行一次（使用现有数据，即刻反馈）
+        scheduleTodayCourseReminders(context, null);
+        if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
+            scheduleTodayMuteAlarms(context);
+        }
+        scheduleTodayWakeupAlarms(context);
+
+        // 5秒后再次执行（等待主动更新写盘成功）
+        getRescheduleHandler().postDelayed(() -> {
+            scheduleTodayCourseReminders(context, null);
+            if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
+                scheduleTodayMuteAlarms(context);
+            }
+            scheduleTodayWakeupAlarms(context);
+            // 若是跨日重调，链式调度下一个午夜
+            if ("island_reschedule_daily".equals(from)) {
+                scheduleMidnightReschedule(context);
+            }
+        }, 5000);
+    }
 
     /**
      * 读取 voiceassist 自身的 CourseData SharedPreferences，解析今日课程，
@@ -1296,43 +1295,80 @@ public class MainHook implements IXposedHookLoadPackage {
                 sendClearClockAlarms(ctx);
                 return;
             }
-            SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            Intent schedIntent = new Intent(ACTION_SCHEDULE_CLOCK_ALARMS);
-            schedIntent.setPackage(DESKCLOCK_PKG);
-            // 原始课程数据（deskclock 侧自行解析）
-            schedIntent.putExtra("bean_json", beanJson);
-            // 调休工作日：传入覆盖的 todayDay / currentWeek，供 DeskClockHook 使用
-            if (workSwap != null && workSwap.followWeek > 0 && workSwap.followWeekday > 0) {
-                XposedBridge.log(TAG + ": 叫醒：今日 " + todayDateStr + " 为调休工作日，"
-                        + "按第" + workSwap.followWeek + "周 " + workSwap.followDesc() + " 调度");
-                schedIntent.putExtra("today_day_override",    workSwap.followWeekday);
-                schedIntent.putExtra("current_week_override", workSwap.followWeek);
-            }
-            // 上午配置
-            if (sWakeupMorningEnabled) {
-                schedIntent.putExtra("morning_enabled",      true);
-                schedIntent.putExtra("morning_last_sec",     prefs.getInt(KEY_WAKEUP_MORNING_LAST_SEC, DEFAULT_WAKEUP_MORNING_LAST_SEC));
-                schedIntent.putExtra("morning_rules_json",   prefs.getString(KEY_WAKEUP_MORNING_RULES_JSON, DEFAULT_WAKEUP_MORNING_RULES_JSON));
-            }
-            // 下午配置
-            if (sWakeupAfternoonEnabled) {
-                schedIntent.putExtra("afternoon_enabled",    true);
-                schedIntent.putExtra("afternoon_first_sec",  prefs.getInt(KEY_WAKEUP_AFTERNOON_FIRST_SEC, DEFAULT_WAKEUP_AFTERNOON_FIRST_SEC));
-                schedIntent.putExtra("afternoon_rules_json", prefs.getString(KEY_WAKEUP_AFTERNOON_RULES_JSON, DEFAULT_WAKEUP_AFTERNOON_RULES_JSON));
-            }
-            ctx.sendBroadcast(schedIntent);
-            XposedBridge.log(TAG + ": 叫醒配置已转发给 deskclock");
+
+            // ── 解决进程未启动问题 ──
+            // 1. Tickle：通过查询 ContentProvider 迫使 deskclock 进程启动
+            tickleDeskClock(ctx);
+
+            // 2. 延时 1s 发送：确保 deskclock 进程完成初始化并进入 Looper 循环
+            getRescheduleHandler().postDelayed(() -> {
+                try {
+                    SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    Intent schedIntent = new Intent(ACTION_SCHEDULE_CLOCK_ALARMS);
+                    schedIntent.setPackage(DESKCLOCK_PKG);
+                    // 关键标志位：允许触发已停止的应用，且提高接收优先级
+                    schedIntent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | 0x10000000); // 0x10000000 = FLAG_RECEIVER_FOREGROUND
+                    
+                    // 原始课程数据（deskclock 侧自行解析）
+                    schedIntent.putExtra("bean_json", beanJson);
+                    // 调休工作日：传入覆盖的 todayDay / currentWeek，供 DeskClockHook 使用
+                    if (workSwap != null && workSwap.followWeek > 0 && workSwap.followWeekday > 0) {
+                        schedIntent.putExtra("today_day_override",    workSwap.followWeekday);
+                        schedIntent.putExtra("current_week_override", workSwap.followWeek);
+                    }
+                    // 上午配置
+                    if (sWakeupMorningEnabled) {
+                        schedIntent.putExtra("morning_enabled",      true);
+                        schedIntent.putExtra("morning_last_sec",     prefs.getInt(KEY_WAKEUP_MORNING_LAST_SEC, DEFAULT_WAKEUP_MORNING_LAST_SEC));
+                        schedIntent.putExtra("morning_rules_json",   prefs.getString(KEY_WAKEUP_MORNING_RULES_JSON, DEFAULT_WAKEUP_MORNING_RULES_JSON));
+                    }
+                    // 下午配置
+                    if (sWakeupAfternoonEnabled) {
+                        schedIntent.putExtra("afternoon_enabled",    true);
+                        schedIntent.putExtra("afternoon_first_sec",  prefs.getInt(KEY_WAKEUP_AFTERNOON_FIRST_SEC, DEFAULT_WAKEUP_AFTERNOON_FIRST_SEC));
+                        schedIntent.putExtra("afternoon_rules_json", prefs.getString(KEY_WAKEUP_AFTERNOON_RULES_JSON, DEFAULT_WAKEUP_AFTERNOON_RULES_JSON));
+                    }
+                    ctx.sendBroadcast(schedIntent);
+                    XposedBridge.log(TAG + ": 叫醒配置已转发给 deskclock (已延迟 1s)");
+                } catch (Throwable e) {
+                    XposedBridge.log(TAG + ": postDelayed scheduleWakeup 失败 → " + e.getMessage());
+                }
+            }, 1000);
+
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": scheduleTodayWakeupAlarms 失败 → " + e.getMessage());
         }
     }
 
+    /** 通过查询 ContentProvider 迫使 deskclock 进程拉起 */
+    private void tickleDeskClock(Context ctx) {
+        try {
+            // 注意：URI 必须与 DeskClockHook 中的 getAlarmContentUri 匹配
+            Uri uri = Uri.parse("content://com.android.deskclock/alarm");
+            android.database.Cursor c = ctx.getContentResolver().query(uri, 
+                    new String[]{"_id"}, null, null, "_id LIMIT 1");
+            if (c != null) {
+                c.close();
+                XposedBridge.log(TAG + ": [Tickle] DeskClock 进程已试探触发");
+            }
+        } catch (Throwable e) {
+            // 即使失败（如无权限）也可能是系统限制，通常足以拉起进程
+            XposedBridge.log(TAG + ": [Tickle] DeskClock 试探失败（正常现象）→ " + e.getMessage());
+        }
+    }
+
     /** 向 deskclock 进程发广播，仅清除之前创建的叫醒闹钟 */
     private void sendClearClockAlarms(Context ctx) {
-        Intent i = new Intent(ACTION_SCHEDULE_CLOCK_ALARMS);
-        i.setPackage(DESKCLOCK_PKG);
-        i.putExtra("clear_only", true);
-        ctx.sendBroadcast(i);
+        tickleDeskClock(ctx);
+        getRescheduleHandler().postDelayed(() -> {
+            try {
+                Intent i = new Intent(ACTION_SCHEDULE_CLOCK_ALARMS);
+                i.setPackage(DESKCLOCK_PKG);
+                i.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | 0x10000000);
+                i.putExtra("clear_only", true);
+                ctx.sendBroadcast(i);
+            } catch (Throwable ignored) {}
+        }, 500); // 清理逻辑延迟稍短即可
     }
 
     /**

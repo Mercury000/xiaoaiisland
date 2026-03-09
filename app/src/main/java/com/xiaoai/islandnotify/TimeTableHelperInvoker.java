@@ -60,7 +60,7 @@ public final class TimeTableHelperInvoker {
     private static void scanAndCache(Context ctx, ClassLoader cl, String cacheKey, SharedPreferences sp) {
         try {
             for (String name : enumerateClassNames(cl)) {
-                if (!name.startsWith(BIZ_PKG)) continue;
+                // 移除包名前缀限制，应对各种混淆情况
                 if (tryLoadClass(cl, name, cacheKey, sp, true)) {
                     XposedBridge.log(TAG + ": [TimeTableInvoker] 扫描命中 → " + name);
                     return;
@@ -75,36 +75,40 @@ public final class TimeTableHelperInvoker {
     private static boolean tryLoadClass(ClassLoader cl, String name, String cacheKey, SharedPreferences sp, boolean saveCache) {
         try {
             Class<?> cls = Class.forName(name, false, cl);
-            // 特征1：包含常量 "V5Widget:TimeTableHelper"
-            boolean hasTag = false;
+            // 特征1：包含特征字符串（weekCourseBean 是 TimeTableHelper 的核心数据 Key）
+            boolean hasFeatureStr = false;
             for (Field f : cls.getDeclaredFields()) {
                 if (f.getType() == String.class) {
                     f.setAccessible(true);
                     Object val = f.get(null);
-                    if ("V5Widget:TimeTableHelper".equals(val)) {
-                        hasTag = true;
+                    if ("weekCourseBean".equals(val) || "todayCourseIsEnd".equals(val)) {
+                        hasFeatureStr = true;
                         break;
                     }
                 }
             }
-            if (!hasTag) return false;
+            if (!hasFeatureStr) return false;
 
             // 特征2：包含 downCourseInfoData(Context, String, boolean)
+            // 该方法签名为 (Context, String, boolean)V
             Method m = null;
             for (Method method : cls.getDeclaredMethods()) {
                 Class<?>[] p = method.getParameterTypes();
-                if (p.length == 3 && p[0] == Context.class && p[1] == String.class && p[2] == boolean.class) {
+                if (p.length == 3 && p[0] == Context.class && p[1] == String.class && p[2] == boolean.class
+                        && method.getReturnType() == void.class) {
                     m = method;
                     break;
                 }
             }
             if (m == null) return false;
 
-            // 特征3：Kotlin Singleton 实例字段 'a'
-            Field instanceField = cls.getDeclaredField("a");
+            // 特征3：Kotlin Singleton 实例字段 'a' (Lj80/n;->a:Lj80/n;)
+            Field instanceField = null;
+            try { instanceField = cls.getDeclaredField("a"); } catch (Throwable ignored) {}
+            if (instanceField == null) return false;
             instanceField.setAccessible(true);
             Object instance = instanceField.get(null);
-            if (instance == null) return false;
+            if (instance == null || !cls.isInstance(instance)) return false;
 
             sDownMethod = m;
             sInstance = instance;

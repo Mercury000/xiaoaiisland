@@ -180,6 +180,7 @@ public class MainHook implements IXposedHookLoadPackage {
         if (System.getProperty(HOOKED_KEY) != null) return;
         System.setProperty(HOOKED_KEY, "1");
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
+        MiuiSettingsInvoker.init(null, lpparam.classLoader); // 预初始化设置工具类
         hookApplicationOnCreate(lpparam);
         hookNotifyMethods(lpparam);
     }
@@ -623,8 +624,10 @@ public class MainHook implements IXposedHookLoadPackage {
                             if (sMuteEnabled || sUnmuteEnabled) applyMuteState(context, false, mn);
                             if (sDndEnabled  || sUnDndEnabled)  applyDndState(context, false, mn);
                         } else if (ACTION_RESCHEDULE_DAILY.equals(intent.getAction())) {
-                            // 每日 00:01 跨日重调：重新同步开关状态，重新调度当日 alarm，再链式设置下一个 00:01
-                            XposedBridge.log(TAG + ": [跨日重调] 触发，重新调度今日课程/静音闹钟");
+                            // 每日 00:01 跨日重调：触发主动更新，重新同步开关状态，重新调度当日 alarm
+                            XposedBridge.log(TAG + ": [跨日重调] 触发，触发主动更新并重新调度");
+                            TimeTableHelperInvoker.triggerUpdate(context, "island_reschedule_daily", false);
+                            
                             SharedPreferences dp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                             sMuteEnabled   = dp.getBoolean(KEY_MUTE_ENABLED,   false);
                             sUnmuteEnabled = dp.getBoolean(KEY_UNMUTE_ENABLED, false);
@@ -633,13 +636,16 @@ public class MainHook implements IXposedHookLoadPackage {
                             sWakeupMorningEnabled   = dp.getBoolean(KEY_WAKEUP_MORNING_ENABLED,   false);
                             sWakeupAfternoonEnabled = dp.getBoolean(KEY_WAKEUP_AFTERNOON_ENABLED, false);
                             mLastCourseDataHash = 0; // 跨日强制重调，忽略内容哈希缓存
-                            scheduleTodayCourseReminders(context, null);
-                            if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
-                                scheduleTodayMuteAlarms(context);
-                            }
-                            scheduleTodayWakeupAlarms(context);
-                            // 链式调度下一个 00:01
-                            scheduleMidnightReschedule(context);
+                            
+                            // 延时执行真实的调度，留出 5s 给更新网络请求
+                            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                                scheduleTodayCourseReminders(context, null);
+                                if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
+                                    scheduleTodayMuteAlarms(context);
+                                }
+                                scheduleTodayWakeupAlarms(context);
+                                scheduleMidnightReschedule(context);
+                            }, 5000);
                         } else if (ACTION_NOTIF_CANCEL.equals(intent.getAction())) {
                             // AlarmClock 触发通知定时取消
                             int    cancelId  = intent.getIntExtra("notif_id", -1);
@@ -660,6 +666,11 @@ public class MainHook implements IXposedHookLoadPackage {
                 } else {
                     appCtx.registerReceiver(receiver, filter);
                 }
+                XposedBridge.log(TAG + ": [Application] 广播接收器已注册");
+
+                // 初始化 TimeTableHelperInvoker 并触发首次主动更新
+                TimeTableHelperInvoker.init(appCtx, lpparam.classLoader);
+                TimeTableHelperInvoker.triggerUpdate(appCtx, "island_startup", false);
                 // 动态定位小米内部 SettingsUtil（change 方法），用于静音/勿扰模式切换，结果按版本号缓存
                 MiuiSettingsInvoker.init(appCtx, appCtx.getClassLoader());
                 // 从 SP 读取开关状态

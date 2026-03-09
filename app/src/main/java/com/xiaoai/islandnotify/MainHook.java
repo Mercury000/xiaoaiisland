@@ -157,6 +157,12 @@ public class MainHook implements IXposedHookLoadPackage {
     }
     /** 跨 ClassLoader 的防重复注入标记 key（存于 boot classloader 的 System.properties） */
     private static final String HOOKED_KEY = "xiaoai.island.hooked";
+    /** 前台服务保活标记 key：第一个 Service 已调用 startForeground，后续 Service 跳过 */
+    private static final String FG_KEY     = "xiaoai.island.fg";
+    /** 前台保活通知 ID（固定值，避免与 voiceassist 自身通知冲突） */
+    private static final int    KEEPALIVE_NOTIF_ID = 0x58494901;
+    /** 保活通知渠道 ID */
+    private static final String CH_KEEPALIVE = "xiaoai_keepalive";
 
     // ─────────────────────────────────────────────────────────────
 
@@ -183,6 +189,78 @@ public class MainHook implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
         hookApplicationOnCreate(lpparam);
         hookNotifyMethods(lpparam);
+        hookServiceKeepAlive(lpparam);
+        hookTrimMemory(lpparam);
+    }
+
+    /**
+     * Hook voiceassist 进程内的 Service.onCreate：
+     * 第一个启动的 Service 调用 startForeground()，将进程提升为"前台服务"优先级。
+     * MIUI 不会主动 kill 前台服务进程，确保通知/闹钟状态不因进程被杀而丢失。
+     *
+     * 通知渠道使用 IMPORTANCE_MIN（静默、无声、无弹窗），对用户视觉干扰最小。
+     */
+    private void hookServiceKeepAlive(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedHelpers.findAndHookMethod("android.app.Service", lpparam.classLoader,
+                "onCreate", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                // 同一进程只执行一次，避免每个 Service 重复升级
+                if (System.getProperty(FG_KEY) != null) return;
+                android.app.Service svc = (android.app.Service) param.thisObject;
+                try {
+                    android.app.NotificationManager nm =
+                            svc.getSystemService(android.app.NotificationManager.class);
+                    if (nm != null && nm.getNotificationChannel(CH_KEEPALIVE) == null) {
+                        android.app.NotificationChannel ch = new android.app.NotificationChannel(
+                                CH_KEEPALIVE, "课程通知保活",
+                                android.app.NotificationManager.IMPORTANCE_MIN);
+                        ch.setShowBadge(false);
+                        ch.setSound(null, null);
+                        nm.createNotificationChannel(ch);
+                    }
+                    android.app.Notification keepaliveNotif =
+                            new android.app.Notification.Builder(svc, CH_KEEPALIVE)
+                                    .setSmallIcon(android.R.drawable.ic_menu_agenda)
+                                    .setContentTitle("超级岛课程通知")
+                                    .setContentText("课程提醒服务运行中")
+                                    .build();
+                    svc.startForeground(KEEPALIVE_NOTIF_ID, keepaliveNotif);
+                    System.setProperty(FG_KEY, "1");
+                    XposedBridge.log(TAG + ": [保活] 前台服务已在 "
+                            + svc.getClass().getSimpleName() + " 中启动，进程不再被系统主动杀死");
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + ": [保活] startForeground 失败 → " + t.getMessage());
+                }
+            }
+        });
+    }
+
+    /**
+     * Hook Application.onTrimMemory：当内存压力达到 TRIM_MEMORY_COMPLETE 时，
+     * 进程即将被 LMK 杀死，此时立即重新调度今日闹钟作为最后防线，
+     * 确保 AlarmManager 中持有最新的课程/静音闹钟，下次被唤醒时仍能准确触发。
+     */
+    private void hookTrimMemory(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedHelpers.findAndHookMethod("android.app.Application", lpparam.classLoader,
+                "onTrimMemory", int.class, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                int level = (int) param.args[0];
+                // TRIM_MEMORY_COMPLETE(80)：进程即将被杀，赶紧刷新今日闹钟
+                if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE) return;
+                Context ctx = (Context) param.thisObject;
+                XposedBridge.log(TAG + ": [保活] onTrimMemory level=" + level + "，重新调度闹钟");
+                try {
+                    scheduleTodayCourseReminders(ctx, null);
+                    if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
+                        scheduleTodayMuteAlarms(ctx);
+                    }
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + ": [保活] onTrimMemory 重调度失败 → " + t.getMessage());
+                }
+            }
+        });
     }
 
     /**     * Hook 目标 App 的 Application.onCreate，在其进程内注册 BroadcastReceiver。

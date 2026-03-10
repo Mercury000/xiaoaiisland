@@ -658,10 +658,13 @@ public class MainHook implements IXposedHookLoadPackage {
                 MiuiSettingsInvoker.init(appCtx, appCtx.getClassLoader());
                 // 从 SP 读取开关状态
                 SharedPreferences initPrefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                sMuteEnabled           = initPrefs.getBoolean(KEY_MUTE_ENABLED, false);
-                sUnmuteEnabled         = initPrefs.getBoolean(KEY_UNMUTE_ENABLED, false);
-                sDndEnabled    = initPrefs.getBoolean(KEY_DND_ENABLED,    false);
-                sUnDndEnabled  = initPrefs.getBoolean(KEY_UNDND_ENABLED,  false);
+                sMuteEnabled            = initPrefs.getBoolean(KEY_MUTE_ENABLED,              false);
+                sUnmuteEnabled          = initPrefs.getBoolean(KEY_UNMUTE_ENABLED,            false);
+                sDndEnabled             = initPrefs.getBoolean(KEY_DND_ENABLED,               false);
+                sUnDndEnabled           = initPrefs.getBoolean(KEY_UNDND_ENABLED,             false);
+                sWakeupMorningEnabled   = initPrefs.getBoolean(KEY_WAKEUP_MORNING_ENABLED,    false);
+                sWakeupAfternoonEnabled = initPrefs.getBoolean(KEY_WAKEUP_AFTERNOON_ENABLED,  false);
+                sIslandButtonMode       = initPrefs.getInt    ("island_button_mode",           0);
                 scheduleTodayWakeupAlarms(appCtx);
                 // 启动 CourseData 监听
                 registerCourseDataListener(appCtx);

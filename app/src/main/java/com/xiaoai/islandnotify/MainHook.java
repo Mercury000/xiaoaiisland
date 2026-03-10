@@ -138,6 +138,8 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 自动叫醒功能开关 */
     private static volatile boolean sWakeupMorningEnabled   = false;
     private static volatile boolean sWakeupAfternoonEnabled = false;
+    /** 超级岛按钮功能模式：0=仅静音, 1=仅勿扰, 2=两者 */
+    private static volatile int sIslandButtonMode = 2;
     /** 已调度的静音/取消静音 alarm reqCode 集合，用于批量取消 */
     private final java.util.Set<Integer> mScheduledMuteIds = new java.util.HashSet<>();
     /** 有连续后续课程的通知 alarmId 集合：injectIslandParams 跳过 cancel alarm 注册，
@@ -283,6 +285,9 @@ public class MainHook implements IXposedHookLoadPackage {
                                 ed.putInt(KEY_WAKEUP_AFTERNOON_FIRST_SEC, intent.getIntExtra(KEY_WAKEUP_AFTERNOON_FIRST_SEC, DEFAULT_WAKEUP_AFTERNOON_FIRST_SEC));
                             if (intent.hasExtra(KEY_WAKEUP_AFTERNOON_RULES_JSON))
                                 ed.putString(KEY_WAKEUP_AFTERNOON_RULES_JSON, intent.getStringExtra(KEY_WAKEUP_AFTERNOON_RULES_JSON));
+                            if (intent.hasExtra("island_button_mode")) {
+                                ed.putInt("island_button_mode", intent.getIntExtra("island_button_mode", 2));
+                            }
                             ed.apply();
                             // 同步假期数据（2025–2028）到 island_holiday 文件
                             for (int yr = 2025; yr <= 2028; yr++) {
@@ -308,6 +313,8 @@ public class MainHook implements IXposedHookLoadPackage {
                                 sWakeupMorningEnabled   = intent.getBooleanExtra(KEY_WAKEUP_MORNING_ENABLED, false);
                             if (intent.hasExtra(KEY_WAKEUP_AFTERNOON_ENABLED))
                                 sWakeupAfternoonEnabled = intent.getBooleanExtra(KEY_WAKEUP_AFTERNOON_ENABLED, false);
+                            if (intent.hasExtra("island_button_mode"))
+                                sIslandButtonMode = intent.getIntExtra("island_button_mode", 2);
                             // 提醒分钟数或静音参数变化时重新调度
                             boolean muteSettingChanged = intent.hasExtra(KEY_MUTE_ENABLED)
                                     || intent.hasExtra(KEY_MUTE_MINS_BEFORE)
@@ -606,12 +613,13 @@ public class MainHook implements IXposedHookLoadPackage {
                             applyDndState(context, false, intent.getStringExtra("course_name"));
                         } else if (ACTION_MANUAL_MUTE.equals(intent.getAction())) {
                             String mn = intent.getStringExtra("course_name");
-                            if (sMuteEnabled || sUnmuteEnabled) applyMuteState(context, true, mn);
-                            if (sDndEnabled  || sUnDndEnabled)  applyDndState(context, true, mn);
+                            // 按钮模式：0=仅静音, 1=仅勿扰, 2=两者
+                            if (sIslandButtonMode == 0 || sIslandButtonMode == 2) applyMuteState(context, true, mn);
+                            if (sIslandButtonMode == 1 || sIslandButtonMode == 2) applyDndState(context, true, mn);
                         } else if (ACTION_MANUAL_UNMUTE.equals(intent.getAction())) {
                             String mn = intent.getStringExtra("course_name");
-                            if (sMuteEnabled || sUnmuteEnabled) applyMuteState(context, false, mn);
-                            if (sDndEnabled  || sUnDndEnabled)  applyDndState(context, false, mn);
+                            if (sIslandButtonMode == 0 || sIslandButtonMode == 2) applyMuteState(context, false, mn);
+                            if (sIslandButtonMode == 1 || sIslandButtonMode == 2) applyDndState(context, false, mn);
                         } else if (ACTION_RESCHEDULE_DAILY.equals(intent.getAction())) {
                             // 每日 00:01 跨日重调：触发主动更新，重新同步开关状态，重新调度当日 alarm
                             XposedBridge.log(TAG + ": [跨日重调] 触发，同步配置并执行主动重调度");
@@ -622,6 +630,7 @@ public class MainHook implements IXposedHookLoadPackage {
                             sUnDndEnabled  = dp.getBoolean(KEY_UNDND_ENABLED,  false);
                             sWakeupMorningEnabled   = dp.getBoolean(KEY_WAKEUP_MORNING_ENABLED,   false);
                             sWakeupAfternoonEnabled = dp.getBoolean(KEY_WAKEUP_AFTERNOON_ENABLED, false);
+                            sIslandButtonMode = dp.getInt("island_button_mode", 2);
                             
                             safeReschedule(context, "island_reschedule_daily", true);
                         } else if (ACTION_NOTIF_CANCEL.equals(intent.getAction())) {
@@ -1812,13 +1821,15 @@ public class MainHook implements IXposedHookLoadPackage {
 
         // ── actionInfo ────────────────────────────────────────────
         // 发给 voiceassist 自身进程内的广播接收器（同进程，无跨包权限问题）
-        boolean hasMute = sMuteEnabled || sUnmuteEnabled;
-        boolean hasDnd  = sDndEnabled  || sUnDndEnabled;
+        // 按钮模式：0=仅静音, 1=仅勿扰, 2=两者
+        boolean showMute = sIslandButtonMode == 0 || sIslandButtonMode == 2;
+        boolean showDnd  = sIslandButtonMode == 1 || sIslandButtonMode == 2;
+        
         String muteAction = isFinished ? ACTION_MANUAL_UNMUTE : ACTION_MANUAL_MUTE;
         String actionTitle;
-        if (hasMute && hasDnd) {
+        if (showMute && showDnd) {
             actionTitle = isFinished ? "解除静默" : "上课静默";
-        } else if (hasDnd) {
+        } else if (showDnd) {
             actionTitle = isFinished ? "解除勿扰" : "上课勿扰";
         } else {
             actionTitle = isFinished ? "解除静音" : "上课静音";

@@ -727,12 +727,21 @@ public class MainActivity extends AppCompatActivity {
             sendBroadcast(sync);
         });
 
-        // 保存时间设置（静音 + 勿扰共 4 个字段）
+        com.google.android.material.button.MaterialButtonToggleGroup toggleMode = findViewById(R.id.toggle_island_button_mode);
+        int savedMode = sp.getInt("island_button_mode", 2); // 0=Mute, 1=DND, 2=Both
+        if (savedMode == 0) toggleMode.check(R.id.btn_mode_mute);
+        else if (savedMode == 1) toggleMode.check(R.id.btn_mode_dnd);
+        else toggleMode.check(R.id.btn_mode_both);
+
+        // 保存时间设置（静音 + 勿扰共 4 个字段 + 按钮模式）
         findViewById(R.id.btn_save_mute).setOnClickListener(v -> {
             int muteBefore  = parseMinutes(etMuteBefore);
             int unmuteAfter = parseMinutes(etUnmuteAfter);
             int dndBefore   = parseMinutes(etDndBefore);
             int unDndAfter  = parseMinutes(etUnDndAfter);
+
+            int selectedId = toggleMode.getCheckedButtonId();
+            int buttonMode = (selectedId == R.id.btn_mode_mute) ? 0 : (selectedId == R.id.btn_mode_dnd ? 1 : 2);
 
             etMuteBefore.setText(String.valueOf(muteBefore));
             etUnmuteAfter.setText(String.valueOf(unmuteAfter));
@@ -744,6 +753,7 @@ public class MainActivity extends AppCompatActivity {
               .putInt("unmute_mins_after", unmuteAfter)
               .putInt("dnd_mins_before",   dndBefore)
               .putInt("undnd_mins_after",  unDndAfter)
+              .putInt("island_button_mode", buttonMode)
               .apply();
 
             Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
@@ -752,6 +762,7 @@ public class MainActivity extends AppCompatActivity {
             sync.putExtra("unmute_mins_after", unmuteAfter);
             sync.putExtra("dnd_mins_before",   dndBefore);
             sync.putExtra("undnd_mins_after",  unDndAfter);
+            sync.putExtra("island_button_mode", buttonMode);
             sendBroadcast(sync);
 
             tvMuteHint.setText("设置已保存并重新调度");

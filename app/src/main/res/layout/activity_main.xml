@@ -1157,6 +1157,62 @@
 
                     </LinearLayout>
 
+                    <com.google.android.material.divider.MaterialDivider
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:layout_marginBottom="12dp" />
+
+                    <!-- ══ 超级岛按钮功能（脱离自动模式） ══ -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="超级岛按钮功能"
+                        android:textAppearance="?attr/textAppearanceBodyMedium"
+                        android:textColor="?attr/colorPrimary" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="设置上课岛上显示的按钮执行的操作（不受自动静音开关限制）"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:layout_marginTop="2dp" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/toggle_island_button_mode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btn_mode_mute"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="仅静音" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btn_mode_dnd"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="仅勿扰" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btn_mode_both"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="两者" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_save_mute"
                         style="@style/Widget.Material3.Button"
@@ -1650,7 +1706,7 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
-            </LinearLayout>
+                </LinearLayout>
             <!-- ─────────────── End 假期/调休 ─────────────── -->
 
             <!-- ─────────────── Tab: 关于 ─────────────── -->
@@ -1759,7 +1815,7 @@
                         </LinearLayout>
 
                     </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
+            </com.google.android.material.card.MaterialCardView>
 
             </LinearLayout>
             <!-- ─────────────── End 关于 ─────────────── -->

@@ -150,16 +150,6 @@ public class MainHook implements IXposedHookLoadPackage {
     private final java.util.Map<Integer, String> mNotifCourseOwner =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    /**
-     * 记录通过劫持 Service 提升到前台的通知 ID。
-     * 只有当此集合不为空时，我们才拦截劫持 Service 的停止请求。
-     */
-    private static final java.util.Set<Integer> sActiveForegroundIds =
-            new java.util.concurrent.CopyOnWriteArraySet<>();
-
-    /** 缓存最近一个 XiaoAi Service 实例 */
-    private static volatile java.lang.ref.WeakReference<android.app.Service> sLastService = null;
-
     /** 获取（或创建）防抖 Handler，保证在主 Looper 就绪后才初始化。 */
     private android.os.Handler getRescheduleHandler() {
         if (mRescheduleHandler == null) {
@@ -193,9 +183,7 @@ public class MainHook implements IXposedHookLoadPackage {
         if (System.getProperty(HOOKED_KEY) != null) return;
         System.setProperty(HOOKED_KEY, "1");
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
-        hookServiceLifecycle(lpparam);
-        hookServicePersistence(lpparam);
-        hookApplicationLifecycle(lpparam);
+        hookApplicationOnCreate(lpparam);
         hookNotifyMethods(lpparam);
     }
 
@@ -203,7 +191,7 @@ public class MainHook implements IXposedHookLoadPackage {
      * 收到 ACTION_SYNC_PREFS 广播时，将偷好设置写入目标进程自己的 SharedPreferences，
      * 彻底绕过 SELinux 跨 UID 文件读取限制。
      */
-    private void hookApplicationLifecycle(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookApplicationOnCreate(XC_LoadPackage.LoadPackageParam lpparam) {
         findAndHookMethod("android.app.Application", lpparam.classLoader,
                 "onCreate", new XC_MethodHook() {
             @Override
@@ -377,12 +365,12 @@ public class MainHook implements IXposedHookLoadPackage {
                             String startTime  = safeStr(intent.getStringExtra("start_time"));
                             String endTime    = safeStr(intent.getStringExtra("end_time"));
                             String classroom  = safeStr(intent.getStringExtra("classroom"));
-                            final CourseInfo info   = new CourseInfo(courseName, startTime, endTime, classroom);
-                            final int state         = intent.getIntExtra("state", STATE_ELAPSED);
-                            final String channelId  = safeStr(intent.getStringExtra("channel_id"));
-                            final String tag        = intent.getStringExtra("notif_tag");
-                            final int id            = intent.getIntExtra("notif_id", 0);
-                            final android.app.NotificationManager nm =
+                            CourseInfo info   = new CourseInfo(courseName, startTime, endTime, classroom);
+                            int state         = intent.getIntExtra("state", STATE_ELAPSED);
+                            String channelId  = safeStr(intent.getStringExtra("channel_id"));
+                            String tag        = intent.getStringExtra("notif_tag");
+                            int id            = intent.getIntExtra("notif_id", 0);
+                            android.app.NotificationManager nm =
                                     context.getSystemService(android.app.NotificationManager.class);
                             // 找到当前活跃通知以复用其图标和 intent
                             Notification src = null;
@@ -392,8 +380,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                     break;
                                 }
                             }
-                            final Notification finalSrc = src;
-                            if (finalSrc == null) {
+                            if (src == null) {
                                 XposedBridge.log(TAG + ": 闹钟回调时通知已消失，跳过 state=" + state);
                                 return;
                             }
@@ -405,24 +392,9 @@ public class MainHook implements IXposedHookLoadPackage {
                                         + staleOwner + "」接管，忽略");
                                 return;
                             }
-                            final SharedPreferences prefs = context
+                            SharedPreferences prefs = context
                                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                            
-                            // ── 核心变更：尝试提权更新 ──
-                            try {
-                                final String latestIslandJson = buildIslandJson(info, state, prefs);
-                                final Notification updateNotif = buildUpdateNotification(context, info, state, finalSrc, latestIslandJson);
-                                tryStartForegroundWithRetry(context, id, updateNotif, tag, nm, new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        sendIslandUpdate(info, state, context, channelId, finalSrc, nm, tag, id, prefs);
-                                    }
-                                });
-                            } catch (org.json.JSONException e) {
-                                XposedBridge.log(TAG + ": [提权更新] JSON 构造失败: " + e.getMessage());
-                                sendIslandUpdate(info, state, context, channelId, finalSrc, nm, tag, id, prefs);
-                            }
-                            XposedBridge.log(TAG + ": 岛更新已处理 course=" + info.courseName + " state=" + state);
+                            sendIslandUpdate(info, state, context, channelId, src, nm, tag, id, prefs);
                         } else if (ACTION_TEST_NOTIFY.equals(intent.getAction())) {
                             // 由模块 APP 触发，在目标进程内构造并发送测试通知
                             String tCourseName = intent.getStringExtra("course_name");
@@ -523,14 +495,14 @@ public class MainHook implements IXposedHookLoadPackage {
                             }
                         } else if (ACTION_COURSE_REMINDER.equals(intent.getAction())) {
                             // AlarmManager 触发课前提醒 → 在 voiceassist 进程构造通知
-                            final String crName  = safeStr(intent.getStringExtra("course_name"));
-                            final String crStart = safeStr(intent.getStringExtra("start_time"));
-                            final String crEnd   = safeStr(intent.getStringExtra("end_time"));
-                            final String crRoom  = safeStr(intent.getStringExtra("classroom"));
-                            final int    crId    = intent.getIntExtra("notif_id", 2001);
+                            String crName  = safeStr(intent.getStringExtra("course_name"));
+                            String crStart = safeStr(intent.getStringExtra("start_time"));
+                            String crEnd   = safeStr(intent.getStringExtra("end_time"));
+                            String crRoom  = safeStr(intent.getStringExtra("classroom"));
+                            int    crId    = intent.getIntExtra("notif_id", 2001);
                             boolean crConsecutive = intent.getBooleanExtra("consecutive", false);
 
-                            final android.app.NotificationManager crnm =
+                            android.app.NotificationManager crnm =
                                     context.getSystemService(android.app.NotificationManager.class);
                             if (crnm == null) return;
 
@@ -616,7 +588,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                 crch.enableVibration(true);
                                 crnm.createNotificationChannel(crch);
                             }
-                            final android.app.Notification crNotif = new android.app.Notification.Builder(context, CR_CH)
+                            android.app.Notification crNotif = new android.app.Notification.Builder(context, CR_CH)
                                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                                     .setContentTitle("[" + crName + "]快到了，提前准备一下吧")
                                     .setContentText(crStart + " - " + crEnd + "  " + crRoom)
@@ -629,15 +601,8 @@ public class MainHook implements IXposedHookLoadPackage {
                             crNotif.extras.putString("xiaoai.test.classroom",   crRoom);
                             CourseInfo crInfo = new CourseInfo(crName, crStart, crEnd, crRoom);
                             applyIslandParams(context, crNotif, crInfo, crId, null);
-                            
-                            // ── 核心变更：尝试提权为前台服务 ──
-                            tryStartForegroundWithRetry(context, crId, crNotif, null, crnm, new Runnable() {
-                                @Override
-                                public void run() {
-                                    crnm.notify(crId, crNotif);
-                                }
-                            });
-                            XposedBridge.log(TAG + ": 课前提醒通知已处理 → " + crName + " @" + crStart);
+                            crnm.notify(crId, crNotif);
+                            XposedBridge.log(TAG + ": 课前提醒通知已发送 → " + crName + " @" + crStart);
                         } else if (ACTION_DO_MUTE.equals(intent.getAction())) {
                             applyMuteState(context, true, intent.getStringExtra("course_name"));
                         } else if (ACTION_DO_UNMUTE.equals(intent.getAction())) {
@@ -674,9 +639,6 @@ public class MainHook implements IXposedHookLoadPackage {
                             String cancelTag = intent.getStringExtra("notif_tag");
                             String phase     = safeStr(intent.getStringExtra("phase"));
                             if (cancelId == -1) return;
-                            
-                            sActiveForegroundIds.remove(cancelId);
-                            
                             android.app.NotificationManager cnm =
                                     context.getSystemService(android.app.NotificationManager.class);
                             if (cancelTag != null) cnm.cancel(cancelTag, cancelId);
@@ -1432,17 +1394,14 @@ public class MainHook implements IXposedHookLoadPackage {
      * 同时扫描并 cancel 小爱自身已发出的同频道通知（非我方注入的），
      * 防止通知栏出现旧旧的重复条目。
      */
-    private void sendCourseReminderNow(final Context ctx, final CourseInfo info, final int notifId) {
+    private void sendCourseReminderNow(Context ctx, CourseInfo info, int notifId) {
         try {
             // 使用独立渠道（不依赖 voiceassist 已创建的 COURSE_SCHEDULER_REMINDER_sound，
             // 因为该渠道由 voiceassist 自身首次创建，importance 不受我们控制）
             final String CR_CH = "xiaoai_course_reminder_alert";
-            final android.app.NotificationManager nm =
+            android.app.NotificationManager nm =
                     ctx.getSystemService(android.app.NotificationManager.class);
             if (nm == null) return;
-            
-            // ── 核心变更：确保有一个劫持目标 ──
-            ensureServiceHijackAvailable(ctx);
             // 取消小爱自己已发出的旧提醒通知（所有我方注入前的原生通知）
             for (android.service.notification.StatusBarNotification sbn : nm.getActiveNotifications()) {
                 android.app.Notification n = sbn.getNotification();
@@ -1459,7 +1418,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 ch.enableVibration(true);
                 nm.createNotificationChannel(ch);
             }
-            final android.app.Notification notif = new android.app.Notification.Builder(ctx, CR_CH)
+            android.app.Notification notif = new android.app.Notification.Builder(ctx, CR_CH)
                     .setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle("[" + info.courseName + "]快到了，提前准备一下吧")
                     .setContentText(info.startTime + " - " + info.endTime + "  " + info.classroom)
@@ -1471,155 +1430,12 @@ public class MainHook implements IXposedHookLoadPackage {
             notif.extras.putString("xiaoai.test.end_time",    info.endTime);
             notif.extras.putString("xiaoai.test.classroom",   info.classroom);
             applyIslandParams(ctx, notif, info, notifId, null);
-            
-            // ── 核心变更：尝试通过持有 Service 实例来 startForeground ──
-            tryStartForegroundWithRetry(ctx, notifId, notif, null, nm, new Runnable() {
-                @Override
-                public void run() {
-                    nm.notify(notifId, notif);
-                }
-            });
-            
-            XposedBridge.log(TAG + ": [立即] 课前提醒通知已处理 " + info.courseName
+            nm.notify(notifId, notif);
+            XposedBridge.log(TAG + ": [立即] 课前提醒通知已发送 " + info.courseName
                     + " @" + info.startTime + " id=" + notifId);
         } catch (Exception e) {
             XposedBridge.log(TAG + ": sendCourseReminderNow 失败 → " + e.getMessage());
         }
-    }
-
-    /** 拦截 Service 生命周期以采集实例 */
-    private void hookServiceLifecycle(XC_LoadPackage.LoadPackageParam lpparam) {
-        XposedHelpers.findAndHookMethod("android.app.Service", lpparam.classLoader, "onCreate", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                android.app.Service svc = (android.app.Service) param.thisObject;
-                // 只记录目标包内的 service
-                if (svc.getPackageName().equals(TARGET_PACKAGE)) {
-                    // 优先级：VoiceService > 其他
-                    if (svc.getClass().getName().contains("VoiceService") || sLastService == null || sLastService.get() == null) {
-                        sLastService = new java.lang.ref.WeakReference<>(svc);
-                        XposedBridge.log(TAG + ": 已捕获 XiaoAi Service 实例 (Primary): " + svc.getClass().getName());
-                    } else {
-                        XposedBridge.log(TAG + ": 已捕获 XiaoAi Service 实例 (Secondary): " + svc.getClass().getName());
-                    }
-                }
-            }
-        });
-    }
-
-    /** 核心强化：拦截劫持 Service 的停止请求，确保灵动岛常驻 */
-    private void hookServicePersistence(XC_LoadPackage.LoadPackageParam lpparam) {
-        XC_MethodHook stopHook = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                android.app.Service svc = (android.app.Service) param.thisObject;
-                if (!sActiveForegroundIds.isEmpty() && sLastService != null && sLastService.get() == svc) {
-                    XposedBridge.log(TAG + ": [拦截停止] 检测到正作为灵动岛宿主，阻止 " + svc.getClass().getSimpleName() + " 停止");
-                    param.setResult(null);
-                }
-            }
-        };
-        XposedHelpers.findAndHookMethod("android.app.Service", lpparam.classLoader, "stopSelf", stopHook);
-        XposedHelpers.findAndHookMethod("android.app.Service", lpparam.classLoader, "stopSelf", int.class, stopHook);
-        
-        XposedHelpers.findAndHookMethod("android.app.Service", lpparam.classLoader, "stopForeground", boolean.class, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                android.app.Service svc = (android.app.Service) param.thisObject;
-                boolean removeNotif = (boolean) param.args[0];
-                if (removeNotif && !sActiveForegroundIds.isEmpty() && sLastService != null && sLastService.get() == svc) {
-                    XposedBridge.log(TAG + ": [拦截移除] 阻止 " + svc.getClass().getSimpleName() + " 移除灵动岛前台通知");
-                    param.setResult(null);
-                }
-            }
-        });
-
-        // 监测销毁
-        XposedHelpers.findAndHookMethod("android.app.Service", lpparam.classLoader, "onDestroy", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                android.app.Service svc = (android.app.Service) param.thisObject;
-                if (sLastService != null && sLastService.get() == svc) {
-                    XposedBridge.log(TAG + ": [警报] 劫持目标 " + svc.getClass().getSimpleName() + " 正在被销毁！IDs=" + sActiveForegroundIds);
-                }
-            }
-        });
-
-        // 提权恢复（强制 START_STICKY）
-        XposedHelpers.findAndHookMethod("android.app.Service", lpparam.classLoader, "onStartCommand", 
-                android.content.Intent.class, int.class, int.class, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                android.app.Service svc = (android.app.Service) param.thisObject;
-                if (!sActiveForegroundIds.isEmpty() && sLastService != null && sLastService.get() == svc) {
-                    param.setResult(android.app.Service.START_STICKY);
-                }
-            }
-        });
-    }
-
-    /** 确保有一个 Service 实例可供劫持。若无，则尝试启动一个已知的、副作用小的 Service。 */
-    private void ensureServiceHijackAvailable(Context ctx) {
-        if (sLastService != null && sLastService.get() != null) return;
-        
-        XposedBridge.log(TAG + ": 无可用 Service 实例，尝试主动触发小爱 Service...");
-        try {
-            // 尝试启动小爱的推送消息处理 Service，通常副作用较小且能在后台存活
-            Intent intent = new Intent();
-            intent.setComponent(new android.content.ComponentName(TARGET_PACKAGE, "com.xiaomi.mipush.sdk.MessageHandleService"));
-            ctx.startService(intent);
-            
-            // 同时尝试启动核心服务 VoiceService，通常它就在主进程中
-            Intent intent2 = new Intent();
-            intent2.setComponent(new android.content.ComponentName(TARGET_PACKAGE, "com.xiaomi.voiceassistant.VoiceService"));
-            ctx.startService(intent2);
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": 主动触发 Service 失败: " + t.getMessage());
-        }
-    }
-
-    /** 
-     * 尝试带重试地进行 startForeground 提权。
-     * 因为 startService 是异步的，捕获实例可能需要一点时间。
-     */
-    private void tryStartForegroundWithRetry(final Context ctx, final int id, final Notification n, 
-            final String tag, final android.app.NotificationManager nm, final Runnable fallback) {
-        ensureServiceHijackAvailable(ctx);
-        
-        final int maxRetries = 3;
-        final long delayMs = 600;
-        
-        final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
-        final int[] currentRetry = {0};
-        
-        final Runnable r = new Runnable() {
-            @Override
-            public void run() {
-                if (sLastService != null && sLastService.get() != null) {
-                    final android.app.Service svc = sLastService.get();
-                    try {
-                        svc.startForeground(id, n);
-                        sActiveForegroundIds.add(id);
-                        XposedBridge.log(TAG + ": [提权] 成功通过 " + svc.getClass().getSimpleName() + " 启动前台 Island");
-                        return;
-                    } catch (Throwable t) {
-                        XposedBridge.log(TAG + ": [提权] 报错: " + t.getMessage());
-                    }
-                }
-                
-                if (currentRetry[0] < maxRetries) {
-                    currentRetry[0]++;
-                    XposedBridge.log(TAG + ": [提权] 正在重试 (" + currentRetry[0] + "/" + maxRetries + ")...");
-                    handler.postDelayed(this, delayMs);
-                } else {
-                    XposedBridge.log(TAG + ": [提权] 重试耗尽，执行回退方案");
-                    fallback.run();
-                }
-            }
-        };
-        
-        // 尝试执行
-        handler.post(r);
     }
 
     /**
@@ -1962,39 +1778,33 @@ public class MainHook implements IXposedHookLoadPackage {
             android.app.NotificationManager nm, String tag, int id,
             android.content.SharedPreferences prefs) {
         try {
+            // 确保静音更新渠道存在（IMPORTANCE_LOW = 无声无震，不受 voiceassist 原渠道影响）
+            if (nm.getNotificationChannel(ISLAND_UPDATE_CHANNEL) == null) {
+                android.app.NotificationChannel uch = new android.app.NotificationChannel(
+                        ISLAND_UPDATE_CHANNEL, "岛状态更新",
+                        android.app.NotificationManager.IMPORTANCE_LOW);
+                uch.setSound(null, null);   // 渠道无声
+                uch.enableVibration(false); // 渠道无震
+                nm.createNotificationChannel(uch);
+            }
             String json = buildIslandJson(info, state, prefs);
-            Notification n = buildUpdateNotification(ctx, info, state, src, json);
+            Notification n = new Notification.Builder(ctx, ISLAND_UPDATE_CHANNEL)
+                    .setSmallIcon(src.getSmallIcon())
+                    .setContentTitle(info.courseName)
+                    .setContentText(info.startTime
+                            + (info.endTime.isEmpty() ? "" : " | " + info.endTime)
+                            + (info.classroom.isEmpty() ? "" : " " + info.classroom))
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)   // 双重保险
+                    .build();
+            n.extras.putString(KEY_FOCUS_PARAM, json);
+            n.contentIntent = src.contentIntent;
             if (tag != null) nm.notify(tag, id, n);
             else             nm.notify(id, n);
             XposedBridge.log(TAG + ": 岛状态更新已发送 state=" + state + " id=" + id);
         } catch (Exception e) {
             XposedBridge.log(TAG + ": 岛状态更新失败 state=" + state + " → " + e.getMessage());
         }
-    }
-
-    /** 构造用于更新状态的 Notification 对象 */
-    private Notification buildUpdateNotification(Context ctx, CourseInfo info, int state, Notification src, String islandJson) {
-        android.app.NotificationManager nm = ctx.getSystemService(android.app.NotificationManager.class);
-        if (nm.getNotificationChannel(ISLAND_UPDATE_CHANNEL) == null) {
-            android.app.NotificationChannel uch = new android.app.NotificationChannel(
-                    ISLAND_UPDATE_CHANNEL, "岛状态更新",
-                    android.app.NotificationManager.IMPORTANCE_LOW);
-            uch.setSound(null, null);
-            uch.enableVibration(false);
-            nm.createNotificationChannel(uch);
-        }
-        Notification n = new Notification.Builder(ctx, ISLAND_UPDATE_CHANNEL)
-                .setSmallIcon(src.getSmallIcon())
-                .setContentTitle(info.courseName)
-                .setContentText(info.startTime
-                        + (info.endTime.isEmpty() ? "" : " | " + info.endTime)
-                        + (info.classroom.isEmpty() ? "" : " " + info.classroom))
-                .setAutoCancel(true)
-                .setOnlyAlertOnce(true)
-                .build();
-        n.extras.putString(KEY_FOCUS_PARAM, islandJson);
-        n.contentIntent = src.contentIntent;
-        return n;
     }
 
     /**

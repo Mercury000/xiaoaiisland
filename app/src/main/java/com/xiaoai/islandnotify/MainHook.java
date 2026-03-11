@@ -576,10 +576,28 @@ public class MainHook implements IXposedHookLoadPackage {
                                                 PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
                                         if (stalePi != null) { staleAm.cancel(stalePi); stalePi.cancel(); }
                                     }
-                                    sendIslandUpdate(newInfo, STATE_COUNTDOWN, context,
-                                            prevSbn.getNotification().getChannelId(),
-                                            prevSbn.getNotification(), crnm,
-                                            prevTag, prevId, crPrefs);
+                                    // 为确保连续课程能触发岛的弹出动画，不能只用低权重的 sendIslandUpdate
+                                    // 而是重建高权重的 CR_CH 通知，模拟新课提醒
+                                    final String CR_CH = "xiaoai_course_reminder_alert";
+                                    if (crnm.getNotificationChannel(CR_CH) == null) {
+                                        android.app.NotificationChannel crch = new android.app.NotificationChannel(
+                                                CR_CH, "课程提醒", android.app.NotificationManager.IMPORTANCE_HIGH);
+                                        crch.enableVibration(true);
+                                        crnm.createNotificationChannel(crch);
+                                    }
+                                    android.app.Notification jumpNotif = new android.app.Notification.Builder(context, CR_CH)
+                                            .setSmallIcon(prevSbn.getNotification().getSmallIcon())
+                                            .setContentTitle("[" + crName + "]快到了，提前准备一下吧")
+                                            .setContentText(crStart + " - " + crEnd + "  " + crRoom)
+                                            .build();
+                                    if (jumpNotif.extras == null) jumpNotif.extras = new android.os.Bundle();
+                                    jumpNotif.extras.putString("xiaoai.test.course_name", crName);
+                                    jumpNotif.extras.putString("xiaoai.test.start_time",  crStart);
+                                    jumpNotif.extras.putString("xiaoai.test.end_time",    crEnd);
+                                    jumpNotif.extras.putString("xiaoai.test.classroom",   crRoom);
+                                    applyIslandParams(context, jumpNotif, newInfo, prevId, prevTag);
+                                    if (prevTag != null) crnm.notify(prevTag, prevId, jumpNotif);
+                                    else                 crnm.notify(prevId, jumpNotif);
                                     // 为新课程调度 STATE_ELAPSED / STATE_FINISHED
                                     // reqCode 复用 prevId，FLAG_UPDATE_CURRENT 会自动覆盖旧课程的同类 alarm
                                     long crStartMs = computeClassStartMs(crStart);

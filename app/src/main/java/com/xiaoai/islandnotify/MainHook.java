@@ -1118,7 +1118,7 @@ public class MainHook implements IXposedHookLoadPackage {
             intent.putExtra("consecutive",  isConsecutive);
             PendingIntent pi = PendingIntent.getService(ctx, alarmId, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, (alarmId & 0x00FFFFFF) | 0x50000000,
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, alarmId | 0x50000000,
                     new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
@@ -1153,7 +1153,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     am.cancel(pi);
                     pi.cancel();
                 }
-                PendingIntent showPi = PendingIntent.getBroadcast(ctx, (id & 0x00FFFFFF) | 0x50000000,
+                PendingIntent showPi = PendingIntent.getBroadcast(ctx, id | 0x50000000,
                         new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
                         PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
                 if (showPi != null) {

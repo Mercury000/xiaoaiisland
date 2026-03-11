@@ -182,6 +182,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String ACTION_REPLY_PREFS = "com.xiaoai.islandnotify.ACTION_REPLY_PREFS";
 
     private void initSyncWithHost() {
+        // 使用独立的“APP内部状态”SP，不与配置 SP 混用，确保重装后重置且不被同步到宿主
+        SharedPreferences appState = getSharedPreferences("island_app_state", Context.MODE_PRIVATE);
+        if (appState.getBoolean("config_synced_from_host", false)) return;
+
         IntentFilter filter = new IntentFilter(ACTION_REPLY_PREFS);
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
@@ -191,15 +195,32 @@ public class MainActivity extends AppCompatActivity {
                     SharedPreferences.Editor ed = sp.edit();
                     Bundle extras = intent.getExtras();
                     if (extras != null) {
+                        SharedPreferences hsp = getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+                        SharedPreferences.Editor hEd = hsp.edit();
+                        boolean hasHoliday = false;
+
                         for (String key : extras.keySet()) {
                             Object v = extras.get(key);
-                            if (v instanceof String)  ed.putString(key, (String)  v);
-                            else if (v instanceof Integer) ed.putInt   (key, (Integer) v);
-                            else if (v instanceof Boolean) ed.putBoolean(key, (Boolean) v);
-                            else if (v instanceof Long)    ed.putLong   (key, (Long)    v);
-                            else if (v instanceof Float)   ed.putFloat  (key, (Float)   v);
+                            if (key.startsWith(HolidayManager.EXTRA_LIST_PREFIX)) {
+                                if (v instanceof String) {
+                                    String yr = key.substring(HolidayManager.EXTRA_LIST_PREFIX.length());
+                                    hEd.putString("list_" + yr, (String) v);
+                                    hasHoliday = true;
+                                }
+                            } else {
+                                if (v instanceof String)  ed.putString(key, (String)  v);
+                                else if (v instanceof Integer) ed.putInt   (key, (Integer) v);
+                                else if (v instanceof Boolean) ed.putBoolean(key, (Boolean) v);
+                                else if (v instanceof Long)    ed.putLong   (key, (Long)    v);
+                                else if (v instanceof Float)   ed.putFloat  (key, (Float)   v);
+                            }
                         }
                         ed.apply();
+                        if (hasHoliday) hEd.apply();
+                        // 标记已同步，下次启动不再广播
+                        getSharedPreferences("island_app_state", Context.MODE_PRIVATE)
+                                .edit().putBoolean("config_synced_from_host", true).apply();
+
                         runOnUiThread(() -> {
                             // 重新初始化所有卡片以反映最新 SP 值
                             initCustomCard();
@@ -207,7 +228,7 @@ public class MainActivity extends AppCompatActivity {
                             initReminderCard();
                             initMuteCard();
                             initWakeupCard();
-                            Toast.makeText(MainActivity.this, "已从宿主同步最新配置", Toast.LENGTH_SHORT).show();
+                            initHolidayTab();
                         });
                     }
                 }

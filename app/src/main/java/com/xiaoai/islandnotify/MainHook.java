@@ -324,8 +324,9 @@ public class MainHook implements IXposedHookLoadPackage {
                                 ed.putInt("island_button_mode", intent.getIntExtra("island_button_mode", 2));
                             }
                             ed.apply();
-                            // 同步假期数据（2025–2028）到 island_holiday 文件
-                            for (int yr = 2025; yr <= 2028; yr++) {
+                            // 自动同步假期数据（去年、今年、未来两年）到 island_holiday 文件
+                            int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+                            for (int yr = currentYear - 1; yr <= currentYear + 2; yr++) {
                                 String hKey = HolidayManager.EXTRA_LIST_PREFIX + yr;
                                 if (intent.hasExtra(hKey)) {
                                     String hJson = intent.getStringExtra(hKey);
@@ -1316,6 +1317,15 @@ public class MainHook implements IXposedHookLoadPackage {
                     else if (v instanceof Boolean) reply.putExtra(entry.getKey(), (Boolean) v);
                     else if (v instanceof Long)    reply.putExtra(entry.getKey(), (Long)    v);
                     else if (v instanceof Float)   reply.putExtra(entry.getKey(), (Float)   v);
+                }
+            }
+            // 补充同步假期数据 (去年、今年、未来两年)
+            int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+            SharedPreferences hsp = ctx.getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+            for (int yr = currentYear - 1; yr <= currentYear + 2; yr++) {
+                String val = hsp.getString("list_" + yr, null);
+                if (val != null) {
+                    reply.putExtra(HolidayManager.EXTRA_LIST_PREFIX + yr, val);
                 }
             }
             ctx.sendBroadcast(reply);

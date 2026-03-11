@@ -865,10 +865,11 @@ public class MainHook implements IXposedHookLoadPackage {
                 return;
             }
 
-            // ── 2. 取消所有旧闹钟，按新课表重新调度 ──
+            // ── 2. 取消所有旧闹钟，且计算新课表的所有 valid ID 用于后续精确清理 ──
             // MODE_MULTI_PROCESS 保证从磁盘读取最新值；cancel 在 hash 检查之后，避免提前撤销正在运行的 alarm
             cancelAllScheduledAlarms(ctx);
             mScheduledAlarmIds.clear();
+            java.util.Set<Integer> validAlarmIds = new java.util.HashSet<>();
 
             // ── 2b. 节假日 / 调休 检查 ─────────────────────────────────────────
             java.text.SimpleDateFormat holidayFmt =
@@ -973,6 +974,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 String classroom  = course.optString("position", "");
                 CourseInfo info   = new CourseInfo(courseName, startTime, endTime, classroom);
                 int alarmId       = Math.abs((courseName + startTime).hashCode());
+                validAlarmIds.add(alarmId);
 
                 // 默认触发时间：课程开始前 N 分钟
                 long triggerMs    = startMs - reminderMs;
@@ -1025,6 +1027,9 @@ public class MainHook implements IXposedHookLoadPackage {
             }
             XposedBridge.log(TAG + ": 今日课前提醒已调度 " + scheduledCount
                     + " 条（第 " + currentWeek + " 周，提前 " + reminderMinutes + " 分钟）");
+
+            // ── 3. 精确清理：取消那些属于我方但不在新课表 valid 集合中的活跃通知 ──
+            cancelStaleNotifications(ctx, validAlarmIds);
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": scheduleTodayCourseReminders 失败 → " + e.getMessage());
         }
@@ -1124,6 +1129,32 @@ public class MainHook implements IXposedHookLoadPackage {
         synchronized (mScheduledAlarmIds) {
             mScheduledAlarmIds.clear();
             saveScheduledIds(ctx, "scheduled_alarm_ids", mScheduledAlarmIds);
+        }
+    }
+
+    /**
+     * 精确清理：遍历通知栏，如果发现某通知是我方发出的，但 ID 不在有效集合内，则取消它。
+     * 存在于有效集合内的通知不主动取消，由后续 notify() 平滑更新，避免闪烁。
+     */
+    private void cancelStaleNotifications(Context ctx, java.util.Set<Integer> validIds) {
+        try {
+            android.app.NotificationManager nm = ctx.getSystemService(android.app.NotificationManager.class);
+            if (nm == null) return;
+            int count = 0;
+            for (android.service.notification.StatusBarNotification sbn : nm.getActiveNotifications()) {
+                android.app.Notification n = sbn.getNotification();
+                if (n.extras != null && n.extras.containsKey("xiaoai.test.course_name")) {
+                    int id = sbn.getId();
+                    if (!validIds.contains(id)) {
+                        nm.cancel(sbn.getTag(), id);
+                        mNotifCourseOwner.remove(id);
+                        count++;
+                    }
+                }
+            }
+            if (count > 0) XposedBridge.log(TAG + ": 已精确清理 " + count + " 个旧课表残留通知");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cancelStaleNotifications 失败 -> " + t.getMessage());
         }
     }
 

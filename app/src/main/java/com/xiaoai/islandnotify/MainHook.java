@@ -55,6 +55,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String ACTION_NOTIF_CANCEL = "com.xiaoai.islandnotify.ACTION_NOTIF_CANCEL";
     /** shareData 拖拽分享图片在 miui.focus.pics Bundle 中的 key */
     private static final String PIC_KEY_SHARE = "miui.focus.pic_share";
+    /** voiceassist Manifest 中已声明的 Service，用于 AlarmManager 在进程死后强制拉起 */
+    private static final String UPLOAD_STATE_SERVICE = "com.xiaomi.voiceassistant.UploadStateService";
 
     /** 点击课程卡片整体 → 跳转课表页的 Intent URI */
     private static final String COURSE_TABLE_INTENT =
@@ -184,6 +186,7 @@ public class MainHook implements IXposedHookLoadPackage {
         System.setProperty(HOOKED_KEY, "1");
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
         hookApplicationOnCreate(lpparam);
+        hookUploadStateService(lpparam);
         hookNotifyMethods(lpparam);
     }
 
@@ -532,9 +535,9 @@ public class MainHook implements IXposedHookLoadPackage {
                                     // ② 主动取消旧课的 STATE_ELAPSED/FINISHED 闹钟，彻底消除竞争
                                     AlarmManager staleAm = context.getSystemService(AlarmManager.class);
                                     for (int ss = 1; ss <= 2; ss++) {
-                                        PendingIntent stalePi = PendingIntent.getBroadcast(context,
+                                        PendingIntent stalePi = PendingIntent.getService(context,
                                                 prevId * 10 + ss,
-                                                new Intent(ACTION_ISLAND_UPDATE).setPackage(TARGET_PACKAGE),
+                                                createServiceIntent(ACTION_ISLAND_UPDATE),
                                                 PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
                                         if (stalePi != null) { staleAm.cancel(stalePi); stalePi.cancel(); }
                                     }
@@ -685,6 +688,68 @@ public class MainHook implements IXposedHookLoadPackage {
                 XposedBridge.log(TAG + ": 偷好同步接收器已注册，课前提醒已开启");
             }
         });
+    }
+
+    /**
+     * 创建指向 UploadStateService 的显式 Intent（供 AlarmManager 使用）。
+     * PendingIntent.getService 在进程死亡后能强制拉起进程，
+     * 解决 getBroadcast + 动态注册接收器在进程死后无人接收的问题。
+     */
+    private Intent createServiceIntent(String action) {
+        Intent intent = new Intent(action);
+        intent.setClassName(TARGET_PACKAGE, UPLOAD_STATE_SERVICE);
+        return intent;
+    }
+
+    /** 判断给定 action 是否为闹钟触发的 action（需通过 Service 拉起进程） */
+    private static boolean isAlarmAction(String action) {
+        return ACTION_COURSE_REMINDER.equals(action)
+                || ACTION_ISLAND_UPDATE.equals(action)
+                || ACTION_DO_MUTE.equals(action)
+                || ACTION_DO_UNMUTE.equals(action)
+                || ACTION_DO_DND_ON.equals(action)
+                || ACTION_DO_DND_OFF.equals(action)
+                || ACTION_RESCHEDULE_DAILY.equals(action)
+                || ACTION_NOTIF_CANCEL.equals(action);
+    }
+
+    /**
+     * Hook voiceassist 的 UploadStateService.onStartCommand，拦截闹钟触发的 Intent。
+     * 当进程被杀后，AlarmManager 通过 PendingIntent.getService 强制拉起进程：
+     *   系统启动进程 → Application.onCreate（Xposed 注入 + 动态 BR 注册）
+     *   → Service.onStartCommand（本 hook 拦截）→ 转发为包内广播 → 动态 BR 处理。
+     */
+    private void hookUploadStateService(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            // UploadStateService 未覆写 onStartCommand，需用 getMethod 搜索继承链
+            Class<?> svcClass = lpparam.classLoader.loadClass(UPLOAD_STATE_SERVICE);
+            java.lang.reflect.Method onStartCmd = svcClass.getMethod(
+                    "onStartCommand", Intent.class, int.class, int.class);
+            XposedBridge.hookMethod(onStartCmd, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    // 仅拦截 UploadStateService 实例，放行其他 Service
+                    if (!UPLOAD_STATE_SERVICE.equals(param.thisObject.getClass().getName()))
+                        return;
+                    Intent intent = (Intent) param.args[0];
+                    if (intent == null || intent.getAction() == null) return;
+                    String action = intent.getAction();
+                    if (!isAlarmAction(action)) return;
+
+                    Context ctx = (Context) param.thisObject;
+                    // 清除 component（Service 目标），转为包内隐式广播
+                    Intent fwd = new Intent(action);
+                    if (intent.getExtras() != null) fwd.putExtras(intent.getExtras());
+                    fwd.setPackage(TARGET_PACKAGE);
+                    ctx.sendBroadcast(fwd);
+                    param.setResult(android.app.Service.START_NOT_STICKY);
+                    XposedBridge.log(TAG + ": [Service→BR] 转发 " + action);
+                }
+            });
+            XposedBridge.log(TAG + ": hookUploadStateService 已注入");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hookUploadStateService 失败: " + t.getMessage());
+        }
     }
 
     /**
@@ -948,15 +1013,14 @@ public class MainHook implements IXposedHookLoadPackage {
                                               long triggerMs, int alarmId,
                                               boolean isConsecutive) {
         try {
-            Intent intent = new Intent(ACTION_COURSE_REMINDER);
-            intent.setPackage(TARGET_PACKAGE);
+            Intent intent = createServiceIntent(ACTION_COURSE_REMINDER);
             intent.putExtra("course_name",  info.courseName);
             intent.putExtra("start_time",   info.startTime);
             intent.putExtra("end_time",     info.endTime);
             intent.putExtra("classroom",    info.classroom);
             intent.putExtra("notif_id",     alarmId);
             intent.putExtra("consecutive",  isConsecutive);
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, alarmId, intent,
+            PendingIntent pi = PendingIntent.getService(ctx, alarmId, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, alarmId | 0x50000000,
                     new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
@@ -982,9 +1046,8 @@ public class MainHook implements IXposedHookLoadPackage {
         try {
             AlarmManager am = ctx.getSystemService(AlarmManager.class);
             for (int id : mScheduledAlarmIds) {
-                Intent dummy = new Intent(ACTION_COURSE_REMINDER);
-                dummy.setPackage(TARGET_PACKAGE);
-                PendingIntent pi = PendingIntent.getBroadcast(ctx, id, dummy,
+                Intent dummy = createServiceIntent(ACTION_COURSE_REMINDER);
+                PendingIntent pi = PendingIntent.getService(ctx, id, dummy,
                         PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
                 if (pi != null) { am.cancel(pi); pi.cancel(); }
             }
@@ -1008,9 +1071,8 @@ public class MainHook implements IXposedHookLoadPackage {
                     else if (action.equals(ACTION_DO_UNMUTE))  reqCode = aid | 0x02000000;
                     else if (action.equals(ACTION_DO_DND_ON))  reqCode = aid | 0x03000000;
                     else                                        reqCode = aid | 0x04000000;
-                    Intent dummy = new Intent(action);
-                    dummy.setPackage(TARGET_PACKAGE);
-                    PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, dummy,
+                    Intent dummy = createServiceIntent(action);
+                    PendingIntent pi = PendingIntent.getService(ctx, reqCode, dummy,
                             PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
                     if (pi != null) { am.cancel(pi); pi.cancel(); }
                 }
@@ -1027,10 +1089,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private void scheduleMuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
             int reqCode = (alarmId & 0x00FFFFFF) | 0x01000000;
-            Intent intent = new Intent(ACTION_DO_MUTE);
-            intent.setPackage(TARGET_PACKAGE);
+            Intent intent = createServiceIntent(ACTION_DO_MUTE);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             // 用一个不起眼的 show-intent：点击状态栏闹钟图标时什么都不做
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
@@ -1062,9 +1123,8 @@ public class MainHook implements IXposedHookLoadPackage {
             cal.set(java.util.Calendar.SECOND, 0);
             cal.set(java.util.Calendar.MILLISECOND, 0);
             long triggerMs = cal.getTimeInMillis();
-            Intent intent = new Intent(ACTION_RESCHEDULE_DAILY);
-            intent.setPackage(TARGET_PACKAGE);
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, 0x99000001, intent,
+            Intent intent = createServiceIntent(ACTION_RESCHEDULE_DAILY);
+            PendingIntent pi = PendingIntent.getService(ctx, 0x99000001, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, 0x99000002,
                     new Intent(ACTION_RESCHEDULE_DAILY).setPackage(TARGET_PACKAGE),
@@ -1083,10 +1143,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private void scheduleUnmuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
             int reqCode = (alarmId & 0x00FFFFFF) | 0x02000000;
-            Intent intent = new Intent(ACTION_DO_UNMUTE);
-            intent.setPackage(TARGET_PACKAGE);
+            Intent intent = createServiceIntent(ACTION_DO_UNMUTE);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
                     new Intent(ACTION_DO_UNMUTE).setPackage(TARGET_PACKAGE),
@@ -1106,10 +1165,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private void scheduleDndOnAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
             int reqCode = (alarmId & 0x00FFFFFF) | 0x03000000;
-            Intent intent = new Intent(ACTION_DO_DND_ON);
-            intent.setPackage(TARGET_PACKAGE);
+            Intent intent = createServiceIntent(ACTION_DO_DND_ON);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
                     new Intent(ACTION_DO_DND_ON).setPackage(TARGET_PACKAGE),
@@ -1128,10 +1186,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private void scheduleDndOffAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
             int reqCode = (alarmId & 0x00FFFFFF) | 0x04000000;
-            Intent intent = new Intent(ACTION_DO_DND_OFF);
-            intent.setPackage(TARGET_PACKAGE);
+            Intent intent = createServiceIntent(ACTION_DO_DND_OFF);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
                     new Intent(ACTION_DO_DND_OFF).setPackage(TARGET_PACKAGE),
@@ -1682,8 +1739,7 @@ public class MainHook implements IXposedHookLoadPackage {
         if (TARGET_PACKAGE.equals(ctx.getPackageName())) {
             // voiceassist 进程：用精确闹钟，可唤醒 Doze
             try {
-                Intent intent = new Intent(ACTION_ISLAND_UPDATE);
-                intent.setPackage(TARGET_PACKAGE);
+                Intent intent = createServiceIntent(ACTION_ISLAND_UPDATE);
                 intent.putExtra("course_name", info.courseName);
                 intent.putExtra("start_time",  info.startTime);
                 intent.putExtra("end_time",    info.endTime);
@@ -1693,7 +1749,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 intent.putExtra("notif_tag",   tag);
                 intent.putExtra("notif_id",    id);
                 int reqCode = id * 10 + state;
-                PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+                PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
                         PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
                 PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x60000000,
                         new Intent(ACTION_ISLAND_UPDATE).setPackage(TARGET_PACKAGE),
@@ -1748,12 +1804,11 @@ public class MainHook implements IXposedHookLoadPackage {
             if (triggerMs <= System.currentTimeMillis()) continue;
             // reqCode: id * 10 + state 已用 0-2，+3+i 用于 cancel（3/4/5），不冲突
             int reqCode = id * 10 + 3 + i;
-            Intent ci = new Intent(ACTION_NOTIF_CANCEL);
-            ci.setPackage(TARGET_PACKAGE);
+            Intent ci = createServiceIntent(ACTION_NOTIF_CANCEL);
             ci.putExtra("notif_id",  id);
             ci.putExtra("notif_tag", tag);
             ci.putExtra("phase",     phases[i]);
-            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, ci,
+            PendingIntent pi = PendingIntent.getService(ctx, reqCode, ci,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x60000000,
                     new Intent(ACTION_NOTIF_CANCEL).setPackage(TARGET_PACKAGE),

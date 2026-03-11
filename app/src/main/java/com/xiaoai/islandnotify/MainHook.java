@@ -988,7 +988,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 String courseName = course.getString("name");
                 String classroom  = course.optString("position", "");
                 CourseInfo info   = new CourseInfo(courseName, startTime, endTime, classroom);
-                int alarmId       = Math.abs((courseName + startTime).hashCode());
+                // 将所有关键参数纳入 hash 计算，确保教室、结束时间等发生变化时，能生成新的 alarmId 
+                // 从而让旧的 alarm（未包含在新 validIds 中）被精确清理，并重新排布新闹钟触发岛更新
+                int alarmId       = Math.abs((courseName + startTime + endTime + classroom).hashCode());
                 validAlarmIds.add(alarmId);
 
                 // 默认触发时间：课程开始前 N 分钟

@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.net.Uri;
@@ -767,17 +768,19 @@ public class MainHook implements IXposedHookLoadPackage {
         mLastCourseDataHash = 0;
         
         // 立即执行一次（使用现有数据，即刻反馈）
-        scheduleTodayCourseReminders(context, null);
+        scheduleTodayCourseReminders(context, null, false);
         if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
-            scheduleTodayMuteAlarms(context);
+            scheduleTodayMuteAlarms(context, false);
         }
         scheduleTodayWakeupAlarms(context);
 
         // 5秒后再次执行（等待主动更新写盘成功）
+        // skipRepost=true：仅重新调度未来闹钟，跳过补发通知和即时静音/勿扰，
+        // 避免与第一次执行重复导致岛重新弹出和多余状态切换。
         getRescheduleHandler().postDelayed(() -> {
-            scheduleTodayCourseReminders(context, null);
+            scheduleTodayCourseReminders(context, null, true);
             if (sMuteEnabled || sUnmuteEnabled || sDndEnabled || sUnDndEnabled) {
-                scheduleTodayMuteAlarms(context);
+                scheduleTodayMuteAlarms(context, true);
             }
             scheduleTodayWakeupAlarms(context);
             // 若是跨日重调，链式调度下一个午夜
@@ -792,6 +795,14 @@ public class MainHook implements IXposedHookLoadPackage {
      * 为每节课在开始前 N 分钟设置 AlarmManager 精确闹钟。
      */
     private void scheduleTodayCourseReminders(Context ctx, String cachedBeanJson) {
+        scheduleTodayCourseReminders(ctx, cachedBeanJson, false);
+    }
+
+    /**
+     * @param skipRepost 为 true 时跳过“补发”逻辑（进程重启后第二次延迟调度时使用），
+     *                   仅重新调度未来闹钟，避免重复触发岛动画。
+     */
+    private void scheduleTodayCourseReminders(Context ctx, String cachedBeanJson, boolean skipRepost) {
         try {
             // ── 1. 先读数据，内容哈希去重（必须在 cancel 前），避免相同课表重复写盘触发补发 ──
             final String beanJson;
@@ -949,10 +960,24 @@ public class MainHook implements IXposedHookLoadPackage {
 
                 if (triggerMs <= nowMs) {
                     // 在提醒窗口内或课程进行中（含进程重启场景）→ 立即补发通知
-                    if (nowMs < endMs) {
-                        sendCourseReminderNow(ctx, info, alarmId);
-                        String label = (nowMs < startMs) ? "[窗口内补发]" : "[上课中补发]";
-                        XposedBridge.log(TAG + ": " + label + " " + courseName + " @" + startTime);
+                    if (nowMs < endMs && !skipRepost) {
+                        // 检查通知栏是否已有同 ID 通知，避免重复补发导致岛重新弹出
+                        android.app.NotificationManager repostNm =
+                                ctx.getSystemService(android.app.NotificationManager.class);
+                        boolean alreadyPosted = false;
+                        if (repostNm != null) {
+                            for (android.service.notification.StatusBarNotification sbn
+                                    : repostNm.getActiveNotifications()) {
+                                if (sbn.getId() == alarmId) { alreadyPosted = true; break; }
+                            }
+                        }
+                        if (!alreadyPosted) {
+                            sendCourseReminderNow(ctx, info, alarmId);
+                            String label = (nowMs < startMs) ? "[窗口内补发]" : "[上课中补发]";
+                            XposedBridge.log(TAG + ": " + label + " " + courseName + " @" + startTime);
+                        } else {
+                            XposedBridge.log(TAG + ": [跳过补发] 通知已存在 " + courseName + " id=" + alarmId);
+                        }
                         scheduledCount++;
                     }
                     continue;
@@ -1221,6 +1246,14 @@ public class MainHook implements IXposedHookLoadPackage {
      * 完全独立于自定义提醒开关，两者可单独启用。
      */
     private void scheduleTodayMuteAlarms(Context ctx) {
+        scheduleTodayMuteAlarms(ctx, false);
+    }
+
+    /**
+     * @param skipImmediate 为 true 时跳过“课中立即静音/勿扰”逻辑，
+     *                      仅重新调度未来闹钟。
+     */
+    private void scheduleTodayMuteAlarms(Context ctx, boolean skipImmediate) {
         cancelAllMuteAlarms(ctx);           // 先无条件取消旧闹钟，防止关闭静音后残留
         if (!sMuteEnabled && !sUnmuteEnabled && !sDndEnabled && !sUnDndEnabled) return;
         try {
@@ -1264,6 +1297,38 @@ public class MainHook implements IXposedHookLoadPackage {
             long nowMs = System.currentTimeMillis();
             int count  = 0;
 
+            // ── 预扫描：检测当前是否有任何课程正处于静音/勿扰窗口内 ──
+            // 若有任何课程正在课中，则不应因已结束的课程而取消静音/勿扰
+            boolean anyActiveMute = false;   // 是否有课程正处于静音窗口（muteTrigger <= now < endMs）
+            boolean anyActiveDnd  = false;   // 是否有课程正处于勿扰窗口（dndTrigger  <= now < endMs）
+            for (int p = 0; p < courses.length(); p++) {
+                JSONObject pc = courses.getJSONObject(p);
+                if (pc.getInt("day") != todayDay) continue;
+                boolean pInWeek = false;
+                for (String w : pc.getString("weeks").split(",")) {
+                    try { if (Integer.parseInt(w.trim()) == currentWeek) { pInWeek = true; break; } }
+                    catch (NumberFormatException ignored) {}
+                }
+                if (!pInWeek) continue;
+                String[] pSecs = pc.getString("sections").split(",");
+                if (pSecs.length == 0) continue;
+                String pStart = getSectionTime(sectionTimes, Integer.parseInt(pSecs[0].trim()), true);
+                String pEnd   = getSectionTime(sectionTimes, Integer.parseInt(pSecs[pSecs.length-1].trim()), false);
+                if (pStart.isEmpty() || pEnd.isEmpty()) continue;
+                long pStartMs = computeClassStartMs(pStart);
+                long pEndMs   = computeClassStartMs(pEnd);
+                if (pStartMs < 0 || pEndMs < 0) continue;
+                if (sMuteEnabled && !anyActiveMute) {
+                    long mt = pStartMs - (long) muteMinsBefore * 60_000L;
+                    if (mt <= nowMs && nowMs < pEndMs) anyActiveMute = true;
+                }
+                if (sDndEnabled && !anyActiveDnd) {
+                    long dt = pStartMs - (long) dndMinsBefore * 60_000L;
+                    if (dt <= nowMs && nowMs < pEndMs) anyActiveDnd = true;
+                }
+                if (anyActiveMute && anyActiveDnd) break; // 已确认，提前退出
+            }
+
             for (int i = 0; i < courses.length(); i++) {
                 JSONObject course = courses.getJSONObject(i);
                 if (course.getInt("day") != todayDay) continue;
@@ -1286,9 +1351,14 @@ public class MainHook implements IXposedHookLoadPackage {
 
                 if (sMuteEnabled) {
                     long muteTriggerMs = startMs - (long) muteMinsBefore * 60_000L;
-                    if (muteTriggerMs <= nowMs && nowMs < endMs) {
-                        // 已在课中且静音时刻已过 → 立即静音
-                        applyMuteState(ctx, true, courseName);
+                    if (muteTriggerMs <= nowMs && nowMs < endMs && !skipImmediate) {
+                        // 已在课中且静音时刻已过 → 仅在未静音时立即静音
+                        AudioManager audioMgr = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+                        if (audioMgr != null && audioMgr.getRingerMode() != AudioManager.RINGER_MODE_SILENT) {
+                            applyMuteState(ctx, true, courseName);
+                        } else {
+                            XposedBridge.log(TAG + ": [跳过静音] 已处于静音状态 " + courseName);
+                        }
                     } else if (muteTriggerMs > nowMs) {
                         scheduleMuteAlarm(ctx, courseName, muteTriggerMs, alarmId);
                         count++;
@@ -1299,15 +1369,24 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (unmuteTriggerMs > nowMs) {
                         scheduleUnmuteAlarm(ctx, courseName, unmuteTriggerMs, alarmId);
                         count++;
-                    } else if (nowMs >= endMs) {
+                    } else if (nowMs >= endMs && !skipImmediate && !anyActiveMute) {
                         // 下课时间已过且解除静音时间也已过（如进程重启场景）→ 立即恢复铃声
+                        // 但若有其他课程正在课中需要静音，则跳过
                         applyMuteState(ctx, false, courseName);
                     }
                 }
                 if (sDndEnabled) {
                     long dndTriggerMs = startMs - (long) dndMinsBefore * 60_000L;
-                    if (dndTriggerMs <= nowMs && nowMs < endMs) {
-                        applyDndState(ctx, true, courseName);
+                    if (dndTriggerMs <= nowMs && nowMs < endMs && !skipImmediate) {
+                        // 已在课中 → 仅在勿扰未开启时才设置
+                        android.app.NotificationManager dndNm =
+                                ctx.getSystemService(android.app.NotificationManager.class);
+                        if (dndNm != null && dndNm.getCurrentInterruptionFilter()
+                                != android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY) {
+                            applyDndState(ctx, true, courseName);
+                        } else {
+                            XposedBridge.log(TAG + ": [跳过勿扰] 已处于勿扰状态 " + courseName);
+                        }
                     } else if (dndTriggerMs > nowMs) {
                         scheduleDndOnAlarm(ctx, courseName, dndTriggerMs, alarmId);
                         count++;
@@ -1318,8 +1397,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (unDndTriggerMs > nowMs) {
                         scheduleDndOffAlarm(ctx, courseName, unDndTriggerMs, alarmId);
                         count++;
-                    } else if (nowMs >= endMs) {
+                    } else if (nowMs >= endMs && !skipImmediate && !anyActiveDnd) {
                         // 下课时间已过且关闭勿扰时间也已过（如进程重启场景）→ 立即关闭勿扰
+                        // 但若有其他课程正在课中需要勿扰，则跳过
                         applyDndState(ctx, false, courseName);
                     }
                 }

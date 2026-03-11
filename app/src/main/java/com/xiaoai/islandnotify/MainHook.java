@@ -1001,7 +1001,8 @@ public class MainHook implements IXposedHookLoadPackage {
                 CourseInfo info   = new CourseInfo(courseName, startTime, endTime, classroom);
                 // 将所有关键参数纳入 hash 计算，确保教室、结束时间等发生变化时，能生成新的 alarmId 
                 // 从而让旧的 alarm（未包含在新 validIds 中）被精确清理，并重新排布新闹钟触发岛更新
-                int alarmId       = Math.abs((courseName + startTime + endTime + classroom).hashCode());
+                // 确保生成 id 后直接抛弃高 8 位给后面的或操作腾出绝对干净的空间
+                int alarmId       = Math.abs((courseName + startTime + endTime + classroom).hashCode()) & 0x00FFFFFF;
                 validAlarmIds.add(alarmId);
 
                 // 默认触发时间：课程开始前 N 分钟
@@ -1117,9 +1118,9 @@ public class MainHook implements IXposedHookLoadPackage {
             intent.putExtra("consecutive",  isConsecutive);
             PendingIntent pi = PendingIntent.getService(ctx, alarmId, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, alarmId | 0x50000000,
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, (alarmId & 0x00FFFFFF) | 0x50000000,
                     new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_IMMUTABLE);
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
             synchronized (mScheduledAlarmIds) {
@@ -1147,7 +1148,18 @@ public class MainHook implements IXposedHookLoadPackage {
             for (int id : idsToCancel) {
                 Intent dummy = createServiceIntent(ACTION_COURSE_REMINDER);
                 PendingIntent pi = PendingIntent.getService(ctx, id, dummy,
-                        PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                if (pi != null) {
+                    am.cancel(pi);
+                    pi.cancel();
+                }
+                PendingIntent showPi = PendingIntent.getBroadcast(ctx, (id & 0x00FFFFFF) | 0x50000000,
+                        new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                if (showPi != null) {
+                    am.cancel(showPi);
+                    showPi.cancel();
+                }
             }
             XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个课前提醒闹钟");
         } catch (Exception e) {
@@ -1208,7 +1220,18 @@ public class MainHook implements IXposedHookLoadPackage {
                     else                                        reqCode = aid | 0x04000000;
                     Intent dummy = createServiceIntent(action);
                     PendingIntent pi = PendingIntent.getService(ctx, reqCode, dummy,
-                            PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                    if (pi != null) {
+                        am.cancel(pi);
+                        pi.cancel();
+                    }
+                    PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
+                            new Intent(action).setPackage(TARGET_PACKAGE),
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                    if (showPi != null) {
+                        am.cancel(showPi);
+                        showPi.cancel();
+                    }
                 }
             }
             XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个静音闹钟");
@@ -1233,7 +1256,7 @@ public class MainHook implements IXposedHookLoadPackage {
             // 用一个不起眼的 show-intent：点击状态栏闹钟图标时什么都不做
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
                     new Intent(ACTION_DO_MUTE).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_IMMUTABLE);
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             AlarmManager.AlarmClockInfo clockInfo =
                     new AlarmManager.AlarmClockInfo(triggerMs, showPi);
             ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
@@ -1289,7 +1312,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
                     new Intent(ACTION_DO_UNMUTE).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_IMMUTABLE);
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             AlarmManager.AlarmClockInfo clockInfo =
                     new AlarmManager.AlarmClockInfo(triggerMs, showPi);
             ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
@@ -1314,7 +1337,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
                     new Intent(ACTION_DO_DND_ON).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_IMMUTABLE);
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
             synchronized (mScheduledMuteIds) {
@@ -1338,7 +1361,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
                     new Intent(ACTION_DO_DND_OFF).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_IMMUTABLE);
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
             synchronized (mScheduledMuteIds) {
@@ -1505,7 +1528,8 @@ public class MainHook implements IXposedHookLoadPackage {
                 long endMs   = computeClassStartMs(endTime);
                 if (startMs < 0 || endMs < 0) continue;
                 String courseName = course.getString("name");
-                int alarmId = Math.abs((courseName + startTime).hashCode());
+                // 确保生成 id 后直接抛弃高 8 位给后面的或操作腾出绝对干净的空间
+                int alarmId = Math.abs((courseName + startTime).hashCode()) & 0x00FFFFFF;
 
                 if (sMuteEnabled) {
                     long muteTriggerMs = startMs - (long) muteMinsBefore * 60_000L;

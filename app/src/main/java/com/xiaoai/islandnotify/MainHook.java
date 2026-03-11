@@ -106,8 +106,8 @@ public class MainHook implements IXposedHookLoadPackage {
             new java.util.concurrent.atomic.AtomicInteger(2001);
     /** 上一条测试通知的 ID，用于发新测试前自动取消旧通知；-1 表示尚无 */
     private static volatile int sLastTestNotifId = -1;
-    /** 已调度的课前提醒 alarmId 集合，关闭开关或重新调度时用于批量取消 */
-    private final java.util.Set<Integer> mScheduledAlarmIds = new java.util.HashSet<>();
+    /** 上次成功调度的完整课程 JSON 原始字串；用于计算 Diff 以便精准删除废弃课程 */
+    private volatile String mLastCourseDataJson = null;
 
     // ── 自动静音相关常量 ──
     private static final String KEY_MUTE_ENABLED         = "mute_enabled";
@@ -147,34 +147,7 @@ public class MainHook implements IXposedHookLoadPackage {
     private static volatile boolean sWakeupAfternoonEnabled = false;
     /** 超级岛按钮功能模式：0=仅静音, 1=仅勿扰, 2=两者 */
     private static volatile int sIslandButtonMode = 2;
-    /** 已调度的静音/取消静音 alarm reqCode 集合，用于批量取消 */
-    private final java.util.Set<Integer> mScheduledMuteIds = new java.util.HashSet<>();
 
-    /** 辅助方法：持久化已调度的 ID 集合到 SP */
-    private void saveScheduledIds(Context ctx, String key, java.util.Set<Integer> ids) {
-        try {
-            SharedPreferences sp = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            JSONArray arr = new JSONArray();
-            synchronized (ids) {
-                for (Integer id : ids) arr.put(id);
-            }
-            sp.edit().putString(key, arr.toString()).apply();
-        } catch (Throwable ignored) {}
-    }
-
-    /** 辅助方法：从 SP 加载已调度的 ID 集合 */
-    private java.util.Set<Integer> loadScheduledIds(Context ctx, String key) {
-        java.util.Set<Integer> ids = new java.util.HashSet<>();
-        try {
-            SharedPreferences sp = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String json = sp.getString(key, null);
-            if (json != null) {
-                JSONArray arr = new JSONArray(json);
-                for (int i = 0; i < arr.length(); i++) ids.add(arr.getInt(i));
-            }
-        } catch (Throwable ignored) {}
-        return ids;
-    }
     /** 有连续后续课程的通知 alarmId 集合：injectIslandParams 跳过 cancel alarm 注册，
      *  防止中间课程通知被提前清除；cancel 由 consecutive 更新路径接管后统一重建。 */
     private final java.util.Set<Integer> mConsecutiveAnchors =
@@ -732,9 +705,6 @@ public class MainHook implements IXposedHookLoadPackage {
                 sWakeupMorningEnabled   = initPrefs.getBoolean(KEY_WAKEUP_MORNING_ENABLED,    false);
                 sWakeupAfternoonEnabled = initPrefs.getBoolean(KEY_WAKEUP_AFTERNOON_ENABLED,  false);
                 sIslandButtonMode       = initPrefs.getInt    ("island_button_mode",           0);
-                // 加载持久化的闹钟 ID
-                mScheduledAlarmIds.addAll(loadScheduledIds(appCtx, "scheduled_alarm_ids"));
-                mScheduledMuteIds.addAll(loadScheduledIds(appCtx, "scheduled_mute_ids"));
                 scheduleTodayWakeupAlarms(appCtx);
                 // 启动 CourseData 监听
                 registerCourseDataListener(appCtx);
@@ -890,10 +860,25 @@ public class MainHook implements IXposedHookLoadPackage {
                 return;
             }
 
-            // ── 2. 取消所有旧闹钟，且计算新课表的所有 valid ID 用于后续精确清理 ──
-            // MODE_MULTI_PROCESS 保证从磁盘读取最新值；cancel 在 hash 检查之后，避免提前撤销正在运行的 alarm
-            cancelAllScheduledAlarms(ctx);
-            mScheduledAlarmIds.clear();
+            // ── 2. 精确清理废弃的闹钟 ──
+            // 通过对比旧版数据遗留 ID 和新版有效 ID，提取差集并精准销毁
+            java.util.Set<Integer> oldIds = getAlarmIdsFromJson(mLastCourseDataJson);
+            java.util.Set<Integer> newIds = getAlarmIdsFromJson(beanJson);
+            oldIds.removeAll(newIds);
+            for (int obsoleteId : oldIds) {
+                cancelTargetScheduledAlarm(ctx, obsoleteId);
+                // 连带状态栏一并肃清
+                android.app.NotificationManager nm = ctx.getSystemService(android.app.NotificationManager.class);
+                if (nm != null) {
+                    nm.cancel(obsoleteId);
+                }
+            }
+            if (!oldIds.isEmpty()) {
+                XposedBridge.log(TAG + ": 发现课表删改，已精准清理 " + oldIds.size() + " 个废弃课前提醒闹钟");
+            }
+            
+            // 更新本地快照缓存，给下周/下次 Diff 时使用
+            mLastCourseDataJson = beanJson;
             java.util.Set<Integer> validAlarmIds = new java.util.HashSet<>();
 
 
@@ -1088,6 +1073,51 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 根据课程表 JSON 数据，推演出如果按此课表调度，会生成哪些合法的闹钟 ID 集合。
+     * 可用于新旧课表变更时的 Diff 比对，以实现精准定向删除废弃闹钟。
+     */
+    private java.util.Set<Integer> getAlarmIdsFromJson(String beanJson) {
+        java.util.Set<Integer> validIds = new java.util.HashSet<>();
+        if (beanJson == null || beanJson.isEmpty()) return validIds;
+        try {
+            JSONObject root = new JSONObject(beanJson);
+            JSONObject data = root.getJSONObject("data");
+            JSONObject setting = data.getJSONObject("setting");
+            int currentWeek = setting.optInt("presentWeek", 0);
+            JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
+            JSONArray courses = data.getJSONArray("courses");
+
+            for (int i = 0; i < courses.length(); i++) {
+                JSONObject course = courses.getJSONObject(i);
+                boolean inWeek = false;
+                for (String w : course.getString("weeks").split(",")) {
+                    try { if (Integer.parseInt(w.trim()) == currentWeek) { inWeek = true; break; } }
+                    catch (NumberFormatException ignored) {}
+                }
+                if (!inWeek) continue;
+
+                String[] secs = course.getString("sections").split(",");
+                if (secs.length == 0) continue;
+                String startTime = getSectionTime(sectionTimes, Integer.parseInt(secs[0].trim()), true);
+                String endTime   = getSectionTime(sectionTimes, Integer.parseInt(secs[secs.length - 1].trim()), false);
+                if (startTime.isEmpty() || endTime.isEmpty()) continue;
+
+                String courseName = course.getString("name");
+                String classroom  = course.optString("position", "");
+                
+                // 与正式调度逻辑完全对齐：
+                // 1. 课前提醒 ID (合并了教室信息)
+                int crId = Math.abs((courseName + startTime + endTime + classroom).hashCode()) & 0x00FFFFFF;
+                validIds.add(crId);
+                // 2. 静音/勿扰基础 ID (仅基于名称与开始时间计算基础散列)
+                int muteBaseId = Math.abs((courseName + startTime).hashCode()) & 0x00FFFFFF;
+                validIds.add(muteBaseId);
+            }
+        } catch (Throwable ignored) {}
+        return validIds;
+    }
+
     /** 从 sectionTimes JSON 数组中查找某节课的开始或结束时间（HH:mm）。 */
     private String getSectionTime(JSONArray sectionTimes, int sectionIndex, boolean isStart) {
         try {
@@ -1123,9 +1153,8 @@ public class MainHook implements IXposedHookLoadPackage {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
-            synchronized (mScheduledAlarmIds) {
-                mScheduledAlarmIds.add(alarmId);
-                saveScheduledIds(ctx, "scheduled_alarm_ids", mScheduledAlarmIds);
+            synchronized (mConsecutiveAnchors) {
+                mConsecutiveAnchors.add(alarmId);
             }
             long minsLeft = (triggerMs - System.currentTimeMillis()) / 60_000;
             XposedBridge.log(TAG + ": 闹钟已设(AlarmClock) " + info.courseName + " @" + info.startTime
@@ -1137,37 +1166,27 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 取消 mScheduledAlarmIds 中所有已调度的课前提醒 AlarmManager 闹钟。
-     * 不影响静音闹钟（静音功能独立于自定义提醒开关）。
+     * 取消特定的课前提醒 AlarmManager 闹钟以及绑定的 UI 展示 
      */
-    private void cancelAllScheduledAlarms(Context ctx) {
-        java.util.Set<Integer> idsToCancel = loadScheduledIds(ctx, "scheduled_alarm_ids");
-        if (idsToCancel.isEmpty()) return;
+    private void cancelTargetScheduledAlarm(Context ctx, int id) {
         try {
             AlarmManager am = ctx.getSystemService(AlarmManager.class);
-            for (int id : idsToCancel) {
-                Intent dummy = createServiceIntent(ACTION_COURSE_REMINDER);
-                PendingIntent pi = PendingIntent.getService(ctx, id, dummy,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                if (pi != null) {
-                    am.cancel(pi);
-                    pi.cancel();
-                }
-                PendingIntent showPi = PendingIntent.getBroadcast(ctx, id | 0x50000000,
-                        new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                if (showPi != null) {
-                    am.cancel(showPi);
-                    showPi.cancel();
-                }
+            Intent dummy = createServiceIntent(ACTION_COURSE_REMINDER);
+            PendingIntent pi = PendingIntent.getService(ctx, id, dummy,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            if (pi != null) {
+                am.cancel(pi);
+                pi.cancel();
             }
-            XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个课前提醒闹钟");
+            PendingIntent showPi = PendingIntent.getBroadcast(ctx, id | 0x50000000,
+                    new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            if (showPi != null) {
+                am.cancel(showPi);
+                showPi.cancel();
+            }
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": cancelAllScheduledAlarms 失败 → " + e.getMessage());
-        }
-        synchronized (mScheduledAlarmIds) {
-            mScheduledAlarmIds.clear();
-            saveScheduledIds(ctx, "scheduled_alarm_ids", mScheduledAlarmIds);
+            XposedBridge.log(TAG + ": cancelTargetScheduledAlarm 失败 → " + e.getMessage());
         }
     }
 
@@ -1204,43 +1223,34 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 取消所有静音 / 取消静音闹钟。 */
-    private void cancelAllMuteAlarms(Context ctx) {
-        java.util.Set<Integer> idsToCancel = loadScheduledIds(ctx, "scheduled_mute_ids");
-        if (idsToCancel.isEmpty()) return;
+    /** 取消指定 HashId 对应的所有静音 / 勿扰阶段闹钟。 */
+    private void cancelTargetMuteAlarm(Context ctx, int id) {
         try {
             AlarmManager am = ctx.getSystemService(AlarmManager.class);
-            for (int id : idsToCancel) {
-                for (String action : new String[]{ACTION_DO_MUTE, ACTION_DO_UNMUTE, ACTION_DO_DND_ON, ACTION_DO_DND_OFF}) {
-                    int aid = id & 0x00FFFFFF;
-                    int reqCode;
-                    if      (action.equals(ACTION_DO_MUTE))    reqCode = aid | 0x01000000;
-                    else if (action.equals(ACTION_DO_UNMUTE))  reqCode = aid | 0x02000000;
-                    else if (action.equals(ACTION_DO_DND_ON))  reqCode = aid | 0x03000000;
-                    else                                        reqCode = aid | 0x04000000;
-                    Intent dummy = createServiceIntent(action);
-                    PendingIntent pi = PendingIntent.getService(ctx, reqCode, dummy,
-                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                    if (pi != null) {
-                        am.cancel(pi);
-                        pi.cancel();
-                    }
-                    PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
-                            new Intent(action).setPackage(TARGET_PACKAGE),
-                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                    if (showPi != null) {
-                        am.cancel(showPi);
-                        showPi.cancel();
-                    }
+            for (String action : new String[]{ACTION_DO_MUTE, ACTION_DO_UNMUTE, ACTION_DO_DND_ON, ACTION_DO_DND_OFF}) {
+                int aid = id & 0x00FFFFFF;
+                int reqCode;
+                if      (action.equals(ACTION_DO_MUTE))    reqCode = aid | 0x01000000;
+                else if (action.equals(ACTION_DO_UNMUTE))  reqCode = aid | 0x02000000;
+                else if (action.equals(ACTION_DO_DND_ON))  reqCode = aid | 0x03000000;
+                else                                        reqCode = aid | 0x04000000;
+                Intent dummy = createServiceIntent(action);
+                PendingIntent pi = PendingIntent.getService(ctx, reqCode, dummy,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                if (pi != null) {
+                    am.cancel(pi);
+                    pi.cancel();
+                }
+                PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
+                        new Intent(action).setPackage(TARGET_PACKAGE),
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                if (showPi != null) {
+                    am.cancel(showPi);
+                    showPi.cancel();
                 }
             }
-            XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个静音闹钟");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": cancelAllMuteAlarms 失败 → " + e.getMessage());
-        }
-        synchronized (mScheduledMuteIds) {
-            mScheduledMuteIds.clear();
-            saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
+            XposedBridge.log(TAG + ": cancelTargetMuteAlarm 失败 → " + e.getMessage());
         }
     }
 
@@ -1260,10 +1270,7 @@ public class MainHook implements IXposedHookLoadPackage {
             AlarmManager.AlarmClockInfo clockInfo =
                     new AlarmManager.AlarmClockInfo(triggerMs, showPi);
             ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
-            synchronized (mScheduledMuteIds) {
-                mScheduledMuteIds.add(alarmId);
-                saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
-            }
+            // mScheduledMuteIds SP logic removed
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
             XposedBridge.log(TAG + ": 静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
@@ -1316,10 +1323,7 @@ public class MainHook implements IXposedHookLoadPackage {
             AlarmManager.AlarmClockInfo clockInfo =
                     new AlarmManager.AlarmClockInfo(triggerMs, showPi);
             ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
-            synchronized (mScheduledMuteIds) {
-                mScheduledMuteIds.add(alarmId);
-                saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
-            }
+            // mScheduledMuteIds SP logic removed
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
             XposedBridge.log(TAG + ": 取消静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
@@ -1340,10 +1344,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
-            synchronized (mScheduledMuteIds) {
-                mScheduledMuteIds.add(alarmId);
-                saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
-            }
+            // mScheduledMuteIds SP logic removed
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
             XposedBridge.log(TAG + ": 开启勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
@@ -1364,10 +1365,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             ctx.getSystemService(AlarmManager.class)
                .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
-            synchronized (mScheduledMuteIds) {
-                mScheduledMuteIds.add(alarmId);
-                saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
-            }
+            // mScheduledMuteIds SP logic removed
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
             XposedBridge.log(TAG + ": 关闭勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
@@ -1435,7 +1433,6 @@ public class MainHook implements IXposedHookLoadPackage {
      *                      仅重新调度未来闹钟。
      */
     private void scheduleTodayMuteAlarms(Context ctx, boolean skipImmediate) {
-        cancelAllMuteAlarms(ctx);           // 先无条件取消旧闹钟，防止关闭静音后残留
         if (!sMuteEnabled && !sUnmuteEnabled && !sDndEnabled && !sUnDndEnabled) return;
         try {
             // ── 节假日 / 调休检查 ──
@@ -1454,7 +1451,17 @@ public class MainHook implements IXposedHookLoadPackage {
             SharedPreferences coursePrefs = ctx.getSharedPreferences(
                     PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
             String beanJson = coursePrefs.getString("weekCourseBean", null);
-            if (beanJson == null || beanJson.isEmpty()) return;
+            // ── 计算废弃闹钟并定向摧毁 ──
+            java.util.Set<Integer> oldIds = getAlarmIdsFromJson(mLastCourseDataJson);
+            java.util.Set<Integer> newIds = getAlarmIdsFromJson(beanJson);
+            oldIds.removeAll(newIds);
+            for (int obsoleteId : oldIds) {
+                cancelTargetMuteAlarm(ctx, obsoleteId);
+            }
+            if (!oldIds.isEmpty()) {
+                XposedBridge.log(TAG + ": 发现课表删改，已精准清理 " + oldIds.size() + " 个废弃静音控制闹钟");
+            }
+            mLastCourseDataJson = beanJson;
 
             java.util.Calendar cal = java.util.Calendar.getInstance();
             int calDay      = cal.get(java.util.Calendar.DAY_OF_WEEK);

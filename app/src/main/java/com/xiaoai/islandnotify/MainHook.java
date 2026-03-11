@@ -709,8 +709,8 @@ public class MainHook implements IXposedHookLoadPackage {
                 scheduleTodayWakeupAlarms(appCtx);
                 // 启动 CourseData 监听
                 registerCourseDataListener(appCtx);
-                // 启动时仅使用本地缓存数据重调度；网络拉取仅保留每日 00:01
-                safeReschedule(appCtx, "island_startup", false);
+                // 启动时执行主动更新与重调度，确保进程重启后数据也是最新的
+                safeReschedule(appCtx, "island_startup", true);
                 // 初始化课表内容哈希，确保 FileObserver 首次触发时能正确跳过未实质变动的写入。
                 try {
                     @SuppressWarnings("deprecation")
@@ -815,29 +815,6 @@ public class MainHook implements IXposedHookLoadPackage {
         if (proactive) {
             TimeTableHelperInvoker.init(context, context.getClassLoader());
             TimeTableHelperInvoker.triggerUpdate(context, from, false);
-        }
-
-        // 启动优化：若课表数据未变（hash 匹配），跳过立即重调度，闹钟仍在系统中存活。
-        // 仅保留 5s 延迟调度以捕获 proactive 网络拉取后的数据变更。
-        if ("island_startup".equals(from) && mLastCourseDataHash != 0) {
-            try {
-                @SuppressWarnings("deprecation")
-                SharedPreferences cp = context.getSharedPreferences(
-                        PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
-                String currentJson = cp.getString("weekCourseBean", null);
-                if (currentJson != null && stableCourseHash(currentJson) == mLastCourseDataHash) {
-                    XposedBridge.log(TAG + ": 启动优化 - 课表数据未变，跳过立即重调度");
-                    // 仍然需要延迟调度，以便 proactive 更新落盘后再检查一次
-                    getRescheduleHandler().postDelayed(() -> {
-                        mLastCourseDataHash = 0; // 强制延迟轮次执行
-                        scheduleTodayCourseReminders(context, null, true);
-                        scheduleTodayMuteAlarms(context, true);
-                        scheduleTodayWakeupAlarms(context);
-                        updateLastCourseDataJson(context);
-                    }, 5000);
-                    return;
-                }
-            } catch (Throwable ignored) {}
         }
         mLastCourseDataHash = 0;
         

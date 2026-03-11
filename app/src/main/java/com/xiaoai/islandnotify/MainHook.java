@@ -1443,9 +1443,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
             String todayDateStr = dateFmt.format(new java.util.Date());
             if (HolidayManager.isHoliday(ctx, todayDateStr)) {
-                XposedBridge.log(TAG + ": 静音/勿扰：今日 " + todayDateStr + " 为节假日，立即还原并跳过调度");
-                if (sMuteEnabled || sUnmuteEnabled) applyMuteState(ctx, false, "节假日");
-                if (sDndEnabled  || sUnDndEnabled)  applyDndState(ctx, false, "节假日");
+                XposedBridge.log(TAG + ": 静音/勿扰：今日 " + todayDateStr + " 为节假日，跳过调度");
                 return;
             }
             HolidayManager.HolidayEntry workSwap = HolidayManager.getWorkSwap(ctx, todayDateStr);
@@ -1478,37 +1476,6 @@ public class MainHook implements IXposedHookLoadPackage {
             long nowMs = System.currentTimeMillis();
             int count  = 0;
 
-            // ── 预扫描：检测当前是否有任何课程正处于静音/勿扰窗口内 ──
-            // 若有任何课程正在课中，则不应因已结束的课程而取消静音/勿扰
-            boolean anyActiveMute = false;   // 是否有课程正处于静音窗口（muteTrigger <= now < endMs）
-            boolean anyActiveDnd  = false;   // 是否有课程正处于勿扰窗口（dndTrigger  <= now < endMs）
-            for (int p = 0; p < courses.length(); p++) {
-                JSONObject pc = courses.getJSONObject(p);
-                if (pc.getInt("day") != todayDay) continue;
-                boolean pInWeek = false;
-                for (String w : pc.getString("weeks").split(",")) {
-                    try { if (Integer.parseInt(w.trim()) == currentWeek) { pInWeek = true; break; } }
-                    catch (NumberFormatException ignored) {}
-                }
-                if (!pInWeek) continue;
-                String[] pSecs = pc.getString("sections").split(",");
-                if (pSecs.length == 0) continue;
-                String pStart = getSectionTime(sectionTimes, Integer.parseInt(pSecs[0].trim()), true);
-                String pEnd   = getSectionTime(sectionTimes, Integer.parseInt(pSecs[pSecs.length-1].trim()), false);
-                if (pStart.isEmpty() || pEnd.isEmpty()) continue;
-                long pStartMs = computeClassStartMs(pStart);
-                long pEndMs   = computeClassStartMs(pEnd);
-                if (pStartMs < 0 || pEndMs < 0) continue;
-                if (sMuteEnabled && !anyActiveMute) {
-                    long mt = pStartMs - (long) muteMinsBefore * 60_000L;
-                    if (mt <= nowMs && nowMs < pEndMs) anyActiveMute = true;
-                }
-                if (sDndEnabled && !anyActiveDnd) {
-                    long dt = pStartMs - (long) dndMinsBefore * 60_000L;
-                    if (dt <= nowMs && nowMs < pEndMs) anyActiveDnd = true;
-                }
-                if (anyActiveMute && anyActiveDnd) break; // 已确认，提前退出
-            }
 
             for (int i = 0; i < courses.length(); i++) {
                 JSONObject course = courses.getJSONObject(i);
@@ -1551,10 +1518,6 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (unmuteTriggerMs > nowMs) {
                         scheduleUnmuteAlarm(ctx, courseName, unmuteTriggerMs, alarmId);
                         count++;
-                    } else if (nowMs >= endMs && !skipImmediate && !anyActiveMute) {
-                        // 下课时间已过且解除静音时间也已过（如进程重启场景）→ 立即恢复铃声
-                        // 但若有其他课程正在课中需要静音，则跳过
-                        applyMuteState(ctx, false, courseName);
                     }
                 }
                 if (sDndEnabled) {
@@ -1579,10 +1542,6 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (unDndTriggerMs > nowMs) {
                         scheduleDndOffAlarm(ctx, courseName, unDndTriggerMs, alarmId);
                         count++;
-                    } else if (nowMs >= endMs && !skipImmediate && !anyActiveDnd) {
-                        // 下课时间已过且关闭勿扰时间也已过（如进程重启场景）→ 立即关闭勿扰
-                        // 但若有其他课程正在课中需要勿扰，则跳过
-                        applyDndState(ctx, false, courseName);
                     }
                 }
             }

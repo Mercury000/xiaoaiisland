@@ -718,6 +718,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     String initBj = initCp.getString("weekCourseBean", null);
                     if (initBj != null && !initBj.isEmpty()) {
                         mLastCourseDataHash = stableCourseHash(initBj);
+                        mLastCourseDataJson = initBj; // 冷启动基线：确保首次 Diff 有据可查
                     }
                 } catch (Throwable ignored) {}
                 // 跨日自动重调：每天 00:01 重新调度当日闹钟，链式保证次日不丢失
@@ -789,6 +790,19 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
+    /** 统一刷新 Diff 基线：读取当前磁盘上的课表 JSON 并缓存为下次比对的旧快照。 */
+    private void updateLastCourseDataJson(Context ctx) {
+        try {
+            @SuppressWarnings("deprecation")
+            SharedPreferences cp = ctx.getSharedPreferences(
+                    PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
+            String json = cp.getString("weekCourseBean", null);
+            if (json != null && !json.isEmpty()) {
+                mLastCourseDataJson = json;
+            }
+        } catch (Throwable ignored) {}
+    }
+
     /**
      * 统一重调度逻辑：
      * 1. 触发 proactive 主动更新（可选）。
@@ -807,6 +821,8 @@ public class MainHook implements IXposedHookLoadPackage {
         scheduleTodayCourseReminders(context, null, false);
         scheduleTodayMuteAlarms(context, false);
         scheduleTodayWakeupAlarms(context);
+        // 两个调度器均已消费完旧快照，现在统一刷新基线
+        updateLastCourseDataJson(context);
 
         // 5秒后再次执行（等待主动更新写盘成功）
         // skipRepost=true：仅重新调度未来闹钟，跳过补发通知和即时静音/勿扰，
@@ -815,6 +831,8 @@ public class MainHook implements IXposedHookLoadPackage {
             scheduleTodayCourseReminders(context, null, true);
             scheduleTodayMuteAlarms(context, true);
             scheduleTodayWakeupAlarms(context);
+            // 两个调度器均已消费完旧快照，现在统一刷新基线
+            updateLastCourseDataJson(context);
             // 若是跨日重调，链式调度下一个午夜
             if ("island_reschedule_daily".equals(from)) {
                 scheduleMidnightReschedule(context);
@@ -876,9 +894,6 @@ public class MainHook implements IXposedHookLoadPackage {
             if (!oldIds.isEmpty()) {
                 XposedBridge.log(TAG + ": 发现课表删改，已精准清理 " + oldIds.size() + " 个废弃课前提醒闹钟");
             }
-            
-            // 更新本地快照缓存，给下周/下次 Diff 时使用
-            mLastCourseDataJson = beanJson;
             java.util.Set<Integer> validAlarmIds = new java.util.HashSet<>();
 
 
@@ -1223,6 +1238,31 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 当所有静音/勿扰开关均关闭时调用：从当前课表 JSON 推算出全部 mute alarm ID 并逐一销毁。
+     * 不依赖 SP 存储，纯函数式计算。
+     */
+    private void cancelAllCurrentMuteAlarms(Context ctx) {
+        try {
+            // 优先使用内存快照；若无（冷启动），则从磁盘读取
+            String json = mLastCourseDataJson;
+            if (json == null || json.isEmpty()) {
+                @SuppressWarnings("deprecation")
+                SharedPreferences cp = ctx.getSharedPreferences(
+                        PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
+                json = cp.getString("weekCourseBean", null);
+            }
+            java.util.Set<Integer> allIds = getAlarmIdsFromJson(json);
+            if (allIds.isEmpty()) return;
+            for (int id : allIds) {
+                cancelTargetMuteAlarm(ctx, id);
+            }
+            XposedBridge.log(TAG + ": 所有静音/勿扰开关已关闭，已清理 " + allIds.size() + " 组残留闹钟");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cancelAllCurrentMuteAlarms 失败 → " + t.getMessage());
+        }
+    }
+
     /** 取消指定 HashId 对应的所有静音 / 勿扰阶段闹钟。 */
     private void cancelTargetMuteAlarm(Context ctx, int id) {
         try {
@@ -1433,7 +1473,11 @@ public class MainHook implements IXposedHookLoadPackage {
      *                      仅重新调度未来闹钟。
      */
     private void scheduleTodayMuteAlarms(Context ctx, boolean skipImmediate) {
-        if (!sMuteEnabled && !sUnmuteEnabled && !sDndEnabled && !sUnDndEnabled) return;
+        if (!sMuteEnabled && !sUnmuteEnabled && !sDndEnabled && !sUnDndEnabled) {
+            // 所有开关已关闭 → 清扫全部残留的静音/勿扰闹钟
+            cancelAllCurrentMuteAlarms(ctx);
+            return;
+        }
         try {
             // ── 节假日 / 调休检查 ──
             java.text.SimpleDateFormat dateFmt =
@@ -1461,7 +1505,6 @@ public class MainHook implements IXposedHookLoadPackage {
             if (!oldIds.isEmpty()) {
                 XposedBridge.log(TAG + ": 发现课表删改，已精准清理 " + oldIds.size() + " 个废弃静音控制闹钟");
             }
-            mLastCourseDataJson = beanJson;
 
             java.util.Calendar cal = java.util.Calendar.getInstance();
             int calDay      = cal.get(java.util.Calendar.DAY_OF_WEEK);

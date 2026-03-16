@@ -2229,11 +2229,11 @@ public class MainHook implements IXposedHookLoadPackage {
 
                 ShareData shareData = new ShareData();
                 shareData.setPic(PIC_KEY_SHARE);
-                shareData.setTitle(info.courseName);
-                shareData.setContent(info.classroom.isEmpty() ? "" : info.classroom);
-                shareData.setShareContent(info.courseName
-                        + (info.classroom.isEmpty() ? "" : " " + info.classroom)
-                        + (timeRange.isEmpty() ? "" : " " + timeRange));
+                shareData.setTitle(info.courseName + "\n");
+                shareData.setContent((info.classroom.isEmpty() ? "" : info.classroom) + "\n");
+                shareData.setShareContent(info.courseName + "\n"
+                        + (info.classroom.isEmpty() ? "" : info.classroom + "\n")
+                        + (timeRange.isEmpty() ? "" : timeRange));
 
                 IslandTemplate islandTemplate = new IslandTemplate();
                 islandTemplate.setIslandProperty(1);

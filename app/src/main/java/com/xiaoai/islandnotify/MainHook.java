@@ -1791,10 +1791,7 @@ public class MainHook extends XposedModule {
             Method isModuleActive = Class.forName(
                     "com.xiaoai.islandnotify.MainActivity", false, param.getClassLoader())
                     .getDeclaredMethod("isModuleActive");
-            hook(isModuleActive).intercept(chain -> {
-                chain.proceed();
-                return Boolean.TRUE;
-            });
+            hook(isModuleActive).intercept(chain -> Boolean.TRUE);
         } catch (Throwable t) {
             log(TAG + ": hookSelfStatus 失败: " + t.getMessage());
         }

@@ -91,6 +91,11 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String ACTION_QUERY_PREFS = "com.xiaoai.islandnotify.ACTION_QUERY_PREFS";
     /** 宿主回传偏好设置的广播 Action */
     private static final String ACTION_REPLY_PREFS = "com.xiaoai.islandnotify.ACTION_REPLY_PREFS";
+    /** 模块探测宿主在线状态 */
+    private static final String ACTION_HOST_PING = "com.xiaoai.islandnotify.ACTION_HOST_PING";
+    /** 宿主回传在线状态 */
+    private static final String ACTION_HOST_PONG = "com.xiaoai.islandnotify.ACTION_HOST_PONG";
+    private static final String EXTRA_HOST_PKG = "host_pkg";
     /** AlarmManager 闹钟触发岛状态更新的广播 Action */
     private static final String ACTION_ISLAND_UPDATE = "com.xiaoai.islandnotify.ACTION_ISLAND_UPDATE";
     /** 触发目标应用发送测试通知的广播 Action */
@@ -256,6 +261,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 filter.addAction(ACTION_RESCHEDULE_DAILY);
                 filter.addAction(ACTION_NOTIF_CANCEL);
                 filter.addAction(ACTION_QUERY_PREFS);
+                filter.addAction(ACTION_HOST_PING);
                 BroadcastReceiver receiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
@@ -410,6 +416,8 @@ public class MainHook implements IXposedHookLoadPackage {
                             XposedBridge.log(TAG + ": 偏好设置已同步到目标进程");
                         } else if (ACTION_QUERY_PREFS.equals(intent.getAction())) {
                             replyWithCurrentPrefs(context);
+                        } else if (ACTION_HOST_PING.equals(intent.getAction())) {
+                            replyWithHostPong(context, TARGET_PACKAGE);
                         } else if (ACTION_ISLAND_UPDATE.equals(intent.getAction())) {
                             String courseName = safeStr(intent.getStringExtra("course_name"));
                             String startTime  = safeStr(intent.getStringExtra("start_time"));
@@ -1431,6 +1439,17 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": 已回传全量偏好设置到模块 App");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": replyWithCurrentPrefs 失败 -> " + t.getMessage());
+        }
+    }
+
+    private void replyWithHostPong(Context ctx, String hostPkg) {
+        try {
+            Intent pong = new Intent(ACTION_HOST_PONG);
+            pong.setPackage(MODULE_PKG);
+            pong.putExtra(EXTRA_HOST_PKG, hostPkg);
+            ctx.sendBroadcast(pong);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": replyWithHostPong 失败 -> " + t.getMessage());
         }
     }
 

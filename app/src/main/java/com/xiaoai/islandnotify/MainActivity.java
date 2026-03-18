@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -165,8 +166,10 @@ public class MainActivity extends AppCompatActivity {
      * 根据模块是否激活，设置状态卡片的颜色、图标和文字。
      */
     private void updateModuleStatus() {
-        boolean active = getSharedPreferences("island_app_state", Context.MODE_PRIVATE)
-                .getBoolean("host_reply_seen", false);
+        SharedPreferences appState = getSharedPreferences("island_app_state", Context.MODE_PRIVATE);
+        boolean voiceAlive = appState.getBoolean("host_alive_voiceassist", false);
+        boolean deskAlive = appState.getBoolean("host_alive_deskclock", false);
+        boolean active = voiceAlive || deskAlive;
 
         MaterialCardView card = findViewById(R.id.card_status);
         ImageView icon = findViewById(R.id.iv_status);
@@ -181,7 +184,8 @@ public class MainActivity extends AppCompatActivity {
             ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(onColor));
             title.setText("模块已激活");
             title.setTextColor(onColor);
-            desc.setText("Hook 正常运行，将按设定配置发送超级岛通知");
+            desc.setText("超级小爱: " + (voiceAlive ? "已注入" : "未注入")
+                    + "  |  时钟: " + (deskAlive ? "已注入" : "未注入"));
             desc.setTextColor(onColor);
         } else {
             int bg      = MaterialColors.getColor(this, com.google.android.material.R.attr.colorErrorContainer,   Color.LTGRAY);
@@ -201,20 +205,39 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String ACTION_QUERY_PREFS = "com.xiaoai.islandnotify.ACTION_QUERY_PREFS";
     private static final String ACTION_REPLY_PREFS = "com.xiaoai.islandnotify.ACTION_REPLY_PREFS";
+    private static final String ACTION_HOST_PING = "com.xiaoai.islandnotify.ACTION_HOST_PING";
+    private static final String ACTION_HOST_PONG = "com.xiaoai.islandnotify.ACTION_HOST_PONG";
+    private static final String EXTRA_HOST_PKG = "host_pkg";
+    private static final String HOST_VOICEASSIST = "com.miui.voiceassist";
+    private static final String HOST_DESKCLOCK = "com.android.deskclock";
 
     private void initSyncWithHost() {
         SharedPreferences appState = getSharedPreferences("island_app_state", Context.MODE_PRIVATE);
-        appState.edit().putBoolean("host_reply_seen", false).apply();
+        appState.edit()
+                .putBoolean("host_alive_voiceassist", false)
+                .putBoolean("host_alive_deskclock", false)
+                .apply();
         updateModuleStatus();
         final boolean shouldImportConfig = !appState.getBoolean("config_synced_from_host", false);
 
         IntentFilter filter = new IntentFilter(ACTION_REPLY_PREFS);
+        filter.addAction(ACTION_HOST_PONG);
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
+                if (ACTION_HOST_PONG.equals(intent.getAction())) {
+                    String hostPkg = intent.getStringExtra(EXTRA_HOST_PKG);
+                    SharedPreferences.Editor st = getSharedPreferences("island_app_state",
+                            Context.MODE_PRIVATE).edit();
+                    if (HOST_VOICEASSIST.equals(hostPkg)) st.putBoolean("host_alive_voiceassist", true);
+                    if (HOST_DESKCLOCK.equals(hostPkg)) st.putBoolean("host_alive_deskclock", true);
+                    st.apply();
+                    runOnUiThread(MainActivity.this::updateModuleStatus);
+                    return;
+                }
                 if (ACTION_REPLY_PREFS.equals(intent.getAction())) {
                     SharedPreferences appState = getSharedPreferences("island_app_state", Context.MODE_PRIVATE);
-                    appState.edit().putBoolean("host_reply_seen", true).apply();
+                    appState.edit().putBoolean("host_alive_voiceassist", true).apply();
                     runOnUiThread(MainActivity.this::updateModuleStatus);
 
                     if (!shouldImportConfig) {
@@ -260,13 +283,49 @@ public class MainActivity extends AppCompatActivity {
             registerReceiver(receiver, filter);
         }
 
-        // 延迟 1 秒发起查询，确保 UI 已就绪
+        Intent pingVoice = new Intent(ACTION_HOST_PING);
+        pingVoice.setPackage(HOST_VOICEASSIST);
+        sendBroadcast(pingVoice);
+        pingDeskClockHost();
+
+        Intent query = new Intent(ACTION_QUERY_PREFS);
+        query.setPackage(HOST_VOICEASSIST);
+        sendBroadcast(query);
+        Log.d("IslandNotify", "已向宿主发起激活探测与配置查询");
+    }
+
+    /**
+     * 通过轻量 ContentProvider 查询唤醒 deskclock 进程，提升双宿主探测成功率。
+     * 仅做探活预热，不读取任何真实数据。
+     */
+    private void pingDeskClockHost() {
+        tickleDeskClockLikeHost();
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            Intent query = new Intent(ACTION_QUERY_PREFS);
-            query.setPackage("com.miui.voiceassist");
-            sendBroadcast(query);
-            Log.d("IslandNotify", "已向宿主发起配置查询");
-        }, 1000);
+            Intent pingDesk = new Intent(ACTION_HOST_PING);
+            pingDesk.setPackage(HOST_DESKCLOCK);
+            sendBroadcast(pingDesk);
+            Log.d("IslandNotify", "已向 deskclock 发起延迟探测");
+        }, 500);
+    }
+
+    /**
+     * 与 MainHook 中旧逻辑一致：先通过 CP 查询试探拉起 deskclock 进程。
+     */
+    private void tickleDeskClockLikeHost() {
+        android.database.Cursor cursor = null;
+        try {
+            Uri uri = Uri.parse("content://com.android.deskclock/alarm");
+            cursor = getContentResolver().query(uri,
+                    new String[]{"_id"},
+                    null,
+                    null,
+                    "_id LIMIT 1");
+            Log.d("IslandNotify", "[Tickle] deskclock 进程已试探触发");
+        } catch (Throwable t) {
+            Log.d("IslandNotify", "[Tickle] deskclock 试探失败（可忽略）: " + t.getMessage());
+        } finally {
+            if (cursor != null) cursor.close();
+        }
     }
 
     private void initCustomCard() {

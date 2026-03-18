@@ -32,6 +32,10 @@ public class DeskClockHook implements IXposedHookLoadPackage {
 
     private static final String TAG           = "IslandNotifyDesk";
     private static final String DESKCLOCK_PKG = "com.android.deskclock";
+    private static final String MODULE_PKG    = "com.xiaoai.islandnotify";
+    private static final String ACTION_HOST_PING = "com.xiaoai.islandnotify.ACTION_HOST_PING";
+    private static final String ACTION_HOST_PONG = "com.xiaoai.islandnotify.ACTION_HOST_PONG";
+    private static final String EXTRA_HOST_PKG = "host_pkg";
 
     /** 由 MainHook 发出、DeskClockHook 接收的叫醒闹钟调度广播 */
     static final String ACTION_SCHEDULE_CLOCK_ALARMS =
@@ -68,10 +72,16 @@ public class DeskClockHook implements IXposedHookLoadPackage {
 
     private void registerScheduleReceiver(Context ctx, ClassLoader cl) {
         IntentFilter filter = new IntentFilter(ACTION_SCHEDULE_CLOCK_ALARMS);
+        filter.addAction(ACTION_HOST_PING);
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (!ACTION_SCHEDULE_CLOCK_ALARMS.equals(intent.getAction())) return;
+                String action = intent.getAction();
+                if (ACTION_HOST_PING.equals(action)) {
+                    replyWithHostPong(context);
+                    return;
+                }
+                if (!ACTION_SCHEDULE_CLOCK_ALARMS.equals(action)) return;
                 handleSchedule(context, intent, cl);
             }
         };
@@ -79,6 +89,17 @@ public class DeskClockHook implements IXposedHookLoadPackage {
             ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
         } else {
             ctx.registerReceiver(receiver, filter);
+        }
+    }
+
+    private void replyWithHostPong(Context ctx) {
+        try {
+            Intent pong = new Intent(ACTION_HOST_PONG);
+            pong.setPackage(MODULE_PKG);
+            pong.putExtra(EXTRA_HOST_PKG, DESKCLOCK_PKG);
+            ctx.sendBroadcast(pong);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": replyWithHostPong 失败 -> " + t.getMessage());
         }
     }
 

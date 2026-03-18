@@ -2,13 +2,12 @@ package com.xiaoai.islandnotify;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Enumeration;
 import java.util.Map;
-
-import de.robv.android.xposed.XposedBridge;
 
 /**
  * 动态定位并调用小爱同学（com.xiaomi.voiceassistant）内部的 SettingsUtil 工具类。
@@ -62,15 +61,15 @@ public final class MiuiSettingsInvoker {
             String cachedName = sp.getString(cacheKey, null);
 
             if (cachedName != null) {
-                XposedBridge.log(TAG + ": [SettingsInvoker] 命中缓存 → " + cachedName);
+                Log.d(TAG, "[SettingsInvoker] 命中缓存 → " + cachedName);
                 tryLoadClass(cl, cachedName, ctx, cacheKey, sp, false);
             }
             if (sChangeMethod == null) {
-                XposedBridge.log(TAG + ": [SettingsInvoker] 开始全量扫描...");
+                Log.d(TAG, "[SettingsInvoker] 开始全量扫描...");
                 scanAndCache(ctx, cl, cacheKey, sp);
             }
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [SettingsInvoker] init 失败 → " + t.getMessage());
+            Log.d(TAG, "[SettingsInvoker] init 失败 → " + t.getMessage());
         }
     }
 
@@ -83,16 +82,16 @@ public final class MiuiSettingsInvoker {
     public static boolean invokeSwitch(Context ctx, String type, int value) {
         Method m = sChangeMethod;
         if (m == null) {
-            XposedBridge.log(TAG + ": [SettingsInvoker] invokeSwitch 未就绪 type=" + type);
+            Log.d(TAG, "[SettingsInvoker] invokeSwitch 未就绪 type=" + type);
             return false;
         }
         try {
             Object result = m.invoke(sChangeTarget, ctx, type, value);
-            XposedBridge.log(TAG + ": [SettingsInvoker] invokeSwitch(" + type + ", " + value
+            Log.d(TAG, "[SettingsInvoker] invokeSwitch(" + type + ", " + value
                     + ") → " + result);
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [SettingsInvoker] invokeSwitch 失败 → " + t.getMessage());
+            Log.d(TAG, "[SettingsInvoker] invokeSwitch 失败 → " + t.getMessage());
             return false;
         }
     }
@@ -123,13 +122,13 @@ public final class MiuiSettingsInvoker {
             for (String name : enumerateClassNames(cl)) {
                 if (!name.startsWith(UTILS_PKG)) continue;
                 if (tryLoadClass(cl, name, ctx, cacheKey, sp, true)) {
-                    XposedBridge.log(TAG + ": [SettingsInvoker] 扫描命中 → " + name);
+                    Log.d(TAG, "[SettingsInvoker] 扫描命中 → " + name);
                     return;
                 }
             }
-            XposedBridge.log(TAG + ": [SettingsInvoker] 扫描结束，未找到 SettingsUtil");
+            Log.d(TAG, "[SettingsInvoker] 扫描结束，未找到 SettingsUtil");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [SettingsInvoker] scanAndCache 失败 → " + t.getMessage());
+            Log.d(TAG, "[SettingsInvoker] scanAndCache 失败 → " + t.getMessage());
         }
     }
 
@@ -163,7 +162,7 @@ public final class MiuiSettingsInvoker {
 
             sChangeMethod = changeMethod;
             sChangeTarget = target;
-            XposedBridge.log(TAG + ": [SettingsInvoker] change 方法已绑定 → "
+            Log.d(TAG, "[SettingsInvoker] change 方法已绑定 → "
                     + cls.getName() + "#" + changeMethod.getName());
 
             if (saveCache) {
@@ -235,7 +234,7 @@ public final class MiuiSettingsInvoker {
                 }
             }
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [SettingsInvoker] enumerateClassNames 失败 → " + t.getMessage());
+            Log.d(TAG, "[SettingsInvoker] enumerateClassNames 失败 → " + t.getMessage());
         }
         return result;
     }

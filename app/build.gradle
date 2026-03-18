@@ -196,6 +196,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
+
+    packaging {
+        resources {
+            merges += "META-INF/xposed/*"
+        }
+    }
 }
 
 // 输出目录重定向（afterEvaluate 里只改目录，不改文件名）
@@ -209,8 +215,9 @@ afterEvaluate {
 }
 
 dependencies {
-    // XposedBridge API，仅编译时依赖，运行时由 LSPosed 框架注入
-    compileOnly fileTree(dir: 'libs', include: ['*.jar'])
+    // libxposed API 101+，仅编译时依赖，运行时由 LSPosed 框架注入
+    compileOnly 'io.github.libxposed:api:101.0.0'
+    implementation 'io.github.libxposed:service:101.0.0'
     implementation 'com.xzakota.hyper.notification:focus-api:1.4'
 
     // UI：Material Design 3 + AppCompat

@@ -13,12 +13,12 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import androidx.annotation.NonNull;
 
-import static de.robv.android.xposed.XposedHelpers.findAndHookMethod;
+import io.github.libxposed.api.XposedInterface;
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
 
 /**
  * Hook 原生时钟应用（com.android.deskclock），
@@ -28,7 +28,7 @@ import static de.robv.android.xposed.XposedHelpers.findAndHookMethod;
  * {@link #ACTION_SCHEDULE_CLOCK_ALARMS} 给 deskclock 进程，
  * 本类在 deskclock 进程内接收后通过反射操作 AlarmHelper / Alarm 类。
  */
-public class DeskClockHook implements IXposedHookLoadPackage {
+public class DeskClockHook extends XposedModule {
 
     private static final String TAG           = "IslandNotifyDesk";
     private static final String DESKCLOCK_PKG = "com.android.deskclock";
@@ -42,24 +42,32 @@ public class DeskClockHook implements IXposedHookLoadPackage {
     /** 存储创建的闹钟 ID 列表的 SP 键 */
     private static final String KEY_ALARM_IDS = "created_alarm_ids";
 
+    public DeskClockHook(@NonNull XposedInterface xposed, @NonNull ModuleLoadedParam param) {
+        super(xposed, param);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Xposed 入口
     // ─────────────────────────────────────────────────────────────────────────
 
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        if (!DESKCLOCK_PKG.equals(lpparam.packageName)) return;
+    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
+        if (!DESKCLOCK_PKG.equals(param.getPackageName())) return;
 
         // 在 deskclock Application 启动时注册广播接收器
-        findAndHookMethod("android.app.Application", lpparam.classLoader,
-                "onCreate", new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        Context ctx = (Application) param.thisObject;
-                        registerScheduleReceiver(ctx, lpparam.classLoader);
-                        XposedBridge.log(TAG + ": 叫醒闹钟接收器已注册");
-                    }
-                });
+        try {
+            Method onCreateMethod = android.app.Application.class.getDeclaredMethod("onCreate");
+            ClassLoader cl = param.getClassLoader();
+            hook(onCreateMethod).intercept(chain -> {
+                Object result = chain.proceed();
+                Context ctx = (Context) chain.getThisObject();
+                registerScheduleReceiver(ctx, cl);
+                log(TAG + ": 叫醒闹钟接收器已注册");
+                return result;
+            });
+        } catch (Throwable t) {
+            log(TAG + ": hookApplicationOnCreate 失败: " + t.getMessage());
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -91,13 +99,13 @@ public class DeskClockHook implements IXposedHookLoadPackage {
         deletePreviousAlarms(ctx, cl);
 
         if (intent.getBooleanExtra("clear_only", false)) {
-            XposedBridge.log(TAG + ": 叫醒闹钟已全部清除（clear_only）");
+            log(TAG + ": 叫醒闹钟已全部清除（clear_only）");
             return;
         }
 
         String beanJson = intent.getStringExtra("bean_json");
         if (beanJson == null || beanJson.isEmpty()) {
-            XposedBridge.log(TAG + ": 无课程数据，跳过叫醒调度");
+            log(TAG + ": 无课程数据，跳过叫醒调度");
             return;
         }
 
@@ -176,14 +184,14 @@ public class DeskClockHook implements IXposedHookLoadPackage {
                                     long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + morningName);
                                     if (id > 0) createdIds.add(id);
                                 } else {
-                                    XposedBridge.log(TAG + ": 上午叫醒时间已过 " + hour + ":" +
+                                    log(TAG + ": 上午叫醒时间已过 " + hour + ":" +
                                             String.format(java.util.Locale.getDefault(), "%02d", minute) + "，跳过");
                                 }
                                 break;
                             }
                         }
                     } catch (org.json.JSONException e) {
-                        XposedBridge.log(TAG + ": morning_rules_json 解析失败 → " + e);
+                        log(TAG + ": morning_rules_json 解析失败 → " + e);
                     }
                 }
             }
@@ -207,24 +215,24 @@ public class DeskClockHook implements IXposedHookLoadPackage {
                                     long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + afternoonName);
                                     if (id > 0) createdIds.add(id);
                                 } else {
-                                    XposedBridge.log(TAG + ": 下午叫醒时间已过 " + hour + ":" +
+                                    log(TAG + ": 下午叫醒时间已过 " + hour + ":" +
                                             String.format(java.util.Locale.getDefault(), "%02d", minute) + "，跳过");
                                 }
                                 break;
                             }
                         }
                     } catch (org.json.JSONException e) {
-                        XposedBridge.log(TAG + ": afternoon_rules_json 解析失败 → " + e);
+                        log(TAG + ": afternoon_rules_json 解析失败 → " + e);
                     }
                 }
             }
 
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": handleSchedule 课程解析失败 → " + e);
+            log(TAG + ": handleSchedule 课程解析失败 → " + e);
         }
 
         storeAlarmIds(ctx, createdIds);
-        XposedBridge.log(TAG + ": 叫醒闹钟调度完成，共 " + createdIds.size() + " 个");
+        log(TAG + ": 叫醒闹钟调度完成，共 " + createdIds.size() + " 个");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -266,7 +274,7 @@ public class DeskClockHook implements IXposedHookLoadPackage {
             // 调用 AlarmHelper.addAlarm(Context, Alarm)
             Method addMethod = resolveAddAlarmMethod(cl, alarmCls);
             if (addMethod == null) {
-                XposedBridge.log(TAG + ": 未找到 AlarmHelper.addAlarm，无法创建闹钟");
+                log(TAG + ": 未找到 AlarmHelper.addAlarm，无法创建闹钟");
                 return -1;
             }
             addMethod.setAccessible(true);
@@ -276,11 +284,11 @@ public class DeskClockHook implements IXposedHookLoadPackage {
             // 直接反查 ContentProvider，取 hour+minutes 匹配且 _id 最大的行（最新插入）
             long id = findAlarmIdByTime(ctx, cl, hour, minute);
             String timeStr = hour + ":" + String.format(java.util.Locale.getDefault(), "%02d", minute);
-            XposedBridge.log(TAG + ": 闹钟已创建 " + timeStr + " id=" + id + " [" + lbl + "]");
+            log(TAG + ": 闹钟已创建 " + timeStr + " id=" + id + " [" + lbl + "]");
             return id;
 
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": createAlarm 失败 → " + e);
+            log(TAG + ": createAlarm 失败 → " + e);
             return -1;
         }
     }
@@ -361,10 +369,10 @@ public class DeskClockHook implements IXposedHookLoadPackage {
                     if (h == hour && m == minute && rowId > maxId) maxId = rowId;
                 } while (c.moveToNext());
             } finally { c.close(); }
-            if (dbgCols != null) XposedBridge.log(TAG + ": CP columns=[" + dbgCols + "] found _id=" + maxId);
+            if (dbgCols != null) log(TAG + ": CP columns=[" + dbgCols + "] found _id=" + maxId);
             return maxId;
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": findAlarmIdByTime 失败 → " + e);
+            log(TAG + ": findAlarmIdByTime 失败 → " + e);
             return -1;
         }
     }
@@ -380,7 +388,7 @@ public class DeskClockHook implements IXposedHookLoadPackage {
         List<Long> ids = loadAlarmIds(ctx);
         for (long id : ids) deleteAlarmById(ctx, cl, id);
         storeAlarmIds(ctx, new ArrayList<>());
-        XposedBridge.log(TAG + ": 旧叫醒闹钟已清除（标签=" + labelCount + " ID=" + ids.size() + "）");
+        log(TAG + ": 旧叫醒闹钟已清除（标签=" + labelCount + " ID=" + ids.size() + "）");
     }
 
     /** 查询所有闹钟、在 Java 侧过滤 label/message 列，删除由本模块创建的闹钟 */
@@ -410,10 +418,10 @@ public class DeskClockHook implements IXposedHookLoadPackage {
             } finally { c.close(); }
             for (long id : toDelete) deleteAlarmById(ctx, cl, id);
             if (!toDelete.isEmpty())
-                XposedBridge.log(TAG + ": 通过标签删除 " + toDelete.size() + " 个旧闹钟");
+                log(TAG + ": 通过标签删除 " + toDelete.size() + " 个旧闹钟");
             return toDelete.size();
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": deleteAlarmsByLabel 失败 → " + e);
+            log(TAG + ": deleteAlarmsByLabel 失败 → " + e);
             return 0;
         }
     }
@@ -441,7 +449,7 @@ public class DeskClockHook implements IXposedHookLoadPackage {
             // 再尝试 WHERE 子句
             ctx.getContentResolver().delete(base, "_id = ?", new String[]{String.valueOf(id)});
         } catch (Throwable e2) {
-            XposedBridge.log(TAG + ": ContentProvider 删除失败 id=" + id + " → " + e2.getMessage());
+            log(TAG + ": ContentProvider 删除失败 id=" + id + " → " + e2.getMessage());
         }
     }
 

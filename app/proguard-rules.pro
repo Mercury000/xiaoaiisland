@@ -2,5 +2,6 @@
 -keep class com.xiaoai.islandnotify.** { *; }
 -keepclassmembers class com.xiaoai.islandnotify.** { *; }
 
-# 保留 Xposed API
--keep class de.robv.android.xposed.** { *; }
+# 保留 libxposed API 101+ 入口
+-keep class io.github.libxposed.api.** { *; }
+-keep class io.github.libxposed.service.** { *; }

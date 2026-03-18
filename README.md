@@ -59,11 +59,15 @@
 
 ## 构建
 
-### 依赖准备
+### 依赖
 
-将 XposedBridge API jar（`api-82.jar`）放到 `app/libs/` 目录（不提交到 Git）。
+项目通过 Maven Central 依赖 **libxposed API 101+**，无需手动下载或放置任何 jar 文件。`settings.gradle` 中已包含 `mavenCentral()`，Gradle 会自动拉取：
 
-可从 [LSPosed/lsposed releases](https://github.com/LSPosed/LSPosed/releases) 提取，或使用 rovo89 的 [XposedBridge](https://github.com/rovo89/XposedBridge/releases)。
+```groovy
+// app/build.gradle（已配置好，无需手动操作）
+compileOnly 'io.github.libxposed:api:101.0.0'
+implementation 'io.github.libxposed:service:101.0.0'
+```
 
 ### 构建命令
 

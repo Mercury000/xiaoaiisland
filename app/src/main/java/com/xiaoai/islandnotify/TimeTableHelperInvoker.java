@@ -2,10 +2,10 @@ package com.xiaoai.islandnotify;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Enumeration;
-import de.robv.android.xposed.XposedBridge;
 
 /**
  * 动态定位并调用小爱同学内部的 TimeTableHelper.downCourseInfoData。
@@ -29,14 +29,14 @@ public final class TimeTableHelperInvoker {
             String cachedName = sp.getString(cacheKey, null);
 
             if (cachedName != null) {
-                XposedBridge.log(TAG + ": [TimeTableInvoker] 命中缓存 → " + cachedName);
+                Log.d(TAG, "[TimeTableInvoker] 命中缓存 → " + cachedName);
                 if (tryLoadClass(cl, cachedName, cacheKey, sp, false)) return;
             }
 
-            XposedBridge.log(TAG + ": [TimeTableInvoker] 开始全量扫描...");
+            Log.d(TAG, "[TimeTableInvoker] 开始全量扫描...");
             scanAndCache(ctx, cl, cacheKey, sp);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [TimeTableInvoker] init 失败 → " + t.getMessage());
+            Log.d(TAG, "[TimeTableInvoker] init 失败 → " + t.getMessage());
         }
     }
 
@@ -44,15 +44,15 @@ public final class TimeTableHelperInvoker {
         Method m = sDownMethod;
         Object target = sInstance;
         if (m == null || target == null) {
-            XposedBridge.log(TAG + ": [TimeTableInvoker] triggerUpdate 未就绪");
+            Log.d(TAG, "[TimeTableInvoker] triggerUpdate 未就绪");
             return false;
         }
         try {
             m.invoke(target, ctx, from, fromH5);
-            XposedBridge.log(TAG + ": [TimeTableInvoker] 已触发主动更新 from=" + from);
+            Log.d(TAG, "[TimeTableInvoker] 已触发主动更新 from=" + from);
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [TimeTableInvoker] triggerUpdate 失败 → " + t.getMessage());
+            Log.d(TAG, "[TimeTableInvoker] triggerUpdate 失败 → " + t.getMessage());
             return false;
         }
     }
@@ -62,13 +62,13 @@ public final class TimeTableHelperInvoker {
             for (String name : enumerateClassNames(cl)) {
                 // 移除包名前缀限制，应对各种混淆情况
                 if (tryLoadClass(cl, name, cacheKey, sp, true)) {
-                    XposedBridge.log(TAG + ": [TimeTableInvoker] 扫描命中 → " + name);
+                    Log.d(TAG, "[TimeTableInvoker] 扫描命中 → " + name);
                     return;
                 }
             }
-            XposedBridge.log(TAG + ": [TimeTableInvoker] 扫描结束，未找到 TimeTableHelper");
+            Log.d(TAG, "[TimeTableInvoker] 扫描结束，未找到 TimeTableHelper");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [TimeTableInvoker] scanAndCache 失败 → " + t.getMessage());
+            Log.d(TAG, "[TimeTableInvoker] scanAndCache 失败 → " + t.getMessage());
         }
     }
 
@@ -152,7 +152,7 @@ public final class TimeTableHelperInvoker {
                 }
             }
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": [TimeTableInvoker] enumerateClassNames 失败 → " + t.getMessage());
+            Log.d(TAG, "[TimeTableInvoker] enumerateClassNames 失败 → " + t.getMessage());
         }
         return result;
     }

@@ -30,20 +30,21 @@ import com.xzakota.hyper.notification.island.template.IslandTemplate;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import java.lang.reflect.Method;
 
-import static de.robv.android.xposed.XposedHelpers.findAndHookMethod;
+import androidx.annotation.NonNull;
+
+import io.github.libxposed.api.XposedInterface;
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
 
 /**
  * LSPosed 主 Hook 类
  * 功能：拦截 com.miui.voiceassist 发送的"课程表提醒"通知，
  *       注入 miui.focus.param 参数，将其升级为小米超级岛通知。
  */
-public class MainHook implements IXposedHookLoadPackage {
+public class MainHook extends XposedModule {
 
     private static final String TAG = "IslandNotifyHook";
 
@@ -205,44 +206,48 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 跨 ClassLoader 的防重复注入标记 key（存于 boot classloader 的 System.properties） */
     private static final String HOOKED_KEY = "xiaoai.island.hooked";
 
+    public MainHook(@NonNull XposedInterface xposed, @NonNull ModuleLoadedParam param) {
+        super(xposed, param);
+    }
+
     // ─────────────────────────────────────────────────────────────
 
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+    public void onPackageLoaded(@NonNull PackageLoadedParam param) {
         // 注入自身进程 → hook isModuleActive()
-        if ("com.xiaoai.islandnotify".equals(lpparam.packageName)) {
-            hookSelfStatus(lpparam);
+        if ("com.xiaoai.islandnotify".equals(param.getPackageName())) {
+            hookSelfStatus(param);
             return;
         }
         // 只注入目标进程
-        if (!TARGET_PACKAGE.equals(lpparam.packageName)) {
+        if (!TARGET_PACKAGE.equals(param.getPackageName())) {
             return;
         }
         // 只注入主进程（processName == packageName），子进程如 :push/:remote 跳过
         // 各 OS 进程的 System.properties 相互独立，仅靠 HOOKED_KEY 无法去重跨进程重复
-        if (!TARGET_PACKAGE.equals(lpparam.processName)) {
+        if (!TARGET_PACKAGE.equals(param.getProcessName())) {
             return;
         }
         // 同一进程可能因多 ClassLoader 被调用多次，只注册一次
         // 用 System.setProperty 而非 static 字段，确保跨 ClassLoader 生效
         if (System.getProperty(HOOKED_KEY) != null) return;
         System.setProperty(HOOKED_KEY, "1");
-        XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
-        hookApplicationOnCreate(lpparam);
-        hookUploadStateService(lpparam);
-        hookNotifyMethods(lpparam);
+        log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
+        hookApplicationOnCreate(param);
+        hookUploadStateService(param);
+        hookNotifyMethods(param);
     }
 
     /**     * Hook 目标 App 的 Application.onCreate，在其进程内注册 BroadcastReceiver。
      * 收到 ACTION_SYNC_PREFS 广播时，将偷好设置写入目标进程自己的 SharedPreferences，
      * 彻底绕过 SELinux 跨 UID 文件读取限制。
      */
-    private void hookApplicationOnCreate(XC_LoadPackage.LoadPackageParam lpparam) {
-        findAndHookMethod("android.app.Application", lpparam.classLoader,
-                "onCreate", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Context appCtx = (Context) param.thisObject;
+    private void hookApplicationOnCreate(PackageLoadedParam param) {
+        try {
+            Method onCreateMethod = android.app.Application.class.getDeclaredMethod("onCreate");
+            hook(onCreateMethod).intercept(chain -> {
+                Object result = chain.proceed();
+                Context appCtx = (Context) chain.getThisObject();
                 IntentFilter filter = new IntentFilter(ACTION_SYNC_PREFS);
                 filter.addAction(ACTION_ISLAND_UPDATE);
                 filter.addAction(ACTION_TEST_NOTIFY);
@@ -345,7 +350,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                     context.getSharedPreferences(HolidayManager.PREFS_HOLIDAY,
                                             Context.MODE_PRIVATE)
                                            .edit().putString("list_" + yr, hJson).apply();
-                                    XposedBridge.log(TAG + ": 假期数据已同步 " + yr + "年");
+                                    log(TAG + ": 假期数据已同步 " + yr + "年");
                                 }
                             }
                             // 同步内存开关
@@ -403,11 +408,11 @@ public class MainHook implements IXposedHookLoadPackage {
                                     Object vv = saved.getAll().get(k);
                                     sb.append(k).append("=").append(String.valueOf(vv)).append("\n");
                                 }
-                                XposedBridge.log(TAG + ": " + sb.toString());
+                                log(TAG + ": " + sb.toString());
                             } catch (Throwable t) {
-                                XposedBridge.log(TAG + ": SYNC_PREFS log failure -> " + t.getMessage());
+                                log(TAG + ": SYNC_PREFS log failure -> " + t.getMessage());
                             }
-                            XposedBridge.log(TAG + ": 偏好设置已同步到目标进程");
+                            log(TAG + ": 偏好设置已同步到目标进程");
                         } else if (ACTION_QUERY_PREFS.equals(intent.getAction())) {
                             replyWithCurrentPrefs(context);
                         } else if (ACTION_ISLAND_UPDATE.equals(intent.getAction())) {
@@ -431,13 +436,13 @@ public class MainHook implements IXposedHookLoadPackage {
                                 }
                             }
                             if (src == null) {
-                                XposedBridge.log(TAG + ": 闹钟回调时通知已消失，跳过 state=" + state);
+                                log(TAG + ": 闹钟回调时通知已消失，跳过 state=" + state);
                                 return;
                             }
                             // 连续课程防竞争：若此通知已被新课接管，拒绝旧课陈旧的 STATE_FINISHED 广播
                             String staleOwner = mNotifCourseOwner.get(id);
                             if (staleOwner != null && !staleOwner.equals(courseName)) {
-                                XposedBridge.log(TAG + ": [跳过陈旧state] state=" + state
+                                log(TAG + ": [跳过陈旧state] state=" + state
                                         + " id=" + id + " (" + courseName + ") 已被「"
                                         + staleOwner + "」接管，忽略");
                                 return;
@@ -486,14 +491,14 @@ public class MainHook implements IXposedHookLoadPackage {
                             // 先取消上一条测试通知，避免堆积
                             if (sLastTestNotifId != -1) {
                                 tnm.cancel(sLastTestNotifId);
-                                XposedBridge.log(TAG + ": 已取消上一条测试通知 id=" + sLastTestNotifId);
+                                log(TAG + ": 已取消上一条测试通知 id=" + sLastTestNotifId);
                             }
                             sLastTestNotifId = tNotifId;
-                            XposedBridge.log(TAG + ": 即将发出测试通知 → " + tCourseName + " @" + tStartTime);
+                            log(TAG + ": 即将发出测试通知 → " + tCourseName + " @" + tStartTime);
                             CourseInfo tInfo = new CourseInfo(tCourseName, tStartTime, tEndTime, tClassroom);
                             applyIslandParams(context, tNotif, tInfo, tNotifId, null);
                             tnm.notify(tNotifId, tNotif);
-                            XposedBridge.log(TAG + ": 已在目标进程发出测试通知 id=" + tNotifId);
+                            log(TAG + ": 已在目标进程发出测试通知 id=" + tNotifId);
                             // 测试通知按用户设定的时间逻辑调度静音/取消静音闹钟：
                             // 分钟数直接从 intent 读取（MainActivity 调用时已携带），不读 SP，消除跨进程缓存旧值问题
                             boolean tMuteEnabled   = intent.getBooleanExtra("mute_enabled",   sMuteEnabled);
@@ -516,12 +521,12 @@ public class MainHook implements IXposedHookLoadPackage {
                                             applyMuteState(context, true, tCourseName);
                                         } else {
                                             scheduleMuteAlarm(context, tCourseName, tMuteTrigger, tAlarmId);
-                                            XposedBridge.log(TAG + ": 测试 → 静音将在 " + (tMuteTrigger - tNow) / 1_000 + " 秒后触发");
+                                            log(TAG + ": 测试 → 静音将在 " + (tMuteTrigger - tNow) / 1_000 + " 秒后触发");
                                         }
                                     }
                                     if (tUnmuteEnabled) {
                                         scheduleUnmuteAlarm(context, tCourseName, tUnmuteTrigger, tAlarmId);
-                                        XposedBridge.log(TAG + ": 测试 → 取消静音将在 " + (tUnmuteTrigger - tNow) / 1_000 + " 秒后触发");
+                                        log(TAG + ": 测试 → 取消静音将在 " + (tUnmuteTrigger - tNow) / 1_000 + " 秒后触发");
                                     }
                                 }
                                 if (tDndEnabled || tUnDndEnabled) {
@@ -534,12 +539,12 @@ public class MainHook implements IXposedHookLoadPackage {
                                             applyDndState(context, true, tCourseName);
                                         } else {
                                             scheduleDndOnAlarm(context, tCourseName, tDndTrigger, tAlarmId);
-                                            XposedBridge.log(TAG + ": 测试 → 勿扰将在 " + (tDndTrigger - tNow) / 1_000 + " 秒后触发");
+                                            log(TAG + ": 测试 → 勿扰将在 " + (tDndTrigger - tNow) / 1_000 + " 秒后触发");
                                         }
                                     }
                                     if (tUnDndEnabled) {
                                         scheduleDndOffAlarm(context, tCourseName, tUnDndTrigger, tAlarmId);
-                                        XposedBridge.log(TAG + ": 测试 → 关闭勿扰将在 " + (tUnDndTrigger - tNow) / 1_000 + " 秒后触发");
+                                        log(TAG + ": 测试 → 关闭勿扰将在 " + (tUnDndTrigger - tNow) / 1_000 + " 秒后触发");
                                     }
                                 }
                             }
@@ -632,7 +637,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                                 STATE_ELAPSED, CR_CH, prevTag, newId, crStartMs);
                                     } else {
                                         // 0 间隔连续课程：trigger 触发时已到上课时间，立即刷为"上课中"
-                                        XposedBridge.log(TAG + ": [连续课程] crStartMs 已过，立即刷 STATE_ELAPSED");
+                                        log(TAG + ": [连续课程] crStartMs 已过，立即刷 STATE_ELAPSED");
                                         sendIslandUpdate(newInfo, STATE_ELAPSED, context,
                                                 CR_CH,
                                                 jumpNotif, crnm,
@@ -643,7 +648,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                                 STATE_FINISHED, CR_CH, prevTag, newId, crEndMs);
                                     } else {
                                         // 下课时间也已过（极端情况，补发 STATE_FINISHED）
-                                        XposedBridge.log(TAG + ": [连续课程] crEndMs 已过，立即刷 STATE_FINISHED");
+                                        log(TAG + ": [连续课程] crEndMs 已过，立即刷 STATE_FINISHED");
                                         sendIslandUpdate(newInfo, STATE_FINISHED, context,
                                                 CR_CH,
                                                 jumpNotif, crnm,
@@ -651,12 +656,12 @@ public class MainHook implements IXposedHookLoadPackage {
                                     }
                                     scheduleNotifCancelAlarms(context, crPrefs, prevTag, newId,
                                             nowCr, crStartMs, crEndMs);
-                                    XposedBridge.log(TAG + ": [连续课程] 岛已更新 → " + crName
+                                    log(TAG + ": [连续课程] 岛已更新 → " + crName
                                             + " oldId=" + prevId + " newId=" + newId);
                                     return; // 不再发新通知
                                 }
                                 // 未找到现有岛，降级到正常发送路径
-                                XposedBridge.log(TAG + ": [连续课程] 未找到现有岛，降级为新通知");
+                                log(TAG + ": [连续课程] 未找到现有岛，降级为新通知");
                             }
 
                             // ── 正常路径：发新通知（首节课或降级）────────────────────────
@@ -681,7 +686,7 @@ public class MainHook implements IXposedHookLoadPackage {
                             CourseInfo crInfo = new CourseInfo(crName, crStart, crEnd, crRoom);
                             applyIslandParams(context, crNotif, crInfo, crId, null);
                             crnm.notify(crId, crNotif);
-                            XposedBridge.log(TAG + ": 课前提醒通知已发送 → " + crName + " @" + crStart);
+                            log(TAG + ": 课前提醒通知已发送 → " + crName + " @" + crStart);
                         } else if (ACTION_DO_MUTE.equals(intent.getAction())) {
                             applyMuteState(context, true, intent.getStringExtra("course_name"));
                         } else if (ACTION_DO_UNMUTE.equals(intent.getAction())) {
@@ -701,7 +706,7 @@ public class MainHook implements IXposedHookLoadPackage {
                             if (sIslandButtonMode == 1 || sIslandButtonMode == 2) applyDndState(context, false, mn);
                         } else if (ACTION_RESCHEDULE_DAILY.equals(intent.getAction())) {
                             // 每日 00:01 跨日重调：触发主动更新，重新同步开关状态，重新调度当日 alarm
-                            XposedBridge.log(TAG + ": [跨日重调] 触发，同步配置并执行主动重调度");
+                            log(TAG + ": [跨日重调] 触发，同步配置并执行主动重调度");
                             SharedPreferences dp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                             sMuteEnabled   = dp.getBoolean(KEY_MUTE_ENABLED,   false);
                             sUnmuteEnabled = dp.getBoolean(KEY_UNMUTE_ENABLED, false);
@@ -723,7 +728,7 @@ public class MainHook implements IXposedHookLoadPackage {
                             if (cancelTag != null) cnm.cancel(cancelTag, cancelId);
                             else                   cnm.cancel(cancelId);
                             mNotifCourseOwner.remove(cancelId); // 清除所有权，允许后续重建同 id 通知
-                            XposedBridge.log(TAG + ": 通知定时取消 [" + phase + "] id=" + cancelId);
+                            log(TAG + ": 通知定时取消 [" + phase + "] id=" + cancelId);
                         }
                     }
                 };
@@ -732,7 +737,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 } else {
                     appCtx.registerReceiver(receiver, filter);
                 }
-                XposedBridge.log(TAG + ": [Application] 广播接收器已注册");
+                log(TAG + ": [Application] 广播接收器已注册");
                 // 动态定位小米内部 SettingsUtil（change 方法），用于静音/勿扰模式切换，结果按版本号缓存
                 MiuiSettingsInvoker.init(appCtx, appCtx.getClassLoader());
                 // 从 SP 读取开关状态
@@ -764,9 +769,12 @@ public class MainHook implements IXposedHookLoadPackage {
                 } catch (Throwable ignored) {}
                 // 跨日自动重调：每天 00:01 重新调度当日闹钟，链式保证次日不丢失
                 scheduleMidnightReschedule(appCtx);
-                XposedBridge.log(TAG + ": 偷好同步接收器已注册，课前提醒已开启");
-            }
-        });
+                log(TAG + ": 偷好同步接收器已注册，课前提醒已开启");
+                return result;
+            });
+        } catch (Throwable t) {
+            log(TAG + ": hookApplicationOnCreate 失败: " + t.getMessage());
+        }
     }
 
     /**
@@ -798,36 +806,33 @@ public class MainHook implements IXposedHookLoadPackage {
      *   系统启动进程 → Application.onCreate（Xposed 注入 + 动态 BR 注册）
      *   → Service.onStartCommand（本 hook 拦截）→ 转发为包内广播 → 动态 BR 处理。
      */
-    private void hookUploadStateService(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookUploadStateService(PackageLoadedParam param) {
         try {
             // UploadStateService 未覆写 onStartCommand，需用 getMethod 搜索继承链
-            Class<?> svcClass = lpparam.classLoader.loadClass(UPLOAD_STATE_SERVICE);
-            java.lang.reflect.Method onStartCmd = svcClass.getMethod(
+            Class<?> svcClass = param.getClassLoader().loadClass(UPLOAD_STATE_SERVICE);
+            Method onStartCmd = svcClass.getMethod(
                     "onStartCommand", Intent.class, int.class, int.class);
-            XposedBridge.hookMethod(onStartCmd, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    // 仅拦截 UploadStateService 实例，放行其他 Service
-                    if (!UPLOAD_STATE_SERVICE.equals(param.thisObject.getClass().getName()))
-                        return;
-                    Intent intent = (Intent) param.args[0];
-                    if (intent == null || intent.getAction() == null) return;
-                    String action = intent.getAction();
-                    if (!isAlarmAction(action)) return;
+            hook(onStartCmd).intercept(chain -> {
+                // 仅拦截 UploadStateService 实例，放行其他 Service
+                if (!UPLOAD_STATE_SERVICE.equals(chain.getThisObject().getClass().getName()))
+                    return chain.proceed();
+                Intent intent = (Intent) chain.getArg(0);
+                if (intent == null || intent.getAction() == null) return chain.proceed();
+                String action = intent.getAction();
+                if (!isAlarmAction(action)) return chain.proceed();
 
-                    Context ctx = (Context) param.thisObject;
-                    // 清除 component（Service 目标），转为包内隐式广播
-                    Intent fwd = new Intent(action);
-                    if (intent.getExtras() != null) fwd.putExtras(intent.getExtras());
-                    fwd.setPackage(TARGET_PACKAGE);
-                    ctx.sendBroadcast(fwd);
-                    param.setResult(android.app.Service.START_NOT_STICKY);
-                    XposedBridge.log(TAG + ": [Service→BR] 转发 " + action);
-                }
+                Context ctx = (Context) chain.getThisObject();
+                // 清除 component（Service 目标），转为包内隐式广播
+                Intent fwd = new Intent(action);
+                if (intent.getExtras() != null) fwd.putExtras(intent.getExtras());
+                fwd.setPackage(TARGET_PACKAGE);
+                ctx.sendBroadcast(fwd);
+                log(TAG + ": [Service→BR] 转发 " + action);
+                return android.app.Service.START_NOT_STICKY;
             });
-            XposedBridge.log(TAG + ": hookUploadStateService 已注入");
+            log(TAG + ": hookUploadStateService 已注入");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hookUploadStateService 失败: " + t.getMessage());
+            log(TAG + ": hookUploadStateService 失败: " + t.getMessage());
         }
     }
 
@@ -891,14 +896,14 @@ public class MainHook implements IXposedHookLoadPackage {
                         PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
                 String raw = coursePrefs.getString("weekCourseBean", null);
                 if (raw == null || raw.isEmpty()) {
-                    XposedBridge.log(TAG + ": CourseData 为空，跳过课前提醒调度");
+                    log(TAG + ": CourseData 为空，跳过课前提醒调度");
                     return;
                 }
                 beanJson = raw;
                 mLastCourseDataHash = stableCourseHash(beanJson);
             }
             if (beanJson.isEmpty()) {
-                XposedBridge.log(TAG + ": CourseData 为空，跳过课前提醒调度");
+                log(TAG + ": CourseData 为空，跳过课前提醒调度");
                 return;
             }
 
@@ -915,7 +920,7 @@ public class MainHook implements IXposedHookLoadPackage {
             String todayDateStr = holidayFmt.format(new java.util.Date());
             // 节假日：取消旧闹钟后直接返回，不发任何提醒
             if (HolidayManager.isHoliday(ctx, todayDateStr)) {
-                XposedBridge.log(TAG + ": 今日 " + todayDateStr + " 为节假日，跳过课前提醒调度");
+                log(TAG + ": 今日 " + todayDateStr + " 为节假日，跳过课前提醒调度");
                 return;
             }
             // 调休工作日：记录替换信息，后续覆盖 todayDay / currentWeek
@@ -933,7 +938,7 @@ public class MainHook implements IXposedHookLoadPackage {
             int currentWeek = setting.optInt("presentWeek", 0);
             // 调休工作日：将当天星期和周次替换为指定的调休酬条件
             if (workSwapDay != null && workSwapDay.followWeek > 0 && workSwapDay.followWeekday > 0) {
-                XposedBridge.log(TAG + ": 今日 " + todayDateStr + " 为调休工作日，"
+                log(TAG + ": 今日 " + todayDateStr + " 为调休工作日，"
                         + "按\u7b2c" + workSwapDay.followWeek + "周 " + workSwapDay.followDesc() + " 调度");
                 todayDay    = workSwapDay.followWeekday;
                 currentWeek = workSwapDay.followWeek;
@@ -941,7 +946,7 @@ public class MainHook implements IXposedHookLoadPackage {
             // 超出学期总周数则本学期已结束，无需调度任何课程
             int totalWeek = setting.optInt("totalWeek", 0);
             if (totalWeek > 0 && currentWeek > totalWeek) {
-                XposedBridge.log(TAG + ": 当前第 " + currentWeek + " 周，已超过学期总周数 "
+                log(TAG + ": 当前第 " + currentWeek + " 周，已超过学期总周数 "
                         + totalWeek + "，跳过调度");
                 return;
             }
@@ -1031,7 +1036,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         isConsecutive = true;
                         // 上一课有连续后续，标记为锚点：injectIslandParams 跳过其 cancel alarm
                         if (prevLoopAlarmId != -1) mConsecutiveAnchors.add(prevLoopAlarmId);
-                        XposedBridge.log(TAG + ": [连续课程] " + courseName
+                        log(TAG + ": [连续课程] " + courseName
                                 + " 课间=" + (breakMs / 60_000) + "min <= 提醒"
                                 + reminderMinutes + "min，将在上节下课时触发");
                     }
@@ -1054,9 +1059,9 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (!alreadyPosted) {
                             sendCourseReminderNow(ctx, info, alarmId);
                             String label = (nowMs < startMs) ? "[窗口内补发]" : "[上课中补发]";
-                            XposedBridge.log(TAG + ": " + label + " " + courseName + " @" + startTime);
+                            log(TAG + ": " + label + " " + courseName + " @" + startTime);
                         } else {
-                            XposedBridge.log(TAG + ": [跳过补发] 通知已存在 " + courseName + " id=" + alarmId);
+                            log(TAG + ": [跳过补发] 通知已存在 " + courseName + " id=" + alarmId);
                         }
                         scheduledCount++;
                     }
@@ -1066,13 +1071,13 @@ public class MainHook implements IXposedHookLoadPackage {
                 scheduleCourseReminderAlarm(ctx, info, triggerMs, alarmId, isConsecutive);
                 scheduledCount++;
             }
-            XposedBridge.log(TAG + ": 今日课前提醒已调度 " + scheduledCount
+            log(TAG + ": 今日课前提醒已调度 " + scheduledCount
                     + " 条（第 " + currentWeek + " 周，提前 " + reminderMinutes + " 分钟）");
 
             // ── 3. 精确清理：取消那些属于我方但不在新课表 valid 集合中的活跃通知 ──
             cancelStaleNotifications(ctx, validAlarmIds);
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": scheduleTodayCourseReminders 失败 → " + e.getMessage());
+            log(TAG + ": scheduleTodayCourseReminders 失败 → " + e.getMessage());
         }
     }
 
@@ -1140,11 +1145,11 @@ public class MainHook implements IXposedHookLoadPackage {
                 saveScheduledIds(ctx, "scheduled_alarm_ids", mScheduledAlarmIds);
             }
             long minsLeft = (triggerMs - System.currentTimeMillis()) / 60_000;
-            XposedBridge.log(TAG + ": 闹钟已设(AlarmClock) " + info.courseName + " @" + info.startTime
+            log(TAG + ": 闹钟已设(AlarmClock) " + info.courseName + " @" + info.startTime
                     + (isConsecutive ? "（连续课程，上节下课触发）" : "")
                     + " 约 " + minsLeft + " 分钟后触发");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": scheduleCourseReminderAlarm 失败 → " + e.getMessage());
+            log(TAG + ": scheduleCourseReminderAlarm 失败 → " + e.getMessage());
         }
     }
 
@@ -1173,9 +1178,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     showPi.cancel();
                 }
             }
-            XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个课前提醒闹钟");
+            log(TAG + ": 已取消 " + idsToCancel.size() + " 个课前提醒闹钟");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": cancelAllScheduledAlarms 失败 → " + e.getMessage());
+            log(TAG + ": cancelAllScheduledAlarms 失败 → " + e.getMessage());
         }
         synchronized (mScheduledAlarmIds) {
             mScheduledAlarmIds.clear();
@@ -1210,9 +1215,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                 }
             }
-            if (count > 0) XposedBridge.log(TAG + ": 已精确清理 " + count + " 个旧课表残留通知");
+            if (count > 0) log(TAG + ": 已精确清理 " + count + " 个旧课表残留通知");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": cancelStaleNotifications 失败 -> " + t.getMessage());
+            log(TAG + ": cancelStaleNotifications 失败 -> " + t.getMessage());
         }
     }
 
@@ -1246,9 +1251,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                 }
             }
-            XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个静音闹钟");
+            log(TAG + ": 已取消 " + idsToCancel.size() + " 个静音闹钟");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": cancelAllMuteAlarms 失败 → " + e.getMessage());
+            log(TAG + ": cancelAllMuteAlarms 失败 → " + e.getMessage());
         }
         synchronized (mScheduledMuteIds) {
             mScheduledMuteIds.clear();
@@ -1277,9 +1282,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
             }
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
-            XposedBridge.log(TAG + ": 静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
+            log(TAG + ": 静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": scheduleMuteAlarm 失败 → " + e.getMessage());
+            log(TAG + ": scheduleMuteAlarm 失败 → " + e.getMessage());
         }
     }
 
@@ -1308,9 +1313,9 @@ public class MainHook implements IXposedHookLoadPackage {
                .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
             String fmt = new java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
                     .format(new java.util.Date(triggerMs));
-            XposedBridge.log(TAG + ": 跨日重调闹钟已设(AlarmClock) → " + fmt);
+            log(TAG + ": 跨日重调闹钟已设(AlarmClock) → " + fmt);
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": scheduleMidnightReschedule 失败 → " + e.getMessage());
+            log(TAG + ": scheduleMidnightReschedule 失败 → " + e.getMessage());
         }
     }
 
@@ -1333,9 +1338,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
             }
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
-            XposedBridge.log(TAG + ": 取消静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
+            log(TAG + ": 取消静音闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": scheduleUnmuteAlarm 失败 → " + e.getMessage());
+            log(TAG + ": scheduleUnmuteAlarm 失败 → " + e.getMessage());
         }
     }
 
@@ -1357,9 +1362,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
             }
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
-            XposedBridge.log(TAG + ": 开启勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
+            log(TAG + ": 开启勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": scheduleDndOnAlarm 失败 → " + e.getMessage());
+            log(TAG + ": scheduleDndOnAlarm 失败 → " + e.getMessage());
         }
     }
 
@@ -1381,9 +1386,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 saveScheduledIds(ctx, "scheduled_mute_ids", mScheduledMuteIds);
             }
             long secsLeft = (triggerMs - System.currentTimeMillis()) / 1_000;
-            XposedBridge.log(TAG + ": 关闭勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
+            log(TAG + ": 关闭勿扰闹钟已设(AlarmClock) " + courseName + " 约 " + secsLeft + " 秒后触发");
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": scheduleDndOffAlarm 失败 → " + e.getMessage());
+            log(TAG + ": scheduleDndOffAlarm 失败 → " + e.getMessage());
         }
     }
 
@@ -1391,14 +1396,14 @@ public class MainHook implements IXposedHookLoadPackage {
     private void applyMuteState(Context ctx, boolean mute, String courseName) {
         String modeTip = mute ? "静音" : "恢复铃声";
         boolean ok = MiuiSettingsInvoker.applyMute(ctx, mute);
-        XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
+        log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
     }
 
     /** 在 voiceassist 进程内开启/关闭勿扰（DND）模式。 */
     private void applyDndState(Context ctx, boolean enable, String courseName) {
         String modeTip = enable ? "开启勿扰" : "关闭勿扰";
         boolean ok = MiuiSettingsInvoker.applyDnd(ctx, enable);
-        XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
+        log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
     }
 
     /** 将宿主进程当前的偏好设置全量回传给模块 App，解决重装后 UI 不一致问题。 */
@@ -1428,9 +1433,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 }
             }
             ctx.sendBroadcast(reply);
-            XposedBridge.log(TAG + ": 已回传全量偏好设置到模块 App");
+            log(TAG + ": 已回传全量偏好设置到模块 App");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": replyWithCurrentPrefs 失败 -> " + t.getMessage());
+            log(TAG + ": replyWithCurrentPrefs 失败 -> " + t.getMessage());
         }
     }
 
@@ -1455,7 +1460,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
             String todayDateStr = dateFmt.format(new java.util.Date());
             if (HolidayManager.isHoliday(ctx, todayDateStr)) {
-                XposedBridge.log(TAG + ": 静音/勿扰：今日 " + todayDateStr + " 为节假日，跳过调度");
+                log(TAG + ": 静音/勿扰：今日 " + todayDateStr + " 为节假日，跳过调度");
                 return;
             }
             HolidayManager.HolidayEntry workSwap = HolidayManager.getWorkSwap(ctx, todayDateStr);
@@ -1518,7 +1523,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (audioMgr != null && audioMgr.getRingerMode() != AudioManager.RINGER_MODE_SILENT) {
                             applyMuteState(ctx, true, courseName);
                         } else {
-                            XposedBridge.log(TAG + ": [跳过静音] 已处于静音状态 " + courseName);
+                            log(TAG + ": [跳过静音] 已处于静音状态 " + courseName);
                         }
                     } else if (muteTriggerMs > nowMs) {
                         scheduleMuteAlarm(ctx, courseName, muteTriggerMs, alarmId);
@@ -1542,7 +1547,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                 != android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY) {
                             applyDndState(ctx, true, courseName);
                         } else {
-                            XposedBridge.log(TAG + ": [跳过勿扰] 已处于勿扰状态 " + courseName);
+                            log(TAG + ": [跳过勿扰] 已处于勿扰状态 " + courseName);
                         }
                     } else if (dndTriggerMs > nowMs) {
                         scheduleDndOnAlarm(ctx, courseName, dndTriggerMs, alarmId);
@@ -1557,9 +1562,9 @@ public class MainHook implements IXposedHookLoadPackage {
                     }
                 }
             }
-            XposedBridge.log(TAG + ": 静音/勿扰闹钟已调度 " + count + " 个");
+            log(TAG + ": 静音/勿扰闹钟已调度 " + count + " 个");
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": scheduleTodayMuteAlarms 失败 → " + e.getMessage());
+            log(TAG + ": scheduleTodayMuteAlarms 失败 → " + e.getMessage());
         }
     }
 
@@ -1590,7 +1595,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
             String todayDateStr = dateFmt.format(new java.util.Date());
             if (HolidayManager.isHoliday(ctx, todayDateStr)) {
-                XposedBridge.log(TAG + ": 叫醒：今日 " + todayDateStr + " 为节假日，清除叫醒闹钟");
+                log(TAG + ": 叫醒：今日 " + todayDateStr + " 为节假日，清除叫醒闹钟");
                 sendClearClockAlarms(ctx);
                 return;
             }
@@ -1638,14 +1643,14 @@ public class MainHook implements IXposedHookLoadPackage {
                         schedIntent.putExtra("afternoon_rules_json", prefs.getString(KEY_WAKEUP_AFTERNOON_RULES_JSON, DEFAULT_WAKEUP_AFTERNOON_RULES_JSON));
                     }
                     ctx.sendBroadcast(schedIntent);
-                    XposedBridge.log(TAG + ": 叫醒配置已转发给 deskclock (已延迟 1s)");
+                    log(TAG + ": 叫醒配置已转发给 deskclock (已延迟 1s)");
                 } catch (Throwable e) {
-                    XposedBridge.log(TAG + ": postDelayed scheduleWakeup 失败 → " + e.getMessage());
+                    log(TAG + ": postDelayed scheduleWakeup 失败 → " + e.getMessage());
                 }
             }, 1000);
 
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": scheduleTodayWakeupAlarms 失败 → " + e.getMessage());
+            log(TAG + ": scheduleTodayWakeupAlarms 失败 → " + e.getMessage());
         }
     }
 
@@ -1658,11 +1663,11 @@ public class MainHook implements IXposedHookLoadPackage {
                     new String[]{"_id"}, null, null, "_id LIMIT 1");
             if (c != null) {
                 c.close();
-                XposedBridge.log(TAG + ": [Tickle] DeskClock 进程已试探触发");
+                log(TAG + ": [Tickle] DeskClock 进程已试探触发");
             }
         } catch (Throwable e) {
             // 即使失败（如无权限）也可能是系统限制，通常足以拉起进程
-            XposedBridge.log(TAG + ": [Tickle] DeskClock 试探失败（正常现象）→ " + e.getMessage());
+            log(TAG + ": [Tickle] DeskClock 试探失败（正常现象）→ " + e.getMessage());
         }
     }
 
@@ -1699,7 +1704,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 if ((ch.equals("COURSE_SCHEDULER_REMINDER_sound") || ch.equals(CR_CH))
                         && (n.extras == null || !n.extras.containsKey("xiaoai.test.course_name"))) {
                     nm.cancel(sbn.getId());
-                    XposedBridge.log(TAG + ": 已 cancel 小爱旧提醒通知 id=" + sbn.getId());
+                    log(TAG + ": 已 cancel 小爱旧提醒通知 id=" + sbn.getId());
                 }
             }
             if (nm.getNotificationChannel(CR_CH) == null) {
@@ -1721,10 +1726,10 @@ public class MainHook implements IXposedHookLoadPackage {
             notif.extras.putString("xiaoai.test.classroom",   info.classroom);
             applyIslandParams(ctx, notif, info, notifId, null);
             nm.notify(notifId, notif);
-            XposedBridge.log(TAG + ": [立即] 课前提醒通知已发送 " + info.courseName
+            log(TAG + ": [立即] 课前提醒通知已发送 " + info.courseName
                     + " @" + info.startTime + " id=" + notifId);
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": sendCourseReminderNow 失败 → " + e.getMessage());
+            log(TAG + ": sendCourseReminderNow 失败 → " + e.getMessage());
         }
     }
 
@@ -1761,111 +1766,85 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (bj != null && !bj.isEmpty()) {
                             int h = stableCourseHash(bj);
                             if (h == mLastCourseDataHash) {
-                                XposedBridge.log(TAG + ": [FileObserver] 内容未变化，跳过重调度（hash=" + h + "）");
+                                log(TAG + ": [FileObserver] 内容未变化，跳过重调度（hash=" + h + "）");
                                 return;
                             }
                             // 内容已变化：更新哈希，后续两个调度函数均需执行
                             mLastCourseDataHash = h;
                         }
                     } catch (Throwable ignored) {}
-                    XposedBridge.log(TAG + ": CourseData.xml 已变化，重新调度课前提醒");
+                    log(TAG + ": CourseData.xml 已变化，重新调度课前提醒");
                     scheduleTodayCourseReminders(ctx, bj);
                     scheduleTodayMuteAlarms(ctx);
                 }, mRescheduleToken, RESCHEDULE_DEBOUNCE_MS);
             }
         };
         mCourseDataObserver.startWatching();
-        XposedBridge.log(TAG + ": CourseData FileObserver 已启动，监控目录: " + dirPath);
+        log(TAG + ": CourseData FileObserver 已启动，监控目录: " + dirPath);
     }
 
     /**     * Hook 自身进程的 MainActivity.isModuleActive()，将返回值替换为 true，
      * 使主界面能正确检测到模块已激活。
      */
-    private void hookSelfStatus(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookSelfStatus(PackageLoadedParam param) {
         try {
-            findAndHookMethod(
-                    "com.xiaoai.islandnotify.MainActivity",
-                    lpparam.classLoader,
-                    "isModuleActive",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            param.setResult(Boolean.TRUE);
-                        }
-                    }
-            );
+            Method isModuleActive = Class.forName(
+                    "com.xiaoai.islandnotify.MainActivity", false, param.getClassLoader())
+                    .getDeclaredMethod("isModuleActive");
+            hook(isModuleActive).intercept(chain -> {
+                chain.proceed();
+                return Boolean.TRUE;
+            });
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hookSelfStatus 失败: " + t.getMessage());
+            log(TAG + ": hookSelfStatus 失败: " + t.getMessage());
         }
     }
 
     /**
      * Hook NotificationManager 的两个 notify 重载，在通知发出前注入岛参数。
      */
-    private void hookNotifyMethods(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookNotifyMethods(PackageLoadedParam param) {
 
         // ① notify(int id, Notification notification)
         try {
-            findAndHookMethod(
-                    "android.app.NotificationManager",
-                    lpparam.classLoader,
-                    "notify",
-                    int.class,
-                    Notification.class,
-                    new NotifyHook(1) // notification 在 args[1]
-            );
+            Method notifyIntNotif = android.app.NotificationManager.class.getMethod(
+                    "notify", int.class, Notification.class);
+            hook(notifyIntNotif).intercept(chain -> {
+                Notification notification = (Notification) chain.getArg(1);
+                if (notification == null) return chain.proceed();
+                if (isAlreadyIsland(notification)) return chain.proceed();
+                if (notification.extras != null
+                        && notification.extras.containsKey("xiaoai.test.course_name"))
+                    return chain.proceed();
+                if (isScheduleNotification(notification)) {
+                    log(TAG + ": 已屏蔽小爱原生课程提醒通知");
+                    return null;
+                }
+                return chain.proceed();
+            });
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": Hook notify(int,Notification) 失败 → " + e.getMessage());
+            log(TAG + ": Hook notify(int,Notification) 失败 → " + e.getMessage());
         }
 
         // ② notify(String tag, int id, Notification notification)
         try {
-            findAndHookMethod(
-                    "android.app.NotificationManager",
-                    lpparam.classLoader,
-                    "notify",
-                    String.class,
-                    int.class,
-                    Notification.class,
-                    new NotifyHook(2) // notification 在 args[2]
-            );
+            Method notifyTagIntNotif = android.app.NotificationManager.class.getMethod(
+                    "notify", String.class, int.class, Notification.class);
+            hook(notifyTagIntNotif).intercept(chain -> {
+                Notification notification = (Notification) chain.getArg(2);
+                if (notification == null) return chain.proceed();
+                if (isAlreadyIsland(notification)) return chain.proceed();
+                if (notification.extras != null
+                        && notification.extras.containsKey("xiaoai.test.course_name"))
+                    return chain.proceed();
+                if (isScheduleNotification(notification)) {
+                    log(TAG + ": 已屏蔽小爱原生课程提醒通知");
+                    return null;
+                }
+                return chain.proceed();
+            });
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": Hook notify(String,int,Notification) 失败 → " + e.getMessage());
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 内部 Hook 实现
-    // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * @param notifArgIndex Notification 对象在 args 数组中的下标
-     */
-    private class NotifyHook extends XC_MethodHook {
-
-        private final int notifArgIndex;
-
-        NotifyHook(int notifArgIndex) {
-            this.notifArgIndex = notifArgIndex;
-        }
-
-        @Override
-        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-            Notification notification = (Notification) param.args[notifArgIndex];
-            if (notification == null) return;
-
-            // 我方通知（已含岛参数）直接放行
-            if (isAlreadyIsland(notification)) return;
-
-            // 我方课程通知（携带课程标记）直接放行
-            if (notification.extras != null
-                    && notification.extras.containsKey("xiaoai.test.course_name")) return;
-
-            // 小爱原生课程提醒 → 屏蔽，由我方通知替代
-            if (isScheduleNotification(notification)) {
-                param.setResult(null);
-                XposedBridge.log(TAG + ": 已屏蔽小爱原生课程提醒通知");
-            }
+            log(TAG + ": Hook notify(String,int,Notification) 失败 → " + e.getMessage());
         }
     }
 
@@ -1890,7 +1869,7 @@ public class MainHook implements IXposedHookLoadPackage {
         // 匹配 voiceassist 自身的课程提醒渠道，以及我们自己的独立提醒渠道
         boolean hit = channelId.contains("COURSE_SCHEDULER_REMINDER")
                 || channelId.equals("xiaoai_course_reminder_alert");
-        if (hit) XposedBridge.log(TAG + ": 命中 channelId=" + channelId);
+        if (hit) log(TAG + ": 命中 channelId=" + channelId);
         return hit;
     }
 
@@ -1927,7 +1906,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 notif.contentIntent = PendingIntent.getActivity(ctx, 1, tableIntent,
                         PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             } catch (Exception e) {
-                XposedBridge.log(TAG + ": 课表 intent 解析失败 → " + e.getMessage());
+                log(TAG + ": 课表 intent 解析失败 → " + e.getMessage());
             }
 
             String chId  = safeStr(notif.getChannelId());
@@ -1942,10 +1921,10 @@ public class MainHook implements IXposedHookLoadPackage {
             if (!mConsecutiveAnchors.contains(notifId))
                 scheduleNotifCancelAlarms(ctx, prefs, notifTag, notifId, now, startMs, endMs);
             else
-                XposedBridge.log(TAG + ": [锚点课程] id=" + notifId + " 跳过 cancel alarm");
-            XposedBridge.log(TAG + ": applyIslandParams 完成(state=" + state + ") → " + info.courseName + " id=" + notifId);
+                log(TAG + ": [锚点课程] id=" + notifId + " 跳过 cancel alarm");
+            log(TAG + ": applyIslandParams 完成(state=" + state + ") → " + info.courseName + " id=" + notifId);
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": applyIslandParams 失败 → " + e.getMessage());
+            log(TAG + ": applyIslandParams 失败 → " + e.getMessage());
         }
     }
 
@@ -1986,10 +1965,10 @@ public class MainHook implements IXposedHookLoadPackage {
                         PendingIntent.FLAG_IMMUTABLE);
                 AlarmManager am = ctx.getSystemService(AlarmManager.class);
                 am.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
-                XposedBridge.log(TAG + ": AlarmManager(AlarmClock) 已设定 state=" + state
+                log(TAG + ": AlarmManager(AlarmClock) 已设定 state=" + state
                         + " in " + (delayMs / 1000) + "s");
             } catch (Exception e) {
-                XposedBridge.log(TAG + ": scheduleIslandAlarm 失败 → " + e.getMessage());
+                log(TAG + ": scheduleIslandAlarm 失败 → " + e.getMessage());
             }
         } else {
             // 模块自身进程（测试通知）：前台运行，Handler 足够
@@ -2008,7 +1987,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         fc.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                 sendIslandUpdate(fi, state, fc, channelId, src.getNotification(), nm, tag, id, prefs);
             }, delayMs);
-            XposedBridge.log(TAG + ": Handler 已设定 state=" + state + " in " + (delayMs / 1000) + "s");
+            log(TAG + ": Handler 已设定 state=" + state + " in " + (delayMs / 1000) + "s");
         }
     }
 
@@ -2044,7 +2023,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     new Intent(ACTION_NOTIF_CANCEL).setPackage(TARGET_PACKAGE),
                     PendingIntent.FLAG_IMMUTABLE);
             am.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
-            XposedBridge.log(TAG + ": 通知取消 AlarmClock [" + phases[i] + "] in "
+            log(TAG + ": 通知取消 AlarmClock [" + phases[i] + "] in "
                     + (triggerMs - System.currentTimeMillis()) / 1000 + "s");
         }
     }
@@ -2086,9 +2065,9 @@ public class MainHook implements IXposedHookLoadPackage {
             n.contentIntent = src.contentIntent;
             if (tag != null) nm.notify(tag, id, n);
             else             nm.notify(id, n);
-            XposedBridge.log(TAG + ": 岛状态更新已发送 state=" + state + " id=" + id);
+            log(TAG + ": 岛状态更新已发送 state=" + state + " id=" + id);
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": 岛状态更新失败 state=" + state + " → " + e.getMessage());
+            log(TAG + ": 岛状态更新失败 state=" + state + " → " + e.getMessage());
         }
     }
 
@@ -2244,7 +2223,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 template.setIsland(islandTemplate);
             });
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": buildIslandExtras 失败 -> " + e.getMessage());
+            log(TAG + ": buildIslandExtras 失败 -> " + e.getMessage());
             return new Bundle();
         }
     }
@@ -2305,18 +2284,15 @@ public class MainHook implements IXposedHookLoadPackage {
         // 优先读取目标进程自己的 SP（由广播同步写入，无 SELinux 问题）
         SharedPreferences local = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         if (local.getAll().size() > 0) {
-            XposedBridge.log(TAG + ": 读取目标进程偷好设置，条目数=" + local.getAll().size());
+            log(TAG + ": 读取目标进程偷好设置，条目数=" + local.getAll().size());
             return local;
         }
-        // 回退：XSharedPreferences（首次吏未同步时）
+        // 回退：直接返回本地 SP（API 101 中无 XSharedPreferences；首次同步前可能为空）
         try {
-            de.robv.android.xposed.XSharedPreferences prefs =
-                    new de.robv.android.xposed.XSharedPreferences(MODULE_PKG, PREFS_NAME);
-            prefs.reload();
-            XposedBridge.log(TAG + ": XSharedPreferences 加载，条目数=" + prefs.getAll().size());
-            return prefs;
+            log(TAG + ": 本地偷好设置为空，回退读取本地 SharedPreferences");
+            return local;
         } catch (Exception e) {
-            XposedBridge.log(TAG + ": loadPrefs 失败 → " + e.getMessage());
+            log(TAG + ": loadPrefs 失败 → " + e.getMessage());
             return null;
         }
     }

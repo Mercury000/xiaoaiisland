@@ -24,7 +24,7 @@
         <!-- 最低 Xposed API 版本 -->
         <meta-data
             android:name="xposedminversion"
-            android:value="82" />
+            android:value="101" />
 
         <!--
             LSPosed 作用域声明（仅注入目标包名进程）
@@ -41,7 +41,7 @@
             android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+                <category android:name="io.github.libxposed.category.MODULE_SETTINGS" />
             </intent-filter>
         </activity>
 

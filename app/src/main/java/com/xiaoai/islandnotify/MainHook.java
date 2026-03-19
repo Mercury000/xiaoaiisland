@@ -85,8 +85,6 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 模块自身包名，用于跨进程读取 SharedPreferences */
     private static final String MODULE_PKG  = "com.xiaoai.islandnotify";
 
-    /** 同步偏好设置到目标进程的广播 Action */
-    private static final String ACTION_SYNC_PREFS = "com.xiaoai.islandnotify.ACTION_SYNC_PREFS";
     /** AlarmManager 闹钟触发岛状态更新的广播 Action */
     private static final String ACTION_ISLAND_UPDATE = "com.xiaoai.islandnotify.ACTION_ISLAND_UPDATE";
     /** 触发目标应用发送测试通知的广播 Action */
@@ -237,18 +235,14 @@ public class MainHook implements IXposedHookLoadPackage {
         hookNotifyMethods(lpparam);
     }
 
-    /**     * Hook 目标 App 的 Application.onCreate，在其进程内注册 BroadcastReceiver。
-     * 收到 ACTION_SYNC_PREFS 广播时，将偷好设置写入目标进程自己的 SharedPreferences，
-     * 彻底绕过 SELinux 跨 UID 文件读取限制。
-     */
+    /** Hook 目标 App 的 Application.onCreate，在其进程内注册业务广播接收器。 */
     private void hookApplicationOnCreate(XC_LoadPackage.LoadPackageParam lpparam) {
         findAndHookMethod("android.app.Application", lpparam.classLoader,
                 "onCreate", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 Context appCtx = (Context) param.thisObject;
-                IntentFilter filter = new IntentFilter(ACTION_SYNC_PREFS);
-                filter.addAction(ACTION_ISLAND_UPDATE);
+                IntentFilter filter = new IntentFilter(ACTION_ISLAND_UPDATE);
                 filter.addAction(ACTION_TEST_NOTIFY);
                 filter.addAction(ACTION_COURSE_REMINDER);
                 filter.addAction(ACTION_DO_MUTE);
@@ -262,160 +256,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 BroadcastReceiver receiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
-                        if (ACTION_SYNC_PREFS.equals(intent.getAction())) {
-                            SharedPreferences.Editor ed = context
-                                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
-                            for (String sfx : new String[]{"_pre", "_active", "_post"}) {
-                                String kA = "tpl_a" + sfx;
-                                if (intent.hasExtra(kA)) ed.putString(kA, intent.getStringExtra(kA));
-                                String kB = "tpl_b" + sfx;
-                                if (intent.hasExtra(kB)) ed.putString(kB, intent.getStringExtra(kB));
-                                String kT = "tpl_ticker" + sfx;
-                                if (intent.hasExtra(kT)) ed.putString(kT, intent.getStringExtra(kT));
-                            }
-                            if (intent.hasExtra("icon_a")) {
-                                ed.putBoolean("icon_a", intent.getBooleanExtra("icon_a", true));
-                            }
-                            // 同步超时设置：岛消失改为三阶段独立；通知消失按阶段
-                            for (String phase : new String[]{"pre", "active", "post"}) {
-                                String kIsVal  = "to_island_val_"  + phase;
-                                String kIsUnit = "to_island_unit_" + phase;
-                                String kNoVal  = "to_notif_val_"   + phase;
-                                String kNoUnit = "to_notif_unit_"  + phase;
-                                if (intent.hasExtra(kIsVal))  ed.putInt   (kIsVal,  intent.getIntExtra   (kIsVal, -1));
-                                if (intent.hasExtra(kIsUnit)) ed.putString(kIsUnit, safeStr(intent.getStringExtra(kIsUnit)));
-                                if (intent.hasExtra(kNoVal))  ed.putInt   (kNoVal,  intent.getIntExtra   (kNoVal, -1));
-                                if (intent.hasExtra(kNoUnit)) ed.putString(kNoUnit, safeStr(intent.getStringExtra(kNoUnit)));
-                            }
-                            if (intent.hasExtra(KEY_REMINDER_MINUTES)) {
-                                ed.putInt(KEY_REMINDER_MINUTES, intent.getIntExtra(
-                                        KEY_REMINDER_MINUTES, DEFAULT_REMINDER_MINUTES));
-                            }
-                            if (intent.hasExtra(KEY_MUTE_ENABLED)) {
-                                ed.putBoolean(KEY_MUTE_ENABLED,
-                                        intent.getBooleanExtra(KEY_MUTE_ENABLED, false));
-                            }
-                            if (intent.hasExtra(KEY_MUTE_MINS_BEFORE)) {
-                                ed.putInt(KEY_MUTE_MINS_BEFORE,
-                                        intent.getIntExtra(KEY_MUTE_MINS_BEFORE, DEFAULT_MUTE_MINS_BEFORE));
-                            }
-                            if (intent.hasExtra(KEY_UNMUTE_ENABLED)) {
-                                ed.putBoolean(KEY_UNMUTE_ENABLED,
-                                        intent.getBooleanExtra(KEY_UNMUTE_ENABLED, false));
-                            }
-                            if (intent.hasExtra(KEY_UNMUTE_MINS_AFTER)) {
-                                ed.putInt(KEY_UNMUTE_MINS_AFTER,
-                                        intent.getIntExtra(KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER));
-                            }
-                            if (intent.hasExtra(KEY_DND_ENABLED)) {
-                                ed.putBoolean(KEY_DND_ENABLED,
-                                        intent.getBooleanExtra(KEY_DND_ENABLED, false));
-                            }
-                            if (intent.hasExtra(KEY_DND_MINS_BEFORE)) {
-                                ed.putInt(KEY_DND_MINS_BEFORE,
-                                        intent.getIntExtra(KEY_DND_MINS_BEFORE, DEFAULT_DND_MINS_BEFORE));
-                            }
-                            if (intent.hasExtra(KEY_UNDND_ENABLED)) {
-                                ed.putBoolean(KEY_UNDND_ENABLED,
-                                        intent.getBooleanExtra(KEY_UNDND_ENABLED, false));
-                            }
-                            if (intent.hasExtra(KEY_UNDND_MINS_AFTER)) {
-                                ed.putInt(KEY_UNDND_MINS_AFTER,
-                                        intent.getIntExtra(KEY_UNDND_MINS_AFTER, DEFAULT_UNDND_MINS_AFTER));
-                            }
-                            if (intent.hasExtra(KEY_WAKEUP_MORNING_ENABLED))
-                                ed.putBoolean(KEY_WAKEUP_MORNING_ENABLED, intent.getBooleanExtra(KEY_WAKEUP_MORNING_ENABLED, false));
-                            if (intent.hasExtra(KEY_WAKEUP_MORNING_LAST_SEC))
-                                ed.putInt(KEY_WAKEUP_MORNING_LAST_SEC, intent.getIntExtra(KEY_WAKEUP_MORNING_LAST_SEC, DEFAULT_WAKEUP_MORNING_LAST_SEC));
-                            if (intent.hasExtra(KEY_WAKEUP_MORNING_RULES_JSON))
-                                ed.putString(KEY_WAKEUP_MORNING_RULES_JSON, intent.getStringExtra(KEY_WAKEUP_MORNING_RULES_JSON));
-                            if (intent.hasExtra(KEY_WAKEUP_AFTERNOON_ENABLED))
-                                ed.putBoolean(KEY_WAKEUP_AFTERNOON_ENABLED, intent.getBooleanExtra(KEY_WAKEUP_AFTERNOON_ENABLED, false));
-                            if (intent.hasExtra(KEY_WAKEUP_AFTERNOON_FIRST_SEC))
-                                ed.putInt(KEY_WAKEUP_AFTERNOON_FIRST_SEC, intent.getIntExtra(KEY_WAKEUP_AFTERNOON_FIRST_SEC, DEFAULT_WAKEUP_AFTERNOON_FIRST_SEC));
-                            if (intent.hasExtra(KEY_WAKEUP_AFTERNOON_RULES_JSON))
-                                ed.putString(KEY_WAKEUP_AFTERNOON_RULES_JSON, intent.getStringExtra(KEY_WAKEUP_AFTERNOON_RULES_JSON));
-                            if (intent.hasExtra(KEY_REPOST_ENABLED))
-                                ed.putBoolean(KEY_REPOST_ENABLED, intent.getBooleanExtra(KEY_REPOST_ENABLED, true));
-                            if (intent.hasExtra("island_button_mode")) {
-                                ed.putInt("island_button_mode", intent.getIntExtra("island_button_mode", 2));
-                            }
-                            ed.apply();
-                            // 自动同步假期数据（去年、今年、未来两年）到 island_holiday 文件
-                            int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
-                            for (int yr = currentYear - 1; yr <= currentYear + 2; yr++) {
-                                String hKey = HolidayManager.EXTRA_LIST_PREFIX + yr;
-                                if (intent.hasExtra(hKey)) {
-                                    String hJson = intent.getStringExtra(hKey);
-                                    context.getSharedPreferences(HolidayManager.PREFS_HOLIDAY,
-                                            Context.MODE_PRIVATE)
-                                           .edit().putString("list_" + yr, hJson).apply();
-                                    XposedBridge.log(TAG + ": 假期数据已同步 " + yr + "年");
-                                }
-                            }
-                            // 同步内存开关
-                            if (intent.hasExtra(KEY_MUTE_ENABLED))
-                                sMuteEnabled   = intent.getBooleanExtra(KEY_MUTE_ENABLED, false);
-                            if (intent.hasExtra(KEY_UNMUTE_ENABLED))
-                                sUnmuteEnabled = intent.getBooleanExtra(KEY_UNMUTE_ENABLED, false);
-                            if (intent.hasExtra(KEY_DND_ENABLED))
-                                sDndEnabled    = intent.getBooleanExtra(KEY_DND_ENABLED, false);
-                            if (intent.hasExtra(KEY_UNDND_ENABLED))
-                                sUnDndEnabled  = intent.getBooleanExtra(KEY_UNDND_ENABLED, false);
-                            if (intent.hasExtra(KEY_WAKEUP_MORNING_ENABLED))
-                                sWakeupMorningEnabled   = intent.getBooleanExtra(KEY_WAKEUP_MORNING_ENABLED, false);
-                            if (intent.hasExtra(KEY_WAKEUP_AFTERNOON_ENABLED))
-                                sWakeupAfternoonEnabled = intent.getBooleanExtra(KEY_WAKEUP_AFTERNOON_ENABLED, false);
-                            if (intent.hasExtra(KEY_REPOST_ENABLED))
-                                sRepostEnabled = intent.getBooleanExtra(KEY_REPOST_ENABLED, true);
-                            if (intent.hasExtra("island_button_mode"))
-                                sIslandButtonMode = intent.getIntExtra("island_button_mode", 2);
-                            // 提醒分钟数或静音参数变化时重新调度
-                            boolean muteSettingChanged = intent.hasExtra(KEY_MUTE_ENABLED)
-                                    || intent.hasExtra(KEY_MUTE_MINS_BEFORE)
-                                    || intent.hasExtra(KEY_UNMUTE_ENABLED)
-                                    || intent.hasExtra(KEY_UNMUTE_MINS_AFTER)
-                                    || intent.hasExtra(KEY_DND_ENABLED)
-                                    || intent.hasExtra(KEY_DND_MINS_BEFORE)
-                                    || intent.hasExtra(KEY_UNDND_ENABLED)
-                                    || intent.hasExtra(KEY_UNDND_MINS_AFTER);
-                            boolean reminderSettingChanged = intent.hasExtra(KEY_REMINDER_MINUTES);
-                            
-                            if (reminderSettingChanged || muteSettingChanged) {
-                                // 偏好变化仅触发本地重新调度，不触发消耗资源的主动网络更新
-                                safeReschedule(context, "island_sync_prefs", false);
-                            }
-
-                            // 叫醒闹钟设置变化时重新调度
-                            boolean wakeupSettingChanged = intent.hasExtra(KEY_WAKEUP_MORNING_ENABLED)
-                                    || intent.hasExtra(KEY_WAKEUP_MORNING_LAST_SEC)
-                                    || intent.hasExtra(KEY_WAKEUP_MORNING_RULES_JSON)
-                                    || intent.hasExtra(KEY_WAKEUP_AFTERNOON_ENABLED)
-                                    || intent.hasExtra(KEY_WAKEUP_AFTERNOON_FIRST_SEC)
-                                    || intent.hasExtra(KEY_WAKEUP_AFTERNOON_RULES_JSON);
-                            if (wakeupSettingChanged) {
-                                scheduleTodayWakeupAlarms(context);
-                            }
-                            // 记录接收到的 extras 与写入的键值，便于排查模块进程与目标进程不一致问题
-                            try {
-                                StringBuilder sb = new StringBuilder();
-                                sb.append("SYNC_PREFS extras:\n");
-                                for (String key : intent.getExtras().keySet()) {
-                                    Object v = intent.getExtras().get(key);
-                                    sb.append(key).append("=").append(String.valueOf(v)).append("\n");
-                                }
-                                sb.append("Saved prefs:\n");
-                                SharedPreferences saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                                for (String k : saved.getAll().keySet()) {
-                                    Object vv = saved.getAll().get(k);
-                                    sb.append(k).append("=").append(String.valueOf(vv)).append("\n");
-                                }
-                                XposedBridge.log(TAG + ": " + sb.toString());
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + ": SYNC_PREFS log failure -> " + t.getMessage());
-                            }
-                            XposedBridge.log(TAG + ": 偏好设置已同步到目标进程");
-                        } else if (ACTION_ISLAND_UPDATE.equals(intent.getAction())) {
+                        if (ACTION_ISLAND_UPDATE.equals(intent.getAction())) {
                             String courseName = safeStr(intent.getStringExtra("course_name"));
                             String startTime  = safeStr(intent.getStringExtra("start_time"));
                             String endTime    = safeStr(intent.getStringExtra("end_time"));
@@ -447,8 +288,7 @@ public class MainHook implements IXposedHookLoadPackage {
                                         + staleOwner + "」接管，忽略");
                                 return;
                             }
-                            SharedPreferences prefs = context
-                                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                            SharedPreferences prefs = getConfigPrefs(context);
                             sendIslandUpdate(info, state, context, channelId, src, nm, tag, id, prefs);
                         } else if (ACTION_TEST_NOTIFY.equals(intent.getAction())) {
                             // 由模块 APP 触发，在目标进程内构造并发送测试通知
@@ -707,7 +547,7 @@ public class MainHook implements IXposedHookLoadPackage {
                         } else if (ACTION_RESCHEDULE_DAILY.equals(intent.getAction())) {
                             // 每日 00:01 跨日重调：触发主动更新，重新同步开关状态，重新调度当日 alarm
                             XposedBridge.log(TAG + ": [跨日重调] 触发，同步配置并执行主动重调度");
-                            SharedPreferences dp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                            SharedPreferences dp = getConfigPrefs(context);
                             sMuteEnabled   = dp.getBoolean(KEY_MUTE_ENABLED,   false);
                             sUnmuteEnabled = dp.getBoolean(KEY_UNMUTE_ENABLED, false);
                             sDndEnabled    = dp.getBoolean(KEY_DND_ENABLED,    false);
@@ -741,8 +581,9 @@ public class MainHook implements IXposedHookLoadPackage {
                 XposedBridge.log(TAG + ": [Application] 广播接收器已注册");
                 // 动态定位小米内部 SettingsUtil（change 方法），用于静音/勿扰模式切换，结果按版本号缓存
                 MiuiSettingsInvoker.init(appCtx, appCtx.getClassLoader());
+                bootstrapRemotePrefsFromHostLocal(appCtx);
                 // 从 SP 读取开关状态
-                SharedPreferences initPrefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                SharedPreferences initPrefs = getConfigPrefs(appCtx);
                 sMuteEnabled            = initPrefs.getBoolean(KEY_MUTE_ENABLED,              false);
                 sUnmuteEnabled          = initPrefs.getBoolean(KEY_UNMUTE_ENABLED,            false);
                 sDndEnabled             = initPrefs.getBoolean(KEY_DND_ENABLED,               false);
@@ -1009,7 +850,7 @@ public class MainHook implements IXposedHookLoadPackage {
             JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
             JSONArray courses      = data.getJSONArray("courses");
 
-            SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences prefs = getConfigPrefs(ctx);
             // 将学期总周数写入 voiceassist 自己的 island_custom（作为备份），并广播给模块 UI
             if (totalWeek > 0) {
                 prefs.edit().putInt("course_total_week", totalWeek).apply();
@@ -1508,7 +1349,7 @@ public class MainHook implements IXposedHookLoadPackage {
             JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
             JSONArray courses      = data.getJSONArray("courses");
 
-            SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences prefs = getConfigPrefs(ctx);
             int muteMinsBefore  = prefs.getInt(KEY_MUTE_MINS_BEFORE,  DEFAULT_MUTE_MINS_BEFORE);
             int unmuteMinsAfter = prefs.getInt(KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER);
             int dndMinsBefore   = prefs.getInt(KEY_DND_MINS_BEFORE,   DEFAULT_DND_MINS_BEFORE);
@@ -1640,7 +1481,7 @@ public class MainHook implements IXposedHookLoadPackage {
             // 2. 延时 1s 发送：确保 deskclock 进程完成初始化并进入 Looper 循环
             getRescheduleHandler().postDelayed(() -> {
                 try {
-                    SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    SharedPreferences prefs = getConfigPrefs(ctx);
                     Intent schedIntent = new Intent(ACTION_SCHEDULE_CLOCK_ALARMS);
                     schedIntent.setPackage(DESKCLOCK_PKG);
                     // 关键标志位：允许触发已停止的应用，且提高接收优先级
@@ -1934,7 +1775,7 @@ public class MainHook implements IXposedHookLoadPackage {
             CourseInfo info, int notifId, String notifTag) {
         try {
             if (notif.extras == null) notif.extras = new Bundle();
-            SharedPreferences prefs = loadPrefs(ctx);
+            SharedPreferences prefs = getConfigPrefs(ctx);
             
             long startMs = computeClassStartMs(info.startTime);
             long endMs   = computeClassStartMs(info.endTime);
@@ -2032,8 +1873,7 @@ public class MainHook implements IXposedHookLoadPackage {
                     if (sbn.getId() == id) { src = sbn.getNotification() != null ? sbn : null; break; }
                 }
                 if (src == null) return;
-                SharedPreferences prefs =
-                        fc.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                SharedPreferences prefs = getConfigPrefs(fc);
                 sendIslandUpdate(fi, state, fc, channelId, src.getNotification(), nm, tag, id, prefs);
             }, delayMs);
             XposedBridge.log(TAG + ": Handler 已设定 state=" + state + " in " + (delayMs / 1000) + "s");
@@ -2324,6 +2164,53 @@ public class MainHook implements IXposedHookLoadPackage {
                 .replace("{教室}", info.classroom);
     }
 
+    private void bootstrapRemotePrefsFromHostLocal(Context ctx) {
+        try {
+            SharedPreferences hostLocal = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences remote = XposedBridge.getRemotePreferences(PREFS_NAME);
+            if (remote.getAll().isEmpty() && !hostLocal.getAll().isEmpty()) {
+                copyAllPrefs(remote, hostLocal.getAll());
+                XposedBridge.log(TAG + ": 首次迁移：宿主本地配置 -> remote prefs");
+            }
+
+            SharedPreferences hostHoliday = ctx.getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+            SharedPreferences remoteHoliday = XposedBridge.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
+            if (remoteHoliday.getAll().isEmpty() && !hostHoliday.getAll().isEmpty()) {
+                copyAllPrefs(remoteHoliday, hostHoliday.getAll());
+                XposedBridge.log(TAG + ": 首次迁移：宿主本地节假日 -> remote prefs");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": bootstrapRemotePrefsFromHostLocal failed -> " + t.getMessage());
+        }
+    }
+
+    private void copyAllPrefs(SharedPreferences target, java.util.Map<String, ?> allValues) {
+        if (target == null || allValues == null) return;
+        SharedPreferences.Editor ed = target.edit();
+        for (java.util.Map.Entry<String, ?> e : allValues.entrySet()) {
+            String key = e.getKey();
+            Object v = e.getValue();
+            if (v == null) {
+                ed.remove(key);
+            } else if (v instanceof String) {
+                ed.putString(key, (String) v);
+            } else if (v instanceof Integer) {
+                ed.putInt(key, (Integer) v);
+            } else if (v instanceof Boolean) {
+                ed.putBoolean(key, (Boolean) v);
+            } else if (v instanceof Long) {
+                ed.putLong(key, (Long) v);
+            } else if (v instanceof Float) {
+                ed.putFloat(key, (Float) v);
+            } else if (v instanceof java.util.Set) {
+                @SuppressWarnings("unchecked")
+                java.util.Set<String> set = (java.util.Set<String>) v;
+                ed.putStringSet(key, set);
+            }
+        }
+        ed.apply();
+    }
+
     private void registerRemotePrefsListener(Context ctx) {
         try {
             com.xiaoai.islandnotify.modernhook.XSharedPreferences remote =
@@ -2414,6 +2301,23 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": loadPrefs 失败 → " + e.getMessage());
             return null;
         }
+    }
+
+    private SharedPreferences loadConfigPrefsRemoteFirst(Context ctx) {
+        SharedPreferences local = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        try {
+            com.xiaoai.islandnotify.modernhook.XSharedPreferences remote =
+                    new com.xiaoai.islandnotify.modernhook.XSharedPreferences(MODULE_PKG, PREFS_NAME);
+            remote.reload();
+            if (!remote.getAll().isEmpty()) return remote;
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": remote prefs load failed -> " + t.getMessage());
+        }
+        return local;
+    }
+
+    private SharedPreferences getConfigPrefs(Context ctx) {
+        return loadConfigPrefsRemoteFirst(ctx);
     }
 
     /**

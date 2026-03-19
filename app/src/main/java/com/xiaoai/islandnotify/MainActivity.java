@@ -76,7 +76,9 @@ public class MainActivity extends AppCompatActivity {
     private volatile String mFrameworkDesc = "";
     private volatile XposedService mXposedService;
     private volatile SharedPreferences mRemotePrefs;
+    private volatile SharedPreferences mRemoteHolidayPrefs;
     private SharedPreferences.OnSharedPreferenceChangeListener mLocalPrefMirrorListener;
+    private SharedPreferences.OnSharedPreferenceChangeListener mLocalHolidayMirrorListener;
     private volatile boolean mScopeRequested = false;
 
     private static final String[] CUSTOM_SUFFIXES = {"_pre", "_active", "_post"};
@@ -176,6 +178,11 @@ public class MainActivity extends AppCompatActivity {
             local.unregisterOnSharedPreferenceChangeListener(mLocalPrefMirrorListener);
             mLocalPrefMirrorListener = null;
         }
+        SharedPreferences holiday = getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+        if (mLocalHolidayMirrorListener != null) {
+            holiday.unregisterOnSharedPreferenceChangeListener(mLocalHolidayMirrorListener);
+            mLocalHolidayMirrorListener = null;
+        }
         super.onDestroy();
     }
 
@@ -197,6 +204,7 @@ public class MainActivity extends AppCompatActivity {
             public void onServiceDied(XposedService service) {
                 mXposedService = null;
                 mRemotePrefs = null;
+                mRemoteHolidayPrefs = null;
                 mFrameworkActive = false;
                 mFrameworkDesc = "";
                 runOnUiThread(MainActivity.this::updateModuleStatus);
@@ -212,7 +220,11 @@ public class MainActivity extends AppCompatActivity {
             SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             if (remote.getAll().isEmpty() && !local.getAll().isEmpty()) {
                 copyAllToTarget(remote, local.getAll());
-                Log.d("IslandNotify", "已将本地偏好迁移到 remote prefs");
+                Log.d("IslandNotify", "首次迁移：模块本地配置 -> remote prefs");
+            } else if (!remote.getAll().isEmpty() && local.getAll().isEmpty()) {
+                copyAllToTarget(local, remote.getAll());
+                Log.d("IslandNotify", "首次同步：remote prefs -> 模块本地配置");
+                runOnUiThread(this::recreate);
             }
 
             if (mLocalPrefMirrorListener == null) {
@@ -222,6 +234,25 @@ public class MainActivity extends AppCompatActivity {
                     copyKeysToTarget(rp, sp, changedKey);
                 };
                 local.registerOnSharedPreferenceChangeListener(mLocalPrefMirrorListener);
+            }
+
+            SharedPreferences remoteHoliday = service.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
+            mRemoteHolidayPrefs = remoteHoliday;
+            SharedPreferences localHoliday = getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+            if (remoteHoliday.getAll().isEmpty() && !localHoliday.getAll().isEmpty()) {
+                copyAllToTarget(remoteHoliday, localHoliday.getAll());
+                Log.d("IslandNotify", "首次迁移：本地节假日 -> remote prefs");
+            } else if (!remoteHoliday.getAll().isEmpty() && localHoliday.getAll().isEmpty()) {
+                copyAllToTarget(localHoliday, remoteHoliday.getAll());
+                Log.d("IslandNotify", "首次同步：remote 节假日 -> 本地");
+            }
+            if (mLocalHolidayMirrorListener == null) {
+                mLocalHolidayMirrorListener = (sp, changedKey) -> {
+                    SharedPreferences rh = mRemoteHolidayPrefs;
+                    if (rh == null || changedKey == null) return;
+                    copyKeysToTarget(rh, sp, changedKey);
+                };
+                localHoliday.registerOnSharedPreferenceChangeListener(mLocalHolidayMirrorListener);
             }
         } catch (Throwable t) {
             Log.w("IslandNotify", "initRemotePrefsBridge failed: " + t.getMessage());
@@ -402,8 +433,6 @@ public class MainActivity extends AppCompatActivity {
 
             SharedPreferences.Editor ed = sp.edit();
             // 通知 voiceassist 进程同步最新配置（绕过 SELinux 跨 UID 文件读取限制）
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
 
             for (int i = 0; i < 3; i++) {
                 String tplA      = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
@@ -412,15 +441,10 @@ public class MainActivity extends AppCompatActivity {
                 ed.putString("tpl_a"      + SUFFIXES[i], tplA);
                 ed.putString("tpl_b"      + SUFFIXES[i], tplB);
                 ed.putString("tpl_ticker" + SUFFIXES[i], tplTicker);
-                sync.putExtra("tpl_a"      + SUFFIXES[i], tplA);
-                sync.putExtra("tpl_b"      + SUFFIXES[i], tplB);
-                sync.putExtra("tpl_ticker" + SUFFIXES[i], tplTicker);
             }
             boolean iconA = swIconA.isChecked();
             ed.putBoolean("icon_a", iconA);
-            sync.putExtra("icon_a", iconA);
             ed.apply();
-            sendBroadcast(sync);
 
             tvHint.setText("已保存，下次通知生效");
             tvHint.setVisibility(View.VISIBLE);
@@ -458,8 +482,6 @@ public class MainActivity extends AppCompatActivity {
         final int[] IDS_TICKER = {R.id.et_tpl_ticker_pre,  R.id.et_tpl_ticker_active,  R.id.et_tpl_ticker_post};
         SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);
 
-        Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-        sync.setPackage("com.miui.voiceassist");
 
         for (int i = 0; i < 3; i++) {
             String tplA      = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
@@ -468,15 +490,10 @@ public class MainActivity extends AppCompatActivity {
             ed.putString("tpl_a"      + SUFFIXES[i], tplA);
             ed.putString("tpl_b"      + SUFFIXES[i], tplB);
             ed.putString("tpl_ticker" + SUFFIXES[i], tplTicker);
-            sync.putExtra("tpl_a"      + SUFFIXES[i], tplA);
-            sync.putExtra("tpl_b"      + SUFFIXES[i], tplB);
-            sync.putExtra("tpl_ticker" + SUFFIXES[i], tplTicker);
         }
         boolean iconA = swIconA.isChecked();
         ed.putBoolean("icon_a", iconA);
-        sync.putExtra("icon_a", iconA);
         ed.apply();
-        sendBroadcast(sync);
 
         TextView tvHint = findViewById(R.id.tv_save_hint);
         tvHint.setText("已保存，下次通知生效");
@@ -743,23 +760,17 @@ public class MainActivity extends AppCompatActivity {
             }
 
             SharedPreferences.Editor ed = sp.edit();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
 
             // 岛：三阶段键
             for (int i = 0; i < 3; i++) {
                 ed.putInt   ("to_island_val_"  + TO_PHASES[i], islandVals[i]);
                 ed.putString("to_island_unit_" + TO_PHASES[i], islandUnits[i]);
-                sync.putExtra("to_island_val_"  + TO_PHASES[i], islandVals[i]);
-                sync.putExtra("to_island_unit_" + TO_PHASES[i], islandUnits[i]);
             }
 
             // 通知：三阶段
             for (int i = 0; i < 3; i++) {
                 ed.putInt   ("to_notif_val_"  + TO_PHASES[i], notifVals[i]);
                 ed.putString("to_notif_unit_" + TO_PHASES[i], notifUnits[i]);
-                sync.putExtra("to_notif_val_"  + TO_PHASES[i], notifVals[i]);
-                sync.putExtra("to_notif_unit_" + TO_PHASES[i], notifUnits[i]);
             }
 
             // 删除旧版/遗留键，避免模块内部 SharedPreferences 与目标进程不一致
@@ -773,7 +784,6 @@ public class MainActivity extends AppCompatActivity {
             ed.remove("island_dismiss_unit");
             ed.remove("island_dismiss_trigger");
             ed.apply();
-            sendBroadcast(sync);
 
             tvHint.setText("已保存，下次通知生效");
             tvHint.setVisibility(View.VISIBLE);
@@ -830,10 +840,6 @@ public class MainActivity extends AppCompatActivity {
             etMinutes.setText(String.valueOf(minutes));
             sp.edit().putInt("reminder_minutes_before", minutes).apply();
 
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("reminder_minutes_before", minutes);
-            sendBroadcast(sync);
 
             tvHint.setText("已保存，重新调度今日提醒（提前 " + minutes + " 分钟）");
             tvHint.setVisibility(View.VISIBLE);
@@ -885,50 +891,30 @@ public class MainActivity extends AppCompatActivity {
         // 全局补发开关
         swRepost.setOnCheckedChangeListener((btn, checked) -> {
             sp.edit().putBoolean(KEY_REPOST_ENABLED, checked).apply();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra(KEY_REPOST_ENABLED, checked);
-            sendBroadcast(sync);
         });
 
         // 静音开关
         swMute.setOnCheckedChangeListener((btn, checked) -> {
             llMute.setVisibility(checked ? View.VISIBLE : View.GONE);
             sp.edit().putBoolean("mute_enabled", checked).apply();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("mute_enabled", checked);
-            sendBroadcast(sync);
         });
 
         // 取消静音开关
         swUnmute.setOnCheckedChangeListener((btn, checked) -> {
             llUnmute.setVisibility(checked ? View.VISIBLE : View.GONE);
             sp.edit().putBoolean("unmute_enabled", checked).apply();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("unmute_enabled", checked);
-            sendBroadcast(sync);
         });
 
         // 勿扰开关
         swDnd.setOnCheckedChangeListener((btn, checked) -> {
             llDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
             sp.edit().putBoolean("dnd_enabled", checked).apply();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("dnd_enabled", checked);
-            sendBroadcast(sync);
         });
 
         // 取消勿扰开关
         swUnDnd.setOnCheckedChangeListener((btn, checked) -> {
             llUnDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
             sp.edit().putBoolean("undnd_enabled", checked).apply();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("undnd_enabled", checked);
-            sendBroadcast(sync);
         });
 
         com.google.android.material.button.MaterialButtonToggleGroup toggleMode = findViewById(R.id.toggle_island_button_mode);
@@ -960,14 +946,6 @@ public class MainActivity extends AppCompatActivity {
               .putInt("island_button_mode", buttonMode)
               .apply();
 
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("mute_mins_before",  muteBefore);
-            sync.putExtra("unmute_mins_after", unmuteAfter);
-            sync.putExtra("dnd_mins_before",   dndBefore);
-            sync.putExtra("undnd_mins_after",  unDndAfter);
-            sync.putExtra("island_button_mode", buttonMode);
-            sendBroadcast(sync);
 
             tvMuteHint.setText("设置已保存并重新调度");
             tvMuteHint.setVisibility(View.VISIBLE);
@@ -1012,19 +990,11 @@ public class MainActivity extends AppCompatActivity {
         swMorning.setOnCheckedChangeListener((btn, checked) -> {
             llMorning.setVisibility(checked ? View.VISIBLE : View.GONE);
             sp.edit().putBoolean("wakeup_morning_enabled", checked).apply();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("wakeup_morning_enabled", checked);
-            sendBroadcast(sync);
         });
 
         swAfternoon.setOnCheckedChangeListener((btn, checked) -> {
             llAfternoon.setVisibility(checked ? View.VISIBLE : View.GONE);
             sp.edit().putBoolean("wakeup_afternoon_enabled", checked).apply();
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("wakeup_afternoon_enabled", checked);
-            sendBroadcast(sync);
         });
 
         findViewById(R.id.btn_add_morning_rule).setOnClickListener(v -> addRuleRow(llMorningRules, 1, 7, 0));
@@ -1046,13 +1016,6 @@ public class MainActivity extends AppCompatActivity {
               .putString("wakeup_afternoon_rules_json",  afternoonRulesJson)
               .apply();
 
-            Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-            sync.setPackage("com.miui.voiceassist");
-            sync.putExtra("wakeup_morning_last_sec",        lastSec);
-            sync.putExtra("wakeup_afternoon_first_sec",     firstSec);
-            sync.putExtra("wakeup_morning_rules_json",      morningRulesJson);
-            sync.putExtra("wakeup_afternoon_rules_json",    afternoonRulesJson);
-            sendBroadcast(sync);
 
             tvHint.setText("设置已保存并重新调度叫醒闹钟");
             tvHint.setVisibility(View.VISIBLE);
@@ -1931,10 +1894,10 @@ public class MainActivity extends AppCompatActivity {
     private void syncHolidayToHook(int year) {
         List<HolidayManager.HolidayEntry> entries = HolidayManager.loadEntries(this, year);
         String json = HolidayManager.entriesToJson(entries);
-        Intent sync = new Intent("com.xiaoai.islandnotify.ACTION_SYNC_PREFS");
-        sync.setPackage("com.miui.voiceassist");
-        sync.putExtra(HolidayManager.EXTRA_LIST_PREFIX + year, json);
-        sendBroadcast(sync);
+        SharedPreferences remoteHoliday = mRemoteHolidayPrefs;
+        if (remoteHoliday != null) {
+            remoteHoliday.edit().putString("list_" + year, json).apply();
+        }
     }
 
     /** 若今天落在 [date, endDate] 范围内（含），向 Hook 发送重新调度广播。 */

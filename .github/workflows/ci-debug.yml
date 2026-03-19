@@ -2,11 +2,27 @@ name: CI Debug
 
 on:
   pull_request:
+    branches:
+      - "main"
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "gradlew"
+      - "gradlew.bat"
+      - "build.gradle"
+      - "settings.gradle"
+      - "gradle.properties"
   push:
     branches:
-      - "**"
-    paths-ignore:
-      - "version.properties"
+      - "main"
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "gradlew"
+      - "gradlew.bat"
+      - "build.gradle"
+      - "settings.gradle"
+      - "gradle.properties"
 
 permissions:
   contents: read

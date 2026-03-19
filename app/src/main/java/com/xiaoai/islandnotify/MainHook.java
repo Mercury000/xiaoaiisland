@@ -613,7 +613,6 @@ public class MainHook {
                 sRepostEnabled          = initPrefs.getBoolean(KEY_REPOST_ENABLED,             true);
                 sIslandButtonMode       = initPrefs.getInt    ("island_button_mode",           0);
                 registerRemotePrefsListener(appCtx);
-                ensureDebugDefaults(appCtx);
                 // 加载持久化的闹钟 ID
                 mScheduledAlarmIds.addAll(loadScheduledIds(appCtx, "scheduled_alarm_ids"));
                 mScheduledMuteIds.addAll(loadScheduledIds(appCtx, "scheduled_mute_ids"));
@@ -2263,62 +2262,16 @@ public class MainHook {
         ed.apply();
     }
 
-    private SharedPreferences getWritableDebugPrefs(Context ctx) {
-        try {
-            return XposedBridge.getRemotePreferences(PREFS_DEBUG_NAME);
-        } catch (Throwable ignored) {
-            return ctx.getSharedPreferences(PREFS_DEBUG_NAME, Context.MODE_PRIVATE);
-        }
-    }
-
-    private void ensureDebugDefaults(Context ctx) {
-        try {
-            SharedPreferences sp = getWritableDebugPrefs(ctx);
-            SharedPreferences.Editor ed = sp.edit();
-            if (!sp.contains(DBG_COURSE_STATUS)) ed.putString(DBG_COURSE_STATUS, "已注入，等待课程调度");
-            if (!sp.contains(DBG_WAKEUP_STATUS)) ed.putString(DBG_WAKEUP_STATUS, "已注入，等待叫醒调度");
-            if (!sp.contains(DBG_MUTE_STATUS)) ed.putString(DBG_MUTE_STATUS, "已注入，等待静音/勿扰调度");
-            ed.apply();
-        } catch (Throwable ignored) {}
-    }
-
     private void putDebugString(Context ctx, String key, String value) {
-        try {
-            getWritableDebugPrefs(ctx).edit().putString(key, value == null ? "" : value).apply();
-        } catch (Throwable t) {
-            try {
-                ctx.getSharedPreferences(PREFS_DEBUG_NAME, Context.MODE_PRIVATE)
-                        .edit().putString(key, value == null ? "" : value).apply();
-            } catch (Throwable ignored) {}
-            sendDebugSyncBroadcast(ctx, key, DEBUG_TYPE_STRING, value == null ? "" : value, 0, 0L);
-            XposedBridge.log(TAG + ": debug write(string) failed key=" + key + " -> " + t.getMessage());
-        }
+        sendDebugSyncBroadcast(ctx, key, DEBUG_TYPE_STRING, value == null ? "" : value, 0, 0L);
     }
 
     private void putDebugInt(Context ctx, String key, int value) {
-        try {
-            getWritableDebugPrefs(ctx).edit().putInt(key, value).apply();
-        } catch (Throwable t) {
-            try {
-                ctx.getSharedPreferences(PREFS_DEBUG_NAME, Context.MODE_PRIVATE)
-                        .edit().putInt(key, value).apply();
-            } catch (Throwable ignored) {}
-            sendDebugSyncBroadcast(ctx, key, DEBUG_TYPE_INT, null, value, 0L);
-            XposedBridge.log(TAG + ": debug write(int) failed key=" + key + " -> " + t.getMessage());
-        }
+        sendDebugSyncBroadcast(ctx, key, DEBUG_TYPE_INT, null, value, 0L);
     }
 
     private void putDebugLong(Context ctx, String key, long value) {
-        try {
-            getWritableDebugPrefs(ctx).edit().putLong(key, value).apply();
-        } catch (Throwable t) {
-            try {
-                ctx.getSharedPreferences(PREFS_DEBUG_NAME, Context.MODE_PRIVATE)
-                        .edit().putLong(key, value).apply();
-            } catch (Throwable ignored) {}
-            sendDebugSyncBroadcast(ctx, key, DEBUG_TYPE_LONG, null, 0, value);
-            XposedBridge.log(TAG + ": debug write(long) failed key=" + key + " -> " + t.getMessage());
-        }
+        sendDebugSyncBroadcast(ctx, key, DEBUG_TYPE_LONG, null, 0, value);
     }
 
     private void sendDebugSyncBroadcast(Context ctx, String key, int type, String sVal, int iVal, long lVal) {

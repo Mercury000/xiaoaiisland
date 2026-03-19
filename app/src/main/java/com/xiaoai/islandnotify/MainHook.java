@@ -842,9 +842,10 @@ public class MainHook {
             JSONArray courses      = data.getJSONArray("courses");
 
             SharedPreferences prefs = getConfigPrefs(ctx);
+            SharedPreferences localPrefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             // 将学期总周数写入 voiceassist 自己的 island_custom（作为备份），并广播给模块 UI
             if (totalWeek > 0) {
-                prefs.edit().putInt("course_total_week", totalWeek).apply();
+                localPrefs.edit().putInt("course_total_week", totalWeek).apply();
                 Intent twIntent = new Intent(TotalWeekReceiver.ACTION_UPDATE_TOTAL_WEEK);
                 twIntent.setPackage(MODULE_PKG);
                 twIntent.putExtra("course_total_week", totalWeek);

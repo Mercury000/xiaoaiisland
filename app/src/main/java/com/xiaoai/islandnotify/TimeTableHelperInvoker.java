@@ -15,7 +15,6 @@ public final class TimeTableHelperInvoker {
     private static final String TAG = "IslandNotifyHook";
     private static final String PREFS_NAME = "island_custom";
     private static final String CACHE_KEY_PREFIX = "timetable_helper_class_@";
-    private static final String BIZ_PKG = "com.xiaomi.voiceassistant.AppWidget.biz.";
     
     private static volatile Method sDownMethod = null;
     private static volatile Object sInstance = null;

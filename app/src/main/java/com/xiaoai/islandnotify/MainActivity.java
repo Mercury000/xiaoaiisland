@@ -1536,10 +1536,6 @@ public class MainActivity extends AppCompatActivity {
     // Tab 切换
     // ─────────────────────────────────────────────────────────────
 
-    private static final int[] SETTINGS_CARD_IDS = {
-            R.id.card_status, R.id.card_test, R.id.card_custom,
-            R.id.card_timeout, R.id.card_reminder, R.id.card_mute
-    };
     private int mCurrentTabIndex = -1;
 
     private void setupTabs() {

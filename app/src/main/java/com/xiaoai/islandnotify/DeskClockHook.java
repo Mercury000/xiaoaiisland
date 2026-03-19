@@ -304,29 +304,6 @@ public class DeskClockHook {
         return null;
     }
 
-    /** 从 addAlarm 返回值或 alarm 对象本身读取数据库行 id */
-    private long extractId(Object returnVal, Object alarm) {
-        // MIUI 部分版本直接返回 Uri（content://…/alarm/7）
-        if (returnVal instanceof Uri) {
-            try { return Long.parseLong(((Uri) returnVal).getLastPathSegment()); }
-            catch (Throwable ignored) {}
-        }
-        // 部分版本返回 Long，需区分真实行 ID（小整数）与时间戳（>10^10）
-        if (returnVal instanceof Long)    { long v = (Long) returnVal;    if (v > 0 && v < 10_000_000_000L) return v; }
-        if (returnVal instanceof Integer) { return (long) (Integer) returnVal; }
-        // 尝试从返回的 Alarm 对象读取 id 字段（需排除时间戳）
-        if (returnVal != null && !(returnVal instanceof Uri)) {
-            Object rv = getField(returnVal, "id");
-            if (rv instanceof Long)    { long v = (Long) rv;    if (v > 0 && v < 10_000_000_000L) return v; }
-            if (rv instanceof Integer) { return (long) (Integer) rv; }
-        }
-        // 最后尝试原始 alarm 对象的 id 字段
-        Object idVal = getField(alarm, "id");
-        if (idVal instanceof Long)    { long v = (Long) idVal;    if (v > 0 && v < 10_000_000_000L) return v; }
-        if (idVal instanceof Integer) { return (long) (Integer) idVal; }
-        return -1;
-    }
-
     /**
      * 通过 ContentProvider 反查刚创建的闹钟真实行 ID。
      * 查找所有 hour == h && minutes == m 的行，返回 _id 最大（最新插入）的那条。

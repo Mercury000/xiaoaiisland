@@ -2217,21 +2217,38 @@ public class MainHook {
 
     private void bootstrapRemotePrefsFromHostLocal(Context ctx) {
         try {
-            SharedPreferences hostLocal = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             SharedPreferences remote = XposedBridge.getRemotePreferences(PREFS_NAME);
-            if (remote.getAll().isEmpty() && !hostLocal.getAll().isEmpty()) {
-                copyAllPrefs(remote, hostLocal.getAll());
-                XposedBridge.log(TAG + ": 首次迁移：宿主本地配置 -> remote prefs");
-            }
-
-            SharedPreferences hostHoliday = ctx.getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
             SharedPreferences remoteHoliday = XposedBridge.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
-            if (remoteHoliday.getAll().isEmpty() && !hostHoliday.getAll().isEmpty()) {
-                copyAllPrefs(remoteHoliday, hostHoliday.getAll());
-                XposedBridge.log(TAG + ": 首次迁移：宿主本地节假日 -> remote prefs");
-            }
+            SharedPreferences hostLocal = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences hostHoliday = ctx.getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+
+            runInitialMigration(remote, hostLocal, "配置");
+            runInitialMigration(remoteHoliday, hostHoliday, "节假日");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": bootstrapRemotePrefsFromHostLocal failed -> " + t.getMessage());
+        }
+    }
+
+    /**
+     * 统一首次迁移规则：
+     * 1) remote 为空且宿主本地非空：宿主本地 -> remote
+     * 2) remote 非空且宿主本地为空：remote -> 宿主本地
+     */
+    private void runInitialMigration(SharedPreferences remote, SharedPreferences hostLocal, String label) {
+        if (remote == null || hostLocal == null) return;
+        java.util.Map<String, ?> remoteAll = remote.getAll();
+        java.util.Map<String, ?> localAll = hostLocal.getAll();
+        boolean remoteEmpty = remoteAll == null || remoteAll.isEmpty();
+        boolean localEmpty = localAll == null || localAll.isEmpty();
+
+        if (remoteEmpty && !localEmpty) {
+            copyAllPrefs(remote, localAll);
+            XposedBridge.log(TAG + ": 首次迁移(" + label + ")：宿主本地 -> remote prefs");
+            return;
+        }
+        if (!remoteEmpty && localEmpty) {
+            copyAllPrefs(hostLocal, remoteAll);
+            XposedBridge.log(TAG + ": 首次迁移(" + label + ")：remote prefs -> 宿主本地");
         }
     }
 

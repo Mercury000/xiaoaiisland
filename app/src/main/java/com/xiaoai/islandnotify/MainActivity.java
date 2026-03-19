@@ -231,12 +231,7 @@ public class MainActivity extends AppCompatActivity {
             mRemoteDebugPrefs = remoteDebug;
 
             SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            if (remote.getAll().isEmpty() && !local.getAll().isEmpty()) {
-                copyAllToTarget(remote, local.getAll());
-                Log.d("IslandNotify", "首次迁移：模块本地配置 -> remote prefs");
-            } else if (!remote.getAll().isEmpty() && local.getAll().isEmpty()) {
-                copyAllToTarget(local, remote.getAll());
-                Log.d("IslandNotify", "首次同步：remote prefs -> 模块本地配置");
+            if (runInitialMigration(remote, local, "配置")) {
                 runOnUiThread(this::recreate);
             }
 
@@ -252,13 +247,7 @@ public class MainActivity extends AppCompatActivity {
             SharedPreferences remoteHoliday = service.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
             mRemoteHolidayPrefs = remoteHoliday;
             SharedPreferences localHoliday = getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
-            if (remoteHoliday.getAll().isEmpty() && !localHoliday.getAll().isEmpty()) {
-                copyAllToTarget(remoteHoliday, localHoliday.getAll());
-                Log.d("IslandNotify", "首次迁移：本地节假日 -> remote prefs");
-            } else if (!remoteHoliday.getAll().isEmpty() && localHoliday.getAll().isEmpty()) {
-                copyAllToTarget(localHoliday, remoteHoliday.getAll());
-                Log.d("IslandNotify", "首次同步：remote 节假日 -> 本地");
-            }
+            runInitialMigration(remoteHoliday, localHoliday, "节假日");
             if (mLocalHolidayMirrorListener == null) {
                 mLocalHolidayMirrorListener = (sp, changedKey) -> {
                     SharedPreferences rh = mRemoteHolidayPrefs;
@@ -270,6 +259,33 @@ public class MainActivity extends AppCompatActivity {
         } catch (Throwable t) {
             Log.w("IslandNotify", "initRemotePrefsBridge failed: " + t.getMessage());
         }
+    }
+
+    /**
+     * 统一首次迁移规则：
+     * 1) remote 为空且 local 非空：local -> remote
+     * 2) remote 非空且 local 为空：remote -> local
+     *
+     * @return 是否发生了 remote -> local 回填（需要刷新 UI）。
+     */
+    private boolean runInitialMigration(SharedPreferences remote, SharedPreferences local, String label) {
+        if (remote == null || local == null) return false;
+        Map<String, ?> remoteAll = remote.getAll();
+        Map<String, ?> localAll = local.getAll();
+        boolean remoteEmpty = remoteAll == null || remoteAll.isEmpty();
+        boolean localEmpty = localAll == null || localAll.isEmpty();
+
+        if (remoteEmpty && !localEmpty) {
+            copyAllToTarget(remote, localAll);
+            Log.d("IslandNotify", "首次迁移(" + label + ")：模块本地 -> remote prefs");
+            return false;
+        }
+        if (!remoteEmpty && localEmpty) {
+            copyAllToTarget(local, remoteAll);
+            Log.d("IslandNotify", "首次迁移(" + label + ")：remote prefs -> 模块本地");
+            return true;
+        }
+        return false;
     }
 
     private void requestMissingScopeIfNeeded(XposedService service) {

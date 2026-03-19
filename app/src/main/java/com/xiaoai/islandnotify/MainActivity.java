@@ -1343,7 +1343,6 @@ public class MainActivity extends AppCompatActivity {
         sb.append("上午叫醒：").append(boolCn(local.getBoolean("wakeup_morning_enabled", false))).append('\n');
         sb.append("下午叫醒：").append(boolCn(local.getBoolean("wakeup_afternoon_enabled", false))).append('\n');
         sb.append("岛超时配置：").append(formatTimeoutSummary(local, "island")).append('\n');
-        sb.append("通知超时触发：").append(notifTriggerText(local.getString(KEY_NOTIF_DISMISS_TRIGGER, "pre"))).append('\n');
         sb.append("通知超时配置：").append(formatTimeoutSummary(local, "notif")).append('\n');
         sb.append('\n');
 

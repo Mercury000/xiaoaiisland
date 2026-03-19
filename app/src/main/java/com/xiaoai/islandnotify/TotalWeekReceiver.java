@@ -14,7 +14,7 @@ public class TotalWeekReceiver extends BroadcastReceiver {
         if (ACTION_UPDATE_TOTAL_WEEK.equals(intent.getAction())) {
             int tw = intent.getIntExtra("course_total_week", 0);
             if (tw > 0) {
-                SharedPreferences sp = context.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE);
+                SharedPreferences sp = context.getSharedPreferences("island_runtime", Context.MODE_PRIVATE);
                 sp.edit().putInt("course_total_week", tw).apply();
                 Log.d("IslandNotify", "TotalWeekReceiver: updated total week to " + tw);
             }

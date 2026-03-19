@@ -35,7 +35,7 @@ import com.xiaoai.islandnotify.modernhook.XposedBridge;
 public final class MiuiSettingsInvoker {
 
     private static final String TAG        = "IslandNotifyHook";
-    private static final String PREFS_NAME = "island_custom";
+    private static final String PREFS_NAME = "island_runtime";
     /** SP key 前缀，后接 versionCode */
     private static final String CACHE_KEY_PREFIX = "settings_util_class_@";
     /** 目标工具类所在包前缀 */

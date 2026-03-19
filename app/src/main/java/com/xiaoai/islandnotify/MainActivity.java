@@ -88,6 +88,10 @@ public class MainActivity extends AppCompatActivity {
     private volatile boolean mScopeRequested = false;
 
     private static final String[] CUSTOM_SUFFIXES = {"_pre", "_active", "_post"};
+    private static final String[] STAGED_SUFFIXES = {"_pre", "_active", "_post"};
+    private static final String[] TEMPLATE_BASE_KEYS = {"tpl_a", "tpl_b", "tpl_ticker"};
+    private static final String KEY_MIGRATION_DONE = "migration_config_v1_done";
+    private static final String PREFS_RUNTIME_NAME = "island_runtime";
     private static final String[] DEFAULT_TPL_A = {
             "{\u6559\u5ba4}", "{\u8bfe\u540d}", "{\u8bfe\u540d}"
     };
@@ -204,7 +208,7 @@ public class MainActivity extends AppCompatActivity {
                 mFrameworkDesc = "Framework: " + service.getFrameworkName()
                         + "\nAPI: " + service.getApiVersion()
                         + "  Version: " + service.getFrameworkVersionCode();
-                initRemotePrefsBridge(service);
+                initRemotePrefsBridgeV2(service);
                 requestMissingScopeIfNeeded(service);
                 runOnUiThread(MainActivity.this::updateModuleStatus);
             }
@@ -223,6 +227,88 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void initRemotePrefsBridgeV2(XposedService service) {
+        try {
+            SharedPreferences remote = service.getRemotePreferences(PREFS_NAME);
+            mRemotePrefs = remote;
+            SharedPreferences remoteDebug = service.getRemotePreferences(PREFS_DEBUG_NAME);
+            mRemoteDebugPrefs = remoteDebug;
+
+            SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            migrateLegacyConfigOnce(remote);
+            migrateLegacyConfigOnce(local);
+            if (runInitialMigrationV2(remote, local, "配置", true)) {
+                runOnUiThread(this::recreate);
+            }
+
+            if (mLocalPrefMirrorListener == null) {
+                mLocalPrefMirrorListener = (sp, changedKey) -> {
+                    SharedPreferences rp = mRemotePrefs;
+                    if (rp == null || changedKey == null || !isConfigKey(changedKey)) return;
+                    copySingleKeyToTarget(rp, sp, changedKey);
+                };
+                local.registerOnSharedPreferenceChangeListener(mLocalPrefMirrorListener);
+            }
+
+            SharedPreferences remoteHoliday = service.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
+            mRemoteHolidayPrefs = remoteHoliday;
+            SharedPreferences localHoliday = getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+            runInitialMigrationV2(remoteHoliday, localHoliday, "节假日", false);
+            if (mLocalHolidayMirrorListener == null) {
+                mLocalHolidayMirrorListener = (sp, changedKey) -> {
+                    SharedPreferences rh = mRemoteHolidayPrefs;
+                    if (rh == null || changedKey == null) return;
+                    copySingleKeyToTarget(rh, sp, changedKey);
+                };
+                localHoliday.registerOnSharedPreferenceChangeListener(mLocalHolidayMirrorListener);
+            }
+        } catch (Throwable t) {
+            Log.w("IslandNotify", "initRemotePrefsBridgeV2 failed: " + t.getMessage());
+        }
+    }
+
+    private boolean runInitialMigrationV2(SharedPreferences remote, SharedPreferences local,
+                                          String label, boolean configOnly) {
+        if (remote == null || local == null) return false;
+        Map<String, ?> remoteAll = remote.getAll();
+        Map<String, ?> localAll = local.getAll();
+        boolean remoteEmpty = remoteAll == null || remoteAll.isEmpty();
+        boolean localEmpty = localAll == null || localAll.isEmpty();
+
+        if (remoteEmpty && !localEmpty) {
+            copyAllToTargetFiltered(remote, localAll, configOnly);
+            Log.d("IslandNotify", "首次迁移(" + label + ")：模块本地 -> remote prefs");
+            return false;
+        }
+        if (!remoteEmpty && localEmpty) {
+            copyAllToTargetFiltered(local, remoteAll, configOnly);
+            Log.d("IslandNotify", "首次迁移(" + label + ")：remote prefs -> 模块本地");
+            return true;
+        }
+        return false;
+    }
+
+    private void copyAllToTargetFiltered(SharedPreferences target, Map<String, ?> allValues, boolean configOnly) {
+        if (target == null || allValues == null) return;
+        SharedPreferences.Editor ed = target.edit();
+        for (Map.Entry<String, ?> e : allValues.entrySet()) {
+            if (configOnly && !isConfigKey(e.getKey())) continue;
+            putTyped(ed, e.getKey(), e.getValue());
+        }
+        ed.apply();
+    }
+
+    private void copySingleKeyToTarget(SharedPreferences target, SharedPreferences source, String key) {
+        if (target == null || source == null || key == null) return;
+        SharedPreferences.Editor ed = target.edit();
+        if (!source.contains(key)) {
+            ed.remove(key);
+        } else {
+            putTyped(ed, key, source.getAll().get(key));
+        }
+        ed.apply();
+    }
+
     private void initRemotePrefsBridge(XposedService service) {
         try {
             SharedPreferences remote = service.getRemotePreferences(PREFS_NAME);
@@ -231,6 +317,8 @@ public class MainActivity extends AppCompatActivity {
             mRemoteDebugPrefs = remoteDebug;
 
             SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            migrateLegacyConfigOnce(remote);
+            migrateLegacyConfigOnce(local);
             if (runInitialMigration(remote, local, "配置")) {
                 runOnUiThread(this::recreate);
             }
@@ -286,6 +374,128 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
         return false;
+    }
+
+    private void migrateLegacyConfigOnce(SharedPreferences sp) {
+        if (sp == null) return;
+        try {
+            Map<String, ?> all = sp.getAll();
+            if (all == null || all.isEmpty()) return;
+            if (sp.getBoolean(KEY_MIGRATION_DONE, false)) return;
+            SharedPreferences.Editor ed = sp.edit();
+            boolean changed = false;
+
+            // 旧版单模板键 -> 三阶段模板键
+            for (String baseKey : TEMPLATE_BASE_KEYS) {
+                String old = safeString(sp.getString(baseKey, ""));
+                if (old.isEmpty()) continue;
+                for (String suffix : STAGED_SUFFIXES) {
+                    String stageKey = baseKey + suffix;
+                    if (safeString(sp.getString(stageKey, "")).isEmpty()) {
+                        ed.putString(stageKey, old);
+                        changed = true;
+                    }
+                }
+                ed.remove(baseKey);
+                changed = true;
+            }
+
+            // 旧版单值超时配置迁移到三阶段
+            changed |= migrateSingleTimeoutKey(sp, ed, "to_island", "island_dismiss_trigger");
+            changed |= migrateSingleTimeoutKey(sp, ed, "to_notif", KEY_NOTIF_DISMISS_TRIGGER);
+            // 通知超时阶段统一为单选
+            changed |= normalizeSingleNotifPhase(sp, ed);
+
+            if (changed) {
+                Log.d("IslandNotify", "一次性迁移完成（旧配置 -> 三阶段）");
+            }
+            ed.putBoolean(KEY_MIGRATION_DONE, true);
+            ed.apply();
+        } catch (Throwable t) {
+            Log.w("IslandNotify", "migrateLegacyConfigOnce failed: " + t.getMessage());
+        }
+    }
+
+    private boolean migrateSingleTimeoutKey(SharedPreferences sp, SharedPreferences.Editor ed,
+                                            String prefix, String triggerKey) {
+        int oldVal = sp.getInt(prefix + "_val", -1);
+        String oldUnit = safeString(sp.getString(prefix + "_unit", "m"));
+        if (oldVal < 0) {
+            ed.remove(prefix + "_val");
+            ed.remove(prefix + "_unit");
+            return false;
+        }
+        String phase = safeString(sp.getString(triggerKey, "pre"));
+        if (!"active".equals(phase) && !"post".equals(phase)) phase = "pre";
+        String valKey = prefix + "_val_" + phase;
+        String unitKey = prefix + "_unit_" + phase;
+        boolean changed = false;
+        if (sp.getInt(valKey, -1) < 0) {
+            ed.putInt(valKey, oldVal);
+            ed.putString(unitKey, oldUnit.isEmpty() ? "m" : oldUnit);
+            changed = true;
+        }
+        ed.remove(prefix + "_val");
+        ed.remove(prefix + "_unit");
+        return changed;
+    }
+
+    private boolean normalizeSingleNotifPhase(SharedPreferences sp, SharedPreferences.Editor ed) {
+        String phase = safeString(sp.getString(KEY_NOTIF_DISMISS_TRIGGER, "pre"));
+        if (!"active".equals(phase) && !"post".equals(phase)) phase = "pre";
+        int selectedIdx = "active".equals(phase) ? 1 : ("post".equals(phase) ? 2 : 0);
+        if (sp.getInt("to_notif_val_" + TO_PHASES[selectedIdx], -1) < 0) {
+            for (int i = 0; i < TO_PHASES.length; i++) {
+                if (sp.getInt("to_notif_val_" + TO_PHASES[i], -1) >= 0) {
+                    selectedIdx = i;
+                    break;
+                }
+            }
+        }
+
+        boolean changed = false;
+        for (int i = 0; i < TO_PHASES.length; i++) {
+            if (i == selectedIdx) continue;
+            String p = TO_PHASES[i];
+            if (sp.getInt("to_notif_val_" + p, -1) >= 0) {
+                ed.putInt("to_notif_val_" + p, -1);
+                changed = true;
+            }
+        }
+        String selectedPhase = TO_PHASES[selectedIdx];
+        if (!selectedPhase.equals(sp.getString(KEY_NOTIF_DISMISS_TRIGGER, "pre"))) {
+            ed.putString(KEY_NOTIF_DISMISS_TRIGGER, selectedPhase);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private static String safeString(String value) {
+        return value == null ? "" : value;
+    }
+
+    private boolean isConfigKey(String key) {
+        if (key == null || key.isEmpty()) return false;
+        if (key.startsWith("tpl_") || key.startsWith("to_island_") || key.startsWith("to_notif_")) return true;
+        if (KEY_MIGRATION_DONE.equals(key) || KEY_NOTIF_DISMISS_TRIGGER.equals(key)) return true;
+        return "reminder_minutes_before".equals(key)
+                || "mute_enabled".equals(key)
+                || "mute_mins_before".equals(key)
+                || "unmute_enabled".equals(key)
+                || "unmute_mins_after".equals(key)
+                || "dnd_enabled".equals(key)
+                || "dnd_mins_before".equals(key)
+                || "undnd_enabled".equals(key)
+                || "undnd_mins_after".equals(key)
+                || KEY_REPOST_ENABLED.equals(key)
+                || "island_button_mode".equals(key)
+                || "icon_a".equals(key)
+                || "wakeup_morning_enabled".equals(key)
+                || "wakeup_morning_last_sec".equals(key)
+                || "wakeup_morning_rules_json".equals(key)
+                || "wakeup_afternoon_enabled".equals(key)
+                || "wakeup_afternoon_first_sec".equals(key)
+                || "wakeup_afternoon_rules_json".equals(key);
     }
 
     private void requestMissingScopeIfNeeded(XposedService service) {
@@ -1309,6 +1519,7 @@ public class MainActivity extends AppCompatActivity {
 
     private String buildDebugInfoText() {
         SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences runtime = getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
         SharedPreferences remote = mRemotePrefs;
         SharedPreferences localDebug = getSharedPreferences(PREFS_DEBUG_NAME, Context.MODE_PRIVATE);
         SharedPreferences remoteDebug = mRemoteDebugPrefs;
@@ -1374,8 +1585,8 @@ public class MainActivity extends AppCompatActivity {
         sb.append('\n');
 
         sb.append("【调度状态】").append('\n');
-        sb.append("课程总周数：").append(local.getInt("course_total_week", 0)).append('\n');
-        sb.append("上次跨日重调标记：").append(local.getInt("last_daily_reschedule_day", -1)).append('\n');
+        sb.append("课程总周数：").append(runtime.getInt("course_total_week", 0)).append('\n');
+        sb.append("上次跨日重调标记：").append(runtime.getInt("last_daily_reschedule_day", -1)).append('\n');
         sb.append("今日标记：").append(getTodayMarker()).append('\n');
         sb.append("本年节假日条目数：").append(countHolidayEntries(holidayListJson)).append('\n');
         sb.append('\n');
@@ -2229,7 +2440,7 @@ public class MainActivity extends AppCompatActivity {
     /** 读取目标进程通过广播同步到本地的学期总周数；失败时返回 30。 */
     private int readTotalWeekFromCourseData() {
         try {
-            SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences sp = getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
             int tw = sp.getInt("course_total_week", 0);
             android.util.Log.d("IslandNotify", "readTotalWeek: local tw=" + tw);
             if (tw > 0) return tw;

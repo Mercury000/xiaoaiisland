@@ -13,7 +13,7 @@ import com.xiaoai.islandnotify.modernhook.XposedBridge;
 public final class TimeTableHelperInvoker {
 
     private static final String TAG = "IslandNotifyHook";
-    private static final String PREFS_NAME = "island_custom";
+    private static final String PREFS_NAME = "island_runtime";
     private static final String CACHE_KEY_PREFIX = "timetable_helper_class_@";
     
     private static volatile Method sDownMethod = null;

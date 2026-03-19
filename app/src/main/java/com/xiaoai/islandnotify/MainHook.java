@@ -129,6 +129,7 @@ public class MainHook {
     private static final String KEY_SCHEDULED_ALARM_IDS = "scheduled_alarm_ids";
     private static final String KEY_SCHEDULED_MUTE_IDS = "scheduled_mute_ids";
     private static final String SETTINGS_CACHE_PREFIX = "settings_util_class_@";
+    private static final String TIMETABLE_CACHE_PREFIX = "timetable_helper_class_@";
     private static final String KEY_RUNTIME_MIGRATION_DONE = "runtime_storage_v1_done";
     private static final int    DEFAULT_MUTE_MINS_BEFORE  = 0;
     private static final int    DEFAULT_UNMUTE_MINS_AFTER = 0;
@@ -2261,7 +2262,10 @@ public class MainHook {
                                            SharedPreferences remoteConfig) {
         if (hostConfig == null || hostRuntime == null) return;
         try {
-            if (hostRuntime.getBoolean(KEY_RUNTIME_MIGRATION_DONE, false)) return;
+            if (hostRuntime.getBoolean(KEY_RUNTIME_MIGRATION_DONE, false)) {
+                migrateAddedRuntimeKeys(hostConfig, hostRuntime, remoteConfig);
+                return;
+            }
             SharedPreferences.Editor runtimeEd = hostRuntime.edit();
             SharedPreferences.Editor hostConfigEd = hostConfig.edit();
             boolean moved = false;
@@ -2271,6 +2275,7 @@ public class MainHook {
             moved |= moveStringKey(hostConfig, hostConfigEd, hostRuntime, runtimeEd, KEY_SCHEDULED_ALARM_IDS);
             moved |= moveStringKey(hostConfig, hostConfigEd, hostRuntime, runtimeEd, KEY_SCHEDULED_MUTE_IDS);
             moved |= movePrefixedStringKeys(hostConfig, hostConfigEd, hostRuntime, runtimeEd, SETTINGS_CACHE_PREFIX);
+            moved |= movePrefixedStringKeys(hostConfig, hostConfigEd, hostRuntime, runtimeEd, TIMETABLE_CACHE_PREFIX);
 
             if (moved) runtimeEd.apply();
             hostConfigEd.apply();
@@ -2286,6 +2291,7 @@ public class MainHook {
                     if (remoteAll != null) {
                         for (String key : remoteAll.keySet()) {
                             if (key != null && key.startsWith(SETTINGS_CACHE_PREFIX)) remoteEd.remove(key);
+                            if (key != null && key.startsWith(TIMETABLE_CACHE_PREFIX)) remoteEd.remove(key);
                         }
                     }
                     remoteEd.apply();
@@ -2296,6 +2302,31 @@ public class MainHook {
             if (moved) XposedBridge.log(TAG + ": 运行态键已迁移到 island_runtime");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": migrateRuntimeStorageOnce failed -> " + t.getMessage());
+        }
+    }
+
+    private void migrateAddedRuntimeKeys(SharedPreferences hostConfig, SharedPreferences hostRuntime,
+                                         SharedPreferences remoteConfig) {
+        try {
+            SharedPreferences.Editor runtimeEd = hostRuntime.edit();
+            SharedPreferences.Editor hostConfigEd = hostConfig.edit();
+            boolean moved = movePrefixedStringKeys(hostConfig, hostConfigEd, hostRuntime, runtimeEd, TIMETABLE_CACHE_PREFIX);
+            if (moved) {
+                runtimeEd.apply();
+                hostConfigEd.apply();
+            }
+            if (remoteConfig != null) {
+                SharedPreferences.Editor remoteEd = remoteConfig.edit();
+                java.util.Map<String, ?> remoteAll = remoteConfig.getAll();
+                if (remoteAll != null) {
+                    for (String key : remoteAll.keySet()) {
+                        if (key != null && key.startsWith(TIMETABLE_CACHE_PREFIX)) remoteEd.remove(key);
+                    }
+                }
+                remoteEd.apply();
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": migrateAddedRuntimeKeys failed -> " + t.getMessage());
         }
     }
 

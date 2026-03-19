@@ -119,6 +119,7 @@ public class MainActivity extends AppCompatActivity {
     };
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";
+    private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -1228,12 +1229,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showDebugDialog() {
-        String content = buildDebugInfoText();
         TextView tv = new TextView(this);
         int p = dpToPx(16);
         tv.setPadding(p, p, p, p);
         tv.setTextIsSelectable(true);
-        tv.setText(content);
+        tv.setText(buildDebugInfoText());
         tv.setTypeface(android.graphics.Typeface.MONOSPACE);
         tv.setTextSize(12f);
         tv.setVerticalScrollBarEnabled(true);
@@ -1245,9 +1245,27 @@ public class MainActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
                 .setTitle("Debug")
                 .setView(sv)
-                .setPositiveButton("复制", (d, w) -> copyDebugInfo(content))
+                .setNeutralButton("刷新", (d, w) -> {
+                    requestRuntimeDebugRefresh();
+                    tv.setText(buildDebugInfoText());
+                })
+                .setPositiveButton("复制", (d, w) -> copyDebugInfo(tv.getText() == null ? "" : tv.getText().toString()))
                 .setNegativeButton("关闭", null)
                 .show();
+
+        // 打开时先触发一次运行态刷新，再异步回填，避免首次打开看到空缓存。
+        requestRuntimeDebugRefresh();
+        Handler h = new Handler(Looper.getMainLooper());
+        h.postDelayed(() -> tv.setText(buildDebugInfoText()), 500);
+        h.postDelayed(() -> tv.setText(buildDebugInfoText()), 1200);
+    }
+
+    private void requestRuntimeDebugRefresh() {
+        try {
+            Intent i = new Intent(ACTION_RESCHEDULE_DAILY);
+            i.setPackage(TARGET_VOICEASSIST);
+            sendBroadcast(i);
+        } catch (Throwable ignored) {}
     }
 
     private void copyDebugInfo(String content) {

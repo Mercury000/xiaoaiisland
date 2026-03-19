@@ -1941,11 +1941,4 @@ public class MainActivity extends AppCompatActivity {
 
     // ─────────────────────────────────────────────────────────────
 
-    /**
-     * 旧版 API 82 时代用于自 Hook 检测激活状态。
-     * modern API 101 不再 Hook 模块自己的 App 进程，状态改由宿主回包判断。
-     */
-    public static boolean isModuleActive() {
-        return false;
-    }
 }

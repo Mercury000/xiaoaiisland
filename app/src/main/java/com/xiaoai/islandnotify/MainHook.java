@@ -30,11 +30,8 @@ import com.xzakota.hyper.notification.island.template.IslandTemplate;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import com.xiaoai.islandnotify.modernhook.IXposedHookLoadPackage;
 import com.xiaoai.islandnotify.modernhook.XC_MethodHook;
 import com.xiaoai.islandnotify.modernhook.XposedBridge;
-import com.xiaoai.islandnotify.modernhook.XposedHelpers;
-import com.xiaoai.islandnotify.modernhook.callbacks.XC_LoadPackage;
 
 import static com.xiaoai.islandnotify.modernhook.XposedHelpers.findAndHookMethod;
 
@@ -43,7 +40,7 @@ import static com.xiaoai.islandnotify.modernhook.XposedHelpers.findAndHookMethod
  * 功能：拦截 com.miui.voiceassist 发送的"课程表提醒"通知，
  *       注入 miui.focus.param 参数，将其升级为小米超级岛通知。
  */
-public class MainHook implements IXposedHookLoadPackage {
+public class MainHook {
 
     private static final String TAG = "IslandNotifyHook";
 
@@ -209,20 +206,14 @@ public class MainHook implements IXposedHookLoadPackage {
 
     // ─────────────────────────────────────────────────────────────
 
-    @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        // 注入自身进程 → hook isModuleActive()
-        if ("com.xiaoai.islandnotify".equals(lpparam.packageName)) {
-            hookSelfStatus(lpparam);
-            return;
-        }
+    public void handleLoadPackage(String packageName, String processName, ClassLoader classLoader) throws Throwable {
         // 只注入目标进程
-        if (!TARGET_PACKAGE.equals(lpparam.packageName)) {
+        if (!TARGET_PACKAGE.equals(packageName)) {
             return;
         }
         // 只注入主进程（processName == packageName），子进程如 :push/:remote 跳过
         // 各 OS 进程的 System.properties 相互独立，仅靠 HOOKED_KEY 无法去重跨进程重复
-        if (!TARGET_PACKAGE.equals(lpparam.processName)) {
+        if (!TARGET_PACKAGE.equals(processName)) {
             return;
         }
         // 同一进程可能因多 ClassLoader 被调用多次，只注册一次
@@ -230,14 +221,14 @@ public class MainHook implements IXposedHookLoadPackage {
         if (System.getProperty(HOOKED_KEY) != null) return;
         System.setProperty(HOOKED_KEY, "1");
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
-        hookApplicationOnCreate(lpparam);
-        hookUploadStateService(lpparam);
-        hookNotifyMethods(lpparam);
+        hookApplicationOnCreate(classLoader);
+        hookUploadStateService(classLoader);
+        hookNotifyMethods(classLoader);
     }
 
     /** Hook 目标 App 的 Application.onCreate，在其进程内注册业务广播接收器。 */
-    private void hookApplicationOnCreate(XC_LoadPackage.LoadPackageParam lpparam) {
-        findAndHookMethod("android.app.Application", lpparam.classLoader,
+    private void hookApplicationOnCreate(ClassLoader classLoader) {
+        findAndHookMethod("android.app.Application", classLoader,
                 "onCreate", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
@@ -650,10 +641,10 @@ public class MainHook implements IXposedHookLoadPackage {
      *   系统启动进程 → Application.onCreate（Xposed 注入 + 动态 BR 注册）
      *   → Service.onStartCommand（本 hook 拦截）→ 转发为包内广播 → 动态 BR 处理。
      */
-    private void hookUploadStateService(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookUploadStateService(ClassLoader classLoader) {
         try {
             // UploadStateService 未覆写 onStartCommand，需用 getMethod 搜索继承链
-            Class<?> svcClass = lpparam.classLoader.loadClass(UPLOAD_STATE_SERVICE);
+            Class<?> svcClass = classLoader.loadClass(UPLOAD_STATE_SERVICE);
             java.lang.reflect.Method onStartCmd = svcClass.getMethod(
                     "onStartCommand", Intent.class, int.class, int.class);
             XposedBridge.hookMethod(onStartCmd, new XC_MethodHook() {
@@ -1647,37 +1638,16 @@ public class MainHook implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + ": CourseData FileObserver 已启动，监控目录: " + dirPath);
     }
 
-    /**     * Hook 自身进程的 MainActivity.isModuleActive()，将返回值替换为 true，
-     * 使主界面能正确检测到模块已激活。
-     */
-    private void hookSelfStatus(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            findAndHookMethod(
-                    "com.xiaoai.islandnotify.MainActivity",
-                    lpparam.classLoader,
-                    "isModuleActive",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            param.setResult(Boolean.TRUE);
-                        }
-                    }
-            );
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hookSelfStatus 失败: " + t.getMessage());
-        }
-    }
-
     /**
      * Hook NotificationManager 的两个 notify 重载，在通知发出前注入岛参数。
      */
-    private void hookNotifyMethods(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookNotifyMethods(ClassLoader classLoader) {
 
         // ① notify(int id, Notification notification)
         try {
             findAndHookMethod(
                     "android.app.NotificationManager",
-                    lpparam.classLoader,
+                    classLoader,
                     "notify",
                     int.class,
                     Notification.class,
@@ -1691,7 +1661,7 @@ public class MainHook implements IXposedHookLoadPackage {
         try {
             findAndHookMethod(
                     "android.app.NotificationManager",
-                    lpparam.classLoader,
+                    classLoader,
                     "notify",
                     String.class,
                     int.class,

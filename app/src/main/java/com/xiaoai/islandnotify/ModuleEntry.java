@@ -6,7 +6,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 
 import com.xiaoai.islandnotify.modernhook.XposedBridge;
-import com.xiaoai.islandnotify.modernhook.callbacks.XC_LoadPackage;
 import io.github.libxposed.api.XposedModule;
 
 public class ModuleEntry extends XposedModule {
@@ -29,22 +28,21 @@ public class ModuleEntry extends XposedModule {
     public void onPackageLoaded(@NonNull PackageLoadedParam param) {
         XposedBridge.init(this);
 
-        XC_LoadPackage.LoadPackageParam legacyParam = new XC_LoadPackage.LoadPackageParam();
-        legacyParam.packageName = param.getPackageName();
-        legacyParam.processName = processName == null || processName.isEmpty()
+        String packageName = param.getPackageName();
+        String resolvedProcessName = processName == null || processName.isEmpty()
                 ? param.getPackageName()
                 : processName;
-        legacyParam.classLoader = param.getDefaultClassLoader();
+        ClassLoader classLoader = param.getDefaultClassLoader();
 
         try {
-            mainHook.handleLoadPackage(legacyParam);
+            mainHook.handleLoadPackage(packageName, resolvedProcessName, classLoader);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": MainHook 失败 -> " + t.getMessage());
             XposedBridge.log(t);
         }
 
         try {
-            deskClockHook.handleLoadPackage(legacyParam);
+            deskClockHook.handleLoadPackage(packageName, classLoader);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": DeskClockHook 失败 -> " + t.getMessage());
             XposedBridge.log(t);

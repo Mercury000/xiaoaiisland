@@ -13,10 +13,8 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.xiaoai.islandnotify.modernhook.IXposedHookLoadPackage;
 import com.xiaoai.islandnotify.modernhook.XC_MethodHook;
 import com.xiaoai.islandnotify.modernhook.XposedBridge;
-import com.xiaoai.islandnotify.modernhook.callbacks.XC_LoadPackage;
 
 import static com.xiaoai.islandnotify.modernhook.XposedHelpers.findAndHookMethod;
 
@@ -28,7 +26,7 @@ import static com.xiaoai.islandnotify.modernhook.XposedHelpers.findAndHookMethod
  * {@link #ACTION_SCHEDULE_CLOCK_ALARMS} 给 deskclock 进程，
  * 本类在 deskclock 进程内接收后通过反射操作 AlarmHelper / Alarm 类。
  */
-public class DeskClockHook implements IXposedHookLoadPackage {
+public class DeskClockHook {
 
     private static final String TAG           = "IslandNotifyDesk";
     private static final String DESKCLOCK_PKG = "com.android.deskclock";
@@ -46,17 +44,16 @@ public class DeskClockHook implements IXposedHookLoadPackage {
     // Xposed 入口
     // ─────────────────────────────────────────────────────────────────────────
 
-    @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        if (!DESKCLOCK_PKG.equals(lpparam.packageName)) return;
+    public void handleLoadPackage(String packageName, ClassLoader classLoader) throws Throwable {
+        if (!DESKCLOCK_PKG.equals(packageName)) return;
 
         // 在 deskclock Application 启动时注册广播接收器
-        findAndHookMethod("android.app.Application", lpparam.classLoader,
+        findAndHookMethod("android.app.Application", classLoader,
                 "onCreate", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         Context ctx = (Application) param.thisObject;
-                        registerScheduleReceiver(ctx, lpparam.classLoader);
+                        registerScheduleReceiver(ctx, classLoader);
                         XposedBridge.log(TAG + ": 叫醒闹钟接收器已注册");
                     }
                 });

@@ -520,9 +520,9 @@ public class MainActivity extends AppCompatActivity {
             String curA = ((EditText) findViewById(IDS_A[i])).getText().toString().trim();
             String curB = ((EditText) findViewById(IDS_B[i])).getText().toString().trim();
             String curT = ((EditText) findViewById(IDS_TICKER[i])).getText().toString().trim();
-            String sA = sp.getString("tpl_a" + SUFFIXES[i], "");
-            String sB = sp.getString("tpl_b" + SUFFIXES[i], "");
-            String sT = sp.getString("tpl_ticker" + SUFFIXES[i], "");
+            String sA = sp.getString("tpl_a" + SUFFIXES[i], DEFAULT_TPL_A[i]);
+            String sB = sp.getString("tpl_b" + SUFFIXES[i], DEFAULT_TPL_B[i]);
+            String sT = sp.getString("tpl_ticker" + SUFFIXES[i], DEFAULT_TPL_TICKER[i]);
             if (!curA.equals(sA) || !curB.equals(sB) || !curT.equals(sT)) return true;
         }
         SwitchMaterial swIconA = findViewById(R.id.sw_icon_a);
@@ -545,10 +545,15 @@ public class MainActivity extends AppCompatActivity {
         int curIslandVal = curIslandStr.isEmpty() ? -1 : tryParseInt(curIslandStr, -1);
         MaterialButtonToggleGroup toggleIslandUnit = findViewById(R.id.toggle_island_unit);
         String curIslandUnit = (toggleIslandUnit.getCheckedButtonId() == R.id.btn_island_s) ? "s" : "m";
+        SwitchMaterial swIslandDefault = findViewById(R.id.sw_island_to_default);
         int savedIsVal = sp.getInt("to_island_val_" + TO_PHASES[idxIsland], -1);
         String savedIsUnit = sp.getString("to_island_unit_" + TO_PHASES[idxIsland], "m");
-        if (curIslandVal != savedIsVal) return true;
-        if (!curIslandUnit.equals(savedIsUnit)) return true;
+        boolean savedIslandDefault = savedIsVal < 0;
+        if (swIslandDefault.isChecked() != savedIslandDefault) return true;
+        if (!swIslandDefault.isChecked()) {
+            if (curIslandVal != savedIsVal) return true;
+            if (!curIslandUnit.equals(savedIsUnit)) return true;
+        }
 
         // 通知：仅允许单选一个触发阶段
         MaterialButtonToggleGroup toggleNotifPhase = findViewById(R.id.toggle_notif_phase);
@@ -579,8 +584,8 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (swNotifDefault.isChecked() != savedDefault) return true;
-        if (idxNotif != savedTriggerIdx) return true;
         if (!swNotifDefault.isChecked()) {
+            if (idxNotif != savedTriggerIdx) return true;
             int savedNoVal = sp.getInt("to_notif_val_" + TO_PHASES[savedTriggerIdx], -1);
             String savedNoUnit = sp.getString("to_notif_unit_" + TO_PHASES[savedTriggerIdx], "m");
             if (curNotifVal != savedNoVal) return true;
@@ -847,6 +852,7 @@ public class MainActivity extends AppCompatActivity {
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateTimeoutDirtyIndicator(); }
             @Override public void afterTextChanged(android.text.Editable s) {}
         });
+        updateTimeoutDirtyIndicator();
     }
 
     /** 设置超时行（TextInputLayout + 单位切换按钮）的启用/禁用状态。 */

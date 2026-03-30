@@ -6,6 +6,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 
 import com.xiaoai.islandnotify.modernhook.XposedBridge;
+
 import io.github.libxposed.api.XposedModule;
 
 public class ModuleEntry extends XposedModule {
@@ -14,6 +15,7 @@ public class ModuleEntry extends XposedModule {
 
     private final MainHook mainHook = new MainHook();
     private final DeskClockHook deskClockHook = new DeskClockHook();
+    private final SystemUiHook systemUiHook = new SystemUiHook();
     private volatile String processName = "";
 
     @Override
@@ -37,15 +39,23 @@ public class ModuleEntry extends XposedModule {
         try {
             mainHook.handleLoadPackage(packageName, resolvedProcessName, classLoader);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": MainHook 失败 -> " + t.getMessage());
+            XposedBridge.log(TAG + ": MainHook failed -> " + t.getMessage());
             XposedBridge.log(t);
         }
 
         try {
             deskClockHook.handleLoadPackage(packageName, classLoader);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": DeskClockHook 失败 -> " + t.getMessage());
+            XposedBridge.log(TAG + ": DeskClockHook failed -> " + t.getMessage());
+            XposedBridge.log(t);
+        }
+
+        try {
+            systemUiHook.handleLoadPackage(packageName, classLoader);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": SystemUiHook failed -> " + t.getMessage());
             XposedBridge.log(t);
         }
     }
 }
+

@@ -12,6 +12,7 @@ import com.xiaoai.islandnotify.modernhook.XposedBridge;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Constructor;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -24,7 +25,7 @@ import static com.xiaoai.islandnotify.modernhook.XposedHelpers.findAndHookMethod
 public class SystemUiHook {
 
     private static final String TAG = "IslandNotifySysUI";
-    private static final String TARGET_PACKAGE = "com.android.systemui";
+    private static final Set<String> TARGET_PACKAGES = ConcurrentHashMap.newKeySet();
 
     private static final String DYNAMIC_ISLAND_CONTENT_IFACE =
             "com.android.systemui.plugins.miui.dynamicisland.DynamicIslandContent";
@@ -34,6 +35,28 @@ public class SystemUiHook {
             "com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl";
     private static final String DEVICE_MODEL_CLASS =
             "com.android.systemui.devicenotification.bean.DeviceNotificationModel";
+    private static final String DYNAMIC_ISLAND_WINDOW_VIEW_CONTROLLER_CLASS =
+            "miui.systemui.dynamicisland.window.DynamicIslandWindowViewController";
+    private static final String DYNAMIC_ISLAND_BASE_CONTENT_VIEW_CLASS =
+            "miui.systemui.dynamicisland.window.content.DynamicIslandBaseContentView";
+    private static final String TEMPLATE_FACTORY_V3_CLASS =
+            "miui.systemui.notification.focus.templateV3.TemplateFactoryV3";
+    private static final String MODULE_TEXT_VIEW_HOLDER_CLASS =
+            "miui.systemui.notification.focus.moduleV3.ModuleTextViewHolder";
+    private static final String MODULE_TINY_TEXT_VIEW_HOLDER_CLASS =
+            "miui.systemui.notification.focus.moduleV3.ModuleTinyTextViewHolder";
+    private static final String MODULE_DECO_PORT_TEXT_BUTTON_VIEW_HOLDER_CLASS =
+            "miui.systemui.notification.focus.moduleV3.ModuleDecoPortTextButtonViewHolder";
+    private static final String MODULE_DECO_PORT_TEXT_VIEW_HOLDER_CLASS =
+            "miui.systemui.notification.focus.moduleV3.ModuleDecoPortTextViewHolder";
+    private static final String MODULE_TEXT_BUTTON_VIEW_HOLDER_CLASS =
+            "miui.systemui.notification.focus.moduleV3.ModuleTextButtonViewHolder";
+    private static final String MODULE_TINY_TEXT_BUTTON_VIEW_HOLDER_CLASS =
+            "miui.systemui.notification.focus.moduleV3.ModuleTinyTextButtonViewHolder";
+    private static final String ISLAND_TEXT_VIEW_HOLDER_CLASS =
+            "miui.systemui.dynamicisland.module.IslandTextViewHolder";
+    private static final String ISLAND_RIGHT_TEXT_VIEW_HOLDER_CLASS =
+            "miui.systemui.dynamicisland.module.IslandRightTextViewHolder";
 
     private static final ThreadLocal<Boolean> sReentry = new ThreadLocal<>();
     private static final ThreadLocal<Integer> sIslandBindDepth = new ThreadLocal<>();
@@ -43,13 +66,448 @@ public class SystemUiHook {
     private static final Map<Object, String> sFocusContentKeyMap =
             java.util.Collections.synchronizedMap(new WeakHashMap<Object, String>());
     private static final ConcurrentMap<String, CachedTexts> sFullTextByKey = new ConcurrentHashMap<>();
+    private static final Map<ClassLoader, Boolean> sInstalledHookLoaders =
+            java.util.Collections.synchronizedMap(new WeakHashMap<ClassLoader, Boolean>());
+    private static volatile boolean sBaseDexCtorHooked = false;
+    private static volatile boolean sLoadClassHooked = false;
+
+    static {
+        TARGET_PACKAGES.add("com.android.systemui");
+        TARGET_PACKAGES.add("miui.systemui.plugin");
+        TARGET_PACKAGES.add("com.miui.systemui.plugin");
+    }
 
     public void handleLoadPackage(String packageName, ClassLoader classLoader) {
-        if (!TARGET_PACKAGE.equals(packageName)) return;
+        if (!TARGET_PACKAGES.contains(packageName)) return;
+        if ("com.android.systemui".equals(packageName)) {
+            hookPluginClassLoaderBridge(classLoader);
+            return;
+        }
+        installHooksForClassLoader(classLoader);
+    }
+
+    private void installHooksForClassLoader(ClassLoader classLoader) {
+        if (classLoader == null) return;
+        if (sInstalledHookLoaders.containsKey(classLoader)) return;
+        sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
+        hookExactFirstLimitPoints(classLoader);
         hookIslandExpandedView(classLoader);
         hookTextViewSetEllipsize(classLoader);
+        hookTextViewSetMaxEms(classLoader);
         hookTextViewSetText(classLoader);
         hookTextViewOnAttached(classLoader);
+    }
+
+    private void hookPluginClassLoaderBridge(ClassLoader classLoader) {
+        if (!sLoadClassHooked) {
+            synchronized (SystemUiHook.class) {
+                if (!sLoadClassHooked) {
+                    try {
+                        findAndHookMethod("java.lang.ClassLoader", classLoader,
+                                "loadClass", String.class, boolean.class, new XC_MethodHook() {
+                                    @Override
+                                    protected void afterHookedMethod(MethodHookParam param) {
+                                        if (!(param.thisObject instanceof ClassLoader)) return;
+                                        if (param.args == null || param.args.length == 0) return;
+                                        Object nameObj = param.args[0];
+                                        if (!(nameObj instanceof String)) return;
+                                        String name = (String) nameObj;
+                                        if (!isFocusModuleClassName(name)) return;
+                                        ClassLoader hit = (ClassLoader) param.thisObject;
+                                        installHooksForClassLoader(hit);
+                                    }
+                                });
+                        sLoadClassHooked = true;
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": hook ClassLoader#loadClass bridge failed -> " + t.getMessage());
+                    }
+                }
+            }
+        }
+        if (!sBaseDexCtorHooked) {
+            synchronized (SystemUiHook.class) {
+                if (!sBaseDexCtorHooked) {
+                    try {
+                        Class<?> baseDex = Class.forName("dalvik.system.BaseDexClassLoader", false, classLoader);
+                        for (Constructor<?> c : baseDex.getDeclaredConstructors()) {
+                            c.setAccessible(true);
+                            XposedBridge.hookMethod(c, new XC_MethodHook() {
+                                @Override
+                                protected void afterHookedMethod(MethodHookParam param) {
+                                    if (!(param.thisObject instanceof ClassLoader)) return;
+                                    ClassLoader cl = (ClassLoader) param.thisObject;
+                                    if (!isLikelyPluginClassLoader(cl)) return;
+                                    installHooksForClassLoader(cl);
+                                }
+                            });
+                        }
+                        sBaseDexCtorHooked = true;
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": hook BaseDexClassLoader bridge failed -> " + t.getMessage());
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean isFocusModuleClassName(String name) {
+        if (TextUtils.isEmpty(name)) return false;
+        return name.startsWith("miui.systemui.notification.focus.moduleV3.")
+                || name.startsWith("miui.systemui.notification.focus.templateV3.")
+                || name.startsWith("miui.systemui.dynamicisland.");
+    }
+
+    private boolean isLikelyPluginClassLoader(ClassLoader cl) {
+        if (cl == null) return false;
+        String s = String.valueOf(cl);
+        if (TextUtils.isEmpty(s)) return false;
+        String lower = s.toLowerCase();
+        return lower.contains("sysui_component")
+                || lower.contains("miui.systemui.plugin")
+                || lower.contains("systemui_component");
+    }
+
+    private void hookExactFirstLimitPoints(ClassLoader classLoader) {
+        hookCalculateMaxWidthWithSmall(classLoader);
+        hookExactTextLimitMethods(classLoader);
+        hookIslandRightTextFirstLimit(classLoader);
+        hookFocusSmallSubtitleFirstLimit(classLoader);
+    }
+
+    private void hookCalculateMaxWidthWithSmall(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(DYNAMIC_ISLAND_BASE_CONTENT_VIEW_CLASS, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"calculateMaxWidthWithSmall".equals(m.getName())) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Object r = param.getResult();
+                        if (!(r instanceof Number)) return;
+                        int old = ((Number) r).intValue();
+                        int widened = widenWidth(old);
+                        if (param.thisObject instanceof View) {
+                            View v = (View) param.thisObject;
+                            int vw = v.getWidth() - v.getPaddingLeft() - v.getPaddingRight();
+                            if (vw > widened) widened = vw;
+                        }
+                        if (r instanceof Integer) {
+                            param.setResult(widened);
+                        } else if (r instanceof Long) {
+                            param.setResult((long) widened);
+                        } else if (r instanceof Float) {
+                            param.setResult((float) widened);
+                        } else if (r instanceof Double) {
+                            param.setResult((double) widened);
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook calculateMaxWidthWithSmall failed -> " + t.getMessage());
+        }
+    }
+
+    private int widenWidth(int value) {
+        if (value <= 0) return value;
+        long widened = value;
+        widened = widened + Math.max(80L, widened / 2L);
+        if (widened > Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        return (int) widened;
+    }
+
+    private void hookExactTextLimitMethods(ClassLoader classLoader) {
+        hookTextSetterLikeMethod(TEMPLATE_FACTORY_V3_CLASS, "setTextVisibleAndText", classLoader);
+        hookTextSetterLikeMethod(MODULE_TEXT_VIEW_HOLDER_CLASS, "textChanged", classLoader);
+        hookTextSetterLikeMethod(ISLAND_TEXT_VIEW_HOLDER_CLASS, "textChanged", classLoader);
+    }
+
+    private void hookIslandRightTextFirstLimit(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(ISLAND_RIGHT_TEXT_VIEW_HOLDER_CLASS, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"updateWidth".equals(m.getName())) continue;
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length != 1 || p[0] != int.class) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null || param.args.length == 0) return;
+                        if (!(param.args[0] instanceof Integer)) return;
+                        Object self = param.thisObject;
+                        if (self == null) return;
+                        int width = (Integer) param.args[0];
+                        if (width <= 0) return;
+
+                        Object ctxObj = invokeNoArg(self, "getContext");
+                        if (!(ctxObj instanceof android.content.Context)) return;
+                        android.content.Context ctx = (android.content.Context) ctxObj;
+                        int bonus = 0;
+                        bonus += getDimenPx(ctx, "island_area_padding");
+                        bonus += getDimenPx(ctx, "text_padding");
+                        bonus += getDimenPx(ctx, "island_area_padding_cutout");
+                        bonus += getDimenPx(ctx, "island_text_padding_inner");
+                        if (bonus <= 0) return;
+
+                        long widened = (long) width + bonus;
+                        if (widened > Integer.MAX_VALUE) widened = Integer.MAX_VALUE;
+                        param.args[0] = (int) widened;
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook IslandRightTextViewHolder#updateWidth failed -> " + t.getMessage());
+        }
+    }
+
+    private int getDimenPx(android.content.Context ctx, String name) {
+        if (ctx == null || TextUtils.isEmpty(name)) return 0;
+        try {
+            int id = ctx.getResources().getIdentifier(name, "dimen", ctx.getPackageName());
+            if (id == 0) {
+                id = ctx.getResources().getIdentifier(name, "dimen", "com.android.systemui");
+            }
+            if (id == 0) return 0;
+            return ctx.getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignore) {
+            return 0;
+        }
+    }
+
+    private void hookFocusSmallSubtitleFirstLimit(ClassLoader classLoader) {
+        hookSubtitleWidthInSetViewWidth(classLoader);
+        hookModuleTextButton2Bind(classLoader, MODULE_TEXT_BUTTON_VIEW_HOLDER_CLASS);
+        hookModuleBindForSubtitle(classLoader, MODULE_DECO_PORT_TEXT_BUTTON_VIEW_HOLDER_CLASS);
+    }
+
+    private void hookModuleTextButton2Bind(ClassLoader classLoader, final String className) {
+        try {
+            Class<?> cls = Class.forName(className, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"bind".equals(m.getName())) continue;
+                if (m.getParameterTypes().length != 2) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Object self = param.thisObject;
+                        if (self == null) return;
+                        Object tpl = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+                        ensureSubTitleFieldVisible(self, tpl, "smallSubTitle");
+                    }
+                });
+                return;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook " + className + "#bind failed -> " + t.getMessage());
+        }
+    }
+
+    private void hookSubtitleWidthInSetViewWidth(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName("miui.systemui.notification.focus.moduleV3.ModuleViewHolder", false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"setViewWidth".equals(m.getName())) continue;
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length != 3) continue;
+                if (p[0] != TextView.class || p[1] != int.class || p[2] != int.class) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null || param.args.length < 3) return;
+                        Object tvObj = param.args[0];
+                        if (!(tvObj instanceof TextView)) return;
+                        TextView tv = (TextView) tvObj;
+                        if (!isSubtitleTargetView(tv)) return;
+
+                        CharSequence cs = tv.getText();
+                        if (TextUtils.isEmpty(cs)) return;
+
+                        int desired = (int) Math.ceil(tv.getPaint().measureText(cs.toString()))
+                                + tv.getPaddingLeft() + tv.getPaddingRight();
+                        ViewParent parent = tv.getParent();
+                        if (parent instanceof View) {
+                            View pv = (View) parent;
+                            int available = pv.getWidth() - pv.getPaddingLeft() - pv.getPaddingRight();
+                            if (available > 0) desired = Math.min(desired, available);
+                        }
+                        if (desired <= 0) return;
+
+                        int oldW = param.args[1] instanceof Integer ? (Integer) param.args[1] : 0;
+                        int minW = param.args[2] instanceof Integer ? (Integer) param.args[2] : 0;
+                        if (oldW < desired) param.args[1] = desired;
+                        if (minW < 1) param.args[2] = 1;
+                    }
+
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (param.args == null || param.args.length < 1) return;
+                        Object tvObj = param.args[0];
+                        if (!(tvObj instanceof TextView)) return;
+                        TextView tv = (TextView) tvObj;
+                        if (!isSubtitleTargetView(tv)) return;
+                        if (TextUtils.isEmpty(tv.getText())) return;
+                        sReentry.set(Boolean.TRUE);
+                        try {
+                            tv.setVisibility(View.VISIBLE);
+                        } catch (Throwable ignore) {
+                        } finally {
+                            sReentry.set(Boolean.FALSE);
+                        }
+                    }
+                });
+                return;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook ModuleViewHolder#setViewWidth failed -> " + t.getMessage());
+        }
+    }
+
+    private boolean isSubtitleTargetView(TextView tv) {
+        if (tv == null) return false;
+        int id = tv.getId();
+        if (id != View.NO_ID) {
+            String idName = safeIdName(tv, id).toLowerCase();
+            if (idName.contains("small_subtitle")) return true;
+            if (idName.contains("small_sub_title")) return true;
+            if (idName.contains("focus_small_subtitle")) return true;
+            if (idName.contains("focus_small_sub_title")) return true;
+            if (idName.endsWith("subtitle")) return true;
+            if (idName.endsWith("sub_title")) return true;
+        }
+        return false;
+    }
+
+    private void hookModuleBindForSubtitle(ClassLoader classLoader, final String className) {
+        try {
+            Class<?> cls = Class.forName(className, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"bind".equals(m.getName())) continue;
+                if (m.getParameterTypes().length != 2) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        Object self = param.thisObject;
+                        if (self == null) return;
+                        // hintInfo.type=2(按钮组件2): subTitle -> focusSmallSubtitleView
+                        Object tpl = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+                        ensureSubTitleFieldVisible(self, tpl, "focusSmallSubtitleView");
+                        forceSmallSubtitleNoFirstTrim(self, "focusSmallSubtitleView");
+                        // 组件2里 title 也在同一容器，避免相互挤压时再次触发首段省略
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook " + className + "#bind failed -> " + t.getMessage());
+        }
+    }
+
+    private void forceSmallSubtitleNoFirstTrim(Object host, String fieldName) {
+        Object tvObj = getFieldValue(host, fieldName);
+        if (!(tvObj instanceof TextView)) return;
+        TextView tv = (TextView) tvObj;
+        sReentry.set(Boolean.TRUE);
+        try {
+            tv.setMaxWidth(Integer.MAX_VALUE / 4);
+            tv.setMaxEms(Integer.MAX_VALUE / 4);
+            tv.setSingleLine(true);
+            tv.setMaxLines(1);
+            tv.setHorizontallyScrolling(false);
+            tv.setEllipsize(null);
+        } catch (Throwable ignore) {
+        } finally {
+            sReentry.set(Boolean.FALSE);
+        }
+        ensureAdaptiveWatcher(tv);
+        applyAdaptiveMarquee(tv);
+    }
+
+    private void ensureSubTitleFieldVisible(Object host, Object templateObj, String fieldName) {
+        Object tvObj = getFieldValue(host, fieldName);
+        if (!(tvObj instanceof TextView)) return;
+        TextView tv = (TextView) tvObj;
+        String text = extractSubTitle(host, templateObj);
+        if (TextUtils.isEmpty(text)) return;
+        sReentry.set(Boolean.TRUE);
+        try {
+            tv.setVisibility(View.VISIBLE);
+            tv.setText(text);
+            tv.setSingleLine(true);
+            tv.setMaxLines(1);
+            tv.setHorizontallyScrolling(false);
+            tv.setEllipsize(null);
+            ViewGroup.LayoutParams lp = tv.getLayoutParams();
+            if (lp != null && lp.width != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                tv.setLayoutParams(lp);
+            }
+            tv.requestLayout();
+        } catch (Throwable ignore) {
+        } finally {
+            sReentry.set(Boolean.FALSE);
+        }
+        ensureAdaptiveWatcher(tv);
+        applyAdaptiveMarquee(tv);
+    }
+
+    private String extractSubTitle(Object host, Object templateObj) {
+        try {
+            if (templateObj != null) {
+                Object hint = invokeNoArg(templateObj, "getHintInfo");
+                Object sub = hint == null ? null : invokeNoArg(hint, "getSubTitle");
+                if (sub instanceof String && !TextUtils.isEmpty((String) sub)) {
+                    return (String) sub;
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+        Object hostSub = invokeNoArg(host, "getSubtitle");
+        return hostSub instanceof String ? (String) hostSub : "";
+    }
+
+    private void hookTextSetterLikeMethod(String className, String methodName, ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(className, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!methodName.equals(m.getName())) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null || param.args.length == 0) return;
+                        for (int i = 0; i < param.args.length; i++) {
+                            Object arg = param.args[i];
+                            if (arg instanceof CharSequence) {
+                                String expanded = expandFromAllCachedTexts(arg.toString());
+                                if (!TextUtils.isEmpty(expanded) && !expanded.equals(arg.toString())) {
+                                    param.args[i] = expanded;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook " + className + "#" + methodName + " failed -> " + t.getMessage());
+        }
+    }
+
+    private String expandFromAllCachedTexts(String src) {
+        if (TextUtils.isEmpty(src) || sFullTextByKey.isEmpty()) return src;
+        for (CachedTexts t : sFullTextByKey.values()) {
+            if (t == null) continue;
+            if (!TextUtils.isEmpty(t.left) && isLikelyFirstLimitTrim(src, t.left)) {
+                return t.left;
+            }
+            if (!TextUtils.isEmpty(t.right) && isLikelyFirstLimitTrim(src, t.right)) {
+                return t.right;
+            }
+        }
+        return src;
     }
 
     private void hookIslandExpandedView(ClassLoader classLoader) {
@@ -535,6 +993,27 @@ public class SystemUiHook {
         }
     }
 
+    private void hookTextViewSetMaxEms(ClassLoader classLoader) {
+        try {
+            findAndHookMethod("android.widget.TextView", classLoader,
+                    "setMaxEms", int.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (isReentry()) return;
+                            if (!(param.thisObject instanceof TextView)) return;
+                            TextView tv = (TextView) param.thisObject;
+                            if (!shouldTuneIslandTextView(tv)) return;
+                            int old = param.args[0] instanceof Integer ? (Integer) param.args[0] : 0;
+                            if (old > 0 && old < 10) {
+                                param.args[0] = 10;
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": hook setMaxEms failed -> " + t.getMessage());
+        }
+    }
+
     private void hookTextViewSetText(ClassLoader classLoader) {
         try {
             findAndHookMethod("android.widget.TextView", classLoader,
@@ -683,6 +1162,7 @@ public class SystemUiHook {
 
     private static boolean shouldTuneIslandTextView(TextView tv) {
         if (isInIslandBind()) return true;
+        if (isFromRealIslandCallStack()) return true;
         int id = tv.getId();
         if (id != View.NO_ID) {
             String idName = safeIdName(tv, id).toLowerCase();
@@ -691,6 +1171,21 @@ public class SystemUiHook {
             if ("left_text".equals(idName) || "right_text".equals(idName)) return true;
         }
         return hasIslandAncestor(tv);
+    }
+
+    private static boolean isFromRealIslandCallStack() {
+        StackTraceElement[] st = Thread.currentThread().getStackTrace();
+        if (st == null) return false;
+        for (StackTraceElement e : st) {
+            if (e == null) continue;
+            String c = e.getClassName();
+            if (c == null) continue;
+            if (c.startsWith("miui.systemui.notification.focus.moduleV3.")) return true;
+            if (c.startsWith("miui.systemui.notification.focus.template.")) return true;
+            if (c.startsWith("miui.systemui.dynamicisland.module.")) return true;
+            if (c.startsWith("miui.systemui.dynamicisland.window.content.")) return true;
+        }
+        return false;
     }
 
     private static boolean hasIslandAncestor(View view) {

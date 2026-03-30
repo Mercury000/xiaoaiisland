@@ -92,10 +92,6 @@ public class SystemUiHook {
         sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
         hookExactFirstLimitPoints(classLoader);
         hookIslandExpandedView(classLoader);
-        hookTextViewSetEllipsize(classLoader);
-        hookTextViewSetMaxEms(classLoader);
-        hookTextViewSetText(classLoader);
-        hookTextViewOnAttached(classLoader);
     }
 
     private void hookPluginClassLoaderBridge(ClassLoader classLoader) {
@@ -168,9 +164,7 @@ public class SystemUiHook {
     }
 
     private void hookExactFirstLimitPoints(ClassLoader classLoader) {
-        hookCalculateMaxWidthWithSmall(classLoader);
-        hookExactTextLimitMethods(classLoader);
-        hookIslandRightTextFirstLimit(classLoader);
+        // 仅保留“主要小文本2(subTitle)”相关限制修正，避免影响未展开岛A区域宽度。
         hookFocusSmallSubtitleFirstLimit(classLoader);
     }
 
@@ -558,9 +552,7 @@ public class SystemUiHook {
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            cacheFullTextsFromModel(param.args);
-                            cacheFullTextsFromIslandParam(param.args);
-                            installRuntimeIslandContentHook(param.thisObject);
+                            // 不再改写岛A/B文本，避免未展开态宽度异常挤压状态栏图标。
                         }
                     });
         } catch (Throwable t) {
@@ -577,8 +569,6 @@ public class SystemUiHook {
                             View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
                                     ? (View) param.args[0] : null;
                             if (!isActiveRoot(root)) return;
-                            tuneIslandViewTree(root);
-                            applyCachedTextToGenericRoot(param.thisObject, root);
                         }
                     });
         } catch (Throwable t) {
@@ -601,7 +591,6 @@ public class SystemUiHook {
                                 if (v instanceof View) {
                                     View vv = (View) v;
                                     if (isActiveRoot(vv)) {
-                                        tuneIslandViewTree(vv);
                                     }
                                 }
                             }
@@ -693,10 +682,6 @@ public class SystemUiHook {
 
     private void tuneDynamicIslandData(Object dataObj) {
         rewriteTickerDataWithFullText(dataObj);
-        View real = asView(invokeNoArg(dataObj, "getView"));
-        View fake = asView(invokeNoArg(dataObj, "getFakeView"));
-        tuneIslandViewTree(real);
-        tuneIslandViewTree(fake);
     }
 
     private void cacheFullTextsFromModel(Object[] args) {
@@ -966,106 +951,6 @@ public class SystemUiHook {
         }
     }
 
-    private void hookTextViewSetEllipsize(ClassLoader classLoader) {
-        try {
-            findAndHookMethod("android.widget.TextView", classLoader,
-                    "setEllipsize", TextUtils.TruncateAt.class, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            if (isReentry()) return;
-                            if (!(param.thisObject instanceof TextView)) return;
-                            TextView tv = (TextView) param.thisObject;
-                            if (!shouldTuneIslandTextView(tv)) return;
-                            param.args[0] = null;
-                        }
-
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (isReentry()) return;
-                            if (!(param.thisObject instanceof TextView)) return;
-                            TextView tv = (TextView) param.thisObject;
-                            if (!shouldTuneIslandTextView(tv)) return;
-                            applyNoEllipsize(tv);
-                        }
-                    });
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook setEllipsize failed -> " + t.getMessage());
-        }
-    }
-
-    private void hookTextViewSetMaxEms(ClassLoader classLoader) {
-        try {
-            findAndHookMethod("android.widget.TextView", classLoader,
-                    "setMaxEms", int.class, new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            if (isReentry()) return;
-                            if (!(param.thisObject instanceof TextView)) return;
-                            TextView tv = (TextView) param.thisObject;
-                            if (!shouldTuneIslandTextView(tv)) return;
-                            int old = param.args[0] instanceof Integer ? (Integer) param.args[0] : 0;
-                            if (old > 0 && old < 10) {
-                                param.args[0] = 10;
-                            }
-                        }
-                    });
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook setMaxEms failed -> " + t.getMessage());
-        }
-    }
-
-    private void hookTextViewSetText(ClassLoader classLoader) {
-        try {
-            findAndHookMethod("android.widget.TextView", classLoader,
-                    "setText", CharSequence.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (isReentry()) return;
-                            if (!(param.thisObject instanceof TextView)) return;
-                            TextView tv = (TextView) param.thisObject;
-                            if (!shouldTuneIslandTextView(tv)) return;
-                            applyNoEllipsize(tv);
-                        }
-                    });
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook setText(CharSequence) failed -> " + t.getMessage());
-        }
-
-        try {
-            findAndHookMethod("android.widget.TextView", classLoader,
-                    "setText", CharSequence.class, TextView.BufferType.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (isReentry()) return;
-                            if (!(param.thisObject instanceof TextView)) return;
-                            TextView tv = (TextView) param.thisObject;
-                            if (!shouldTuneIslandTextView(tv)) return;
-                            applyNoEllipsize(tv);
-                        }
-                    });
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook setText(CharSequence,BufferType) failed -> " + t.getMessage());
-        }
-    }
-
-    private void hookTextViewOnAttached(ClassLoader classLoader) {
-        try {
-            findAndHookMethod("android.widget.TextView", classLoader,
-                    "onAttachedToWindow", new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (isReentry()) return;
-                            if (!(param.thisObject instanceof TextView)) return;
-                            TextView tv = (TextView) param.thisObject;
-                            if (!shouldTuneIslandTextView(tv)) return;
-                            applyNoEllipsize(tv);
-                        }
-                    });
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook onAttachedToWindow failed -> " + t.getMessage());
-        }
-    }
-
     private static boolean isReentry() {
         return Boolean.TRUE.equals(sReentry.get());
     }
@@ -1158,50 +1043,6 @@ public class SystemUiHook {
             }
         };
         tv.post(task);
-    }
-
-    private static boolean shouldTuneIslandTextView(TextView tv) {
-        if (isInIslandBind()) return true;
-        if (isFromRealIslandCallStack()) return true;
-        int id = tv.getId();
-        if (id != View.NO_ID) {
-            String idName = safeIdName(tv, id).toLowerCase();
-            if (idName.contains("island")) return true;
-            if (idName.contains("focus")) return true;
-            if ("left_text".equals(idName) || "right_text".equals(idName)) return true;
-        }
-        return hasIslandAncestor(tv);
-    }
-
-    private static boolean isFromRealIslandCallStack() {
-        StackTraceElement[] st = Thread.currentThread().getStackTrace();
-        if (st == null) return false;
-        for (StackTraceElement e : st) {
-            if (e == null) continue;
-            String c = e.getClassName();
-            if (c == null) continue;
-            if (c.startsWith("miui.systemui.notification.focus.moduleV3.")) return true;
-            if (c.startsWith("miui.systemui.notification.focus.template.")) return true;
-            if (c.startsWith("miui.systemui.dynamicisland.module.")) return true;
-            if (c.startsWith("miui.systemui.dynamicisland.window.content.")) return true;
-        }
-        return false;
-    }
-
-    private static boolean hasIslandAncestor(View view) {
-        View cur = view;
-        while (cur != null) {
-            String cls = cur.getClass().getName().toLowerCase();
-            if (cls.contains("island") || cls.contains("focusnotification")) return true;
-            int id = cur.getId();
-            if (id != View.NO_ID) {
-                String name = safeIdName(cur, id).toLowerCase();
-                if (name.contains("island") || name.contains("focus")) return true;
-            }
-            ViewParent parent = cur.getParent();
-            cur = (parent instanceof View) ? (View) parent : null;
-        }
-        return false;
     }
 
     private static void enterIslandBind() {

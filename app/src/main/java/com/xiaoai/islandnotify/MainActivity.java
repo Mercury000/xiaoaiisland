@@ -87,6 +87,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String[] STAGED_SUFFIXES = {"_pre", "_active", "_post"};
     private static final String[] TEMPLATE_BASE_KEYS = {"tpl_a", "tpl_b", "tpl_ticker"};
     private static final String KEY_MIGRATION_DONE = "migration_config_v1_done";
+    private static final String KEY_MIGRATION_V2_DONE = "migration_config_v2_done";
     private static final String PREFS_RUNTIME_NAME = "island_runtime";
     private static final String[] DEFAULT_TPL_A = {
             "{\u6559\u5ba4}", "{\u8bfe\u540d}", "{\u8bfe\u540d}"
@@ -413,7 +414,16 @@ public class MainActivity extends AppCompatActivity {
         try {
             Map<String, ?> all = sp.getAll();
             if (all == null || all.isEmpty()) return;
-            if (sp.getBoolean(KEY_MIGRATION_DONE, false)) return;
+            if (sp.getBoolean(KEY_MIGRATION_DONE, false)) {
+                SharedPreferences.Editor ed = sp.edit();
+                boolean changed = false;
+                changed |= purgeLegacyConfigKeys(ed);
+                changed |= migrateConfigV2Once(sp, ed);
+                if (changed) {
+                    ed.apply();
+                }
+                return;
+            }
             SharedPreferences.Editor ed = sp.edit();
             boolean changed = false;
 
@@ -442,6 +452,8 @@ public class MainActivity extends AppCompatActivity {
             if (changed) {
                 Log.d("IslandNotify", "一次性迁移完成（旧配置 -> 三阶段）");
             }
+            changed |= purgeLegacyConfigKeys(ed);
+            changed |= migrateConfigV2Once(sp, ed);
             ed.putBoolean(KEY_MIGRATION_DONE, true);
             ed.apply();
         } catch (Throwable t) {
@@ -521,6 +533,41 @@ public class MainActivity extends AppCompatActivity {
         return true || changed;
     }
 
+    private boolean migrateConfigV2Once(SharedPreferences sp, SharedPreferences.Editor ed) {
+        if (sp.getBoolean(KEY_MIGRATION_V2_DONE, false)) return false;
+        String keyHintTitleActive = "tpl_hint_title_active";
+        String keyHintContentActive = "tpl_hint_content_active";
+        String title = safeString(sp.getString(keyHintTitleActive, ""));
+        String content = safeString(sp.getString(keyHintContentActive, ""));
+        boolean changed = false;
+
+        // If active title uses countdown and content is legacy "already in class",
+        // migrate content text to "distance to class end" without overriding custom text.
+        if ("{\u5012\u8ba1\u65f6}".equals(title)
+                && ("\u5df2\u7ecf\u4e0a\u8bfe".equals(content)
+                || "\u5df2\u7ecf\u4e0a\u8bfe {\u5012\u8ba1\u65f6}".equals(content))) {
+            ed.putString(keyHintContentActive, "\u8ddd\u79bb\u4e0b\u8bfe");
+            changed = true;
+        }
+        ed.putBoolean(KEY_MIGRATION_V2_DONE, true);
+        return true;
+    }
+
+    private boolean purgeLegacyConfigKeys(SharedPreferences.Editor ed) {
+        if (ed == null) return false;
+        ed.remove("to_island_val");
+        ed.remove("to_island_unit");
+        ed.remove("to_notif_val");
+        ed.remove("to_notif_unit");
+        ed.remove("notif_dismiss_value");
+        ed.remove("notif_dismiss_unit");
+        ed.remove("island_dismiss_value");
+        ed.remove("island_dismiss_unit");
+        ed.remove("island_dismiss_trigger");
+        ed.remove("use_default_behavior");
+        return true;
+    }
+
     private static String safeString(String value) {
         return value == null ? "" : value;
     }
@@ -528,7 +575,9 @@ public class MainActivity extends AppCompatActivity {
     private boolean isConfigKey(String key) {
         if (key == null || key.isEmpty()) return false;
         if (key.startsWith("tpl_") || key.startsWith("to_island_") || key.startsWith("to_notif_")) return true;
-        if (KEY_MIGRATION_DONE.equals(key) || KEY_NOTIF_DISMISS_TRIGGER.equals(key)) return true;
+        if (KEY_MIGRATION_DONE.equals(key)
+                || KEY_MIGRATION_V2_DONE.equals(key)
+                || KEY_NOTIF_DISMISS_TRIGGER.equals(key)) return true;
         return "reminder_minutes_before".equals(key)
                 || "mute_enabled".equals(key)
                 || "mute_mins_before".equals(key)
@@ -2417,28 +2466,17 @@ public class MainActivity extends AppCompatActivity {
     private int resetAllConfigToDefaults() {
         SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         SharedPreferences remote = mRemotePrefs;
-        Set<String> configKeys = new HashSet<>();
+        int removedCount = 0;
         Map<String, ?> localAll = local.getAll();
-        if (localAll != null) {
-            for (String key : localAll.keySet()) {
-                if (isConfigKey(key)) configKeys.add(key);
-            }
-        }
+        if (localAll != null) removedCount += localAll.size();
         if (remote != null) {
             Map<String, ?> remoteAll = remote.getAll();
-            if (remoteAll != null) {
-                for (String key : remoteAll.keySet()) {
-                    if (isConfigKey(key)) configKeys.add(key);
-                }
-            }
+            if (remoteAll != null) removedCount += remoteAll.size();
         }
-        int removedCount = configKeys.size();
         SharedPreferences.Editor localEd = local.edit();
         SharedPreferences.Editor remoteEd = (remote != null) ? remote.edit() : null;
-        for (String key : configKeys) {
-            localEd.remove(key);
-            if (remoteEd != null) remoteEd.remove(key);
-        }
+        localEd.clear();
+        if (remoteEd != null) remoteEd.clear();
         applyDefaultTemplateValues(localEd);
         if (remoteEd != null) applyDefaultTemplateValues(remoteEd);
         localEd.apply();

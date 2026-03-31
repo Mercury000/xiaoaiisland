@@ -2520,7 +2520,11 @@ public class MainHook {
         try {
             java.util.Map<String, ?> all = sp.getAll();
             if (all == null || all.isEmpty()) return;
-            if (sp.getBoolean(KEY_MIGRATION_DONE, false)) return;
+            if (sp.getBoolean(KEY_MIGRATION_DONE, false)) {
+                SharedPreferences.Editor ed = sp.edit();
+                if (purgeLegacyConfigKeys(ed)) ed.apply();
+                return;
+            }
             SharedPreferences.Editor ed = sp.edit();
             boolean changed = false;
 
@@ -2545,6 +2549,7 @@ public class MainHook {
             changed |= migrateSingleTimeoutKey(sp, ed, "to_notif", KEY_NOTIF_DISMISS_TRIGGER);
             // 三阶段通知仅允许一个生效阶段，统一归并
             changed |= normalizeSingleNotifPhase(sp, ed);
+            changed |= purgeLegacyConfigKeys(ed);
 
             if (changed) {
                 XposedBridge.log(TAG + ": 一次性迁移完成（旧配置 -> 三阶段）");
@@ -2608,6 +2613,21 @@ public class MainHook {
             changed = true;
         }
         return changed;
+    }
+
+    private boolean purgeLegacyConfigKeys(SharedPreferences.Editor ed) {
+        if (ed == null) return false;
+        ed.remove("to_island_val");
+        ed.remove("to_island_unit");
+        ed.remove("to_notif_val");
+        ed.remove("to_notif_unit");
+        ed.remove("notif_dismiss_value");
+        ed.remove("notif_dismiss_unit");
+        ed.remove("island_dismiss_value");
+        ed.remove("island_dismiss_unit");
+        ed.remove("island_dismiss_trigger");
+        ed.remove("use_default_behavior");
+        return true;
     }
 
     private boolean isWritablePrefs(SharedPreferences prefs) {

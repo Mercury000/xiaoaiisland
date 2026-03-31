@@ -74,7 +74,6 @@ public class SystemUiHook {
     static {
         TARGET_PACKAGES.add("com.android.systemui");
         TARGET_PACKAGES.add("miui.systemui.plugin");
-        TARGET_PACKAGES.add("com.miui.systemui.plugin");
     }
 
     public void handleLoadPackage(String packageName, ClassLoader classLoader) {

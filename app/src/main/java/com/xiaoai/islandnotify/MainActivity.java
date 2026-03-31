@@ -218,6 +218,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        refreshUiFromPrefs(false);
     }
 
     @Override
@@ -2386,10 +2387,18 @@ public class MainActivity extends AppCompatActivity {
         return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
-    private void refreshAfterConfigSynced() {
+    private void refreshUiFromPrefs(boolean fullRecreate) {
+        if (fullRecreate) {
+            recreate();
+            return;
+        }
         if (mCustomCardBound) refreshCustomCardFromPrefs();
         updateCustomDirtyIndicator();
         updateTimeoutDirtyIndicator();
+    }
+
+    private void refreshAfterConfigSynced() {
+        refreshUiFromPrefs(false);
     }
 
     private void showResetDefaultsDialog() {
@@ -2400,7 +2409,7 @@ public class MainActivity extends AppCompatActivity {
                 .setPositiveButton("恢复", (d, w) -> {
                     int count = resetAllConfigToDefaults();
                     Toast.makeText(this, "已恢复默认配置：" + count + " 项", Toast.LENGTH_SHORT).show();
-                    refreshAfterConfigSynced();
+                    refreshUiFromPrefs(true);
                 })
                 .show();
     }
@@ -2423,16 +2432,32 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         }
-        if (configKeys.isEmpty()) return 0;
+        int removedCount = configKeys.size();
         SharedPreferences.Editor localEd = local.edit();
         SharedPreferences.Editor remoteEd = (remote != null) ? remote.edit() : null;
         for (String key : configKeys) {
             localEd.remove(key);
             if (remoteEd != null) remoteEd.remove(key);
         }
+        applyDefaultTemplateValues(localEd);
+        if (remoteEd != null) applyDefaultTemplateValues(remoteEd);
         localEd.apply();
         if (remoteEd != null) remoteEd.apply();
-        return configKeys.size();
+        return removedCount;
+    }
+
+    private void applyDefaultTemplateValues(SharedPreferences.Editor ed) {
+        if (ed == null) return;
+        for (int i = 0; i < CUSTOM_SUFFIXES.length; i++) {
+            String suffix = CUSTOM_SUFFIXES[i];
+            ed.putString("tpl_a" + suffix, DEFAULT_TPL_A[i]);
+            ed.putString("tpl_b" + suffix, DEFAULT_TPL_B[i]);
+            ed.putString("tpl_ticker" + suffix, DEFAULT_TPL_TICKER[i]);
+            for (int k = 0; k < EXPANDED_TPL_KEYS.length; k++) {
+                ed.putString(EXPANDED_TPL_KEYS[k] + suffix, defaultExpandedTpl(i, k));
+            }
+        }
+        ed.putBoolean("icon_a", true);
     }
 
     // ─────────────────────────────────────────────────────────────

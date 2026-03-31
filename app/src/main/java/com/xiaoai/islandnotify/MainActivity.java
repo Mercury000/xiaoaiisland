@@ -2437,13 +2437,73 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void refreshUiFromPrefs(boolean fullRecreate) {
-        if (fullRecreate) {
-            recreate();
-            return;
-        }
         if (mCustomCardBound) refreshCustomCardFromPrefs();
+        refreshTimeoutCardFromPrefs();
         updateCustomDirtyIndicator();
         updateTimeoutDirtyIndicator();
+    }
+
+    private void refreshTimeoutCardFromPrefs() {
+        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+
+        MaterialButtonToggleGroup toggleIslandPhase = findViewById(R.id.toggle_island_phase);
+        TextInputLayout tilIsland = findViewById(R.id.til_island_to);
+        EditText etIsland = findViewById(R.id.et_island_to);
+        MaterialButtonToggleGroup toggleIslandUnit = findViewById(R.id.toggle_island_unit);
+        SwitchMaterial swIslandDefault = findViewById(R.id.sw_island_to_default);
+
+        MaterialButtonToggleGroup toggleNotifPhase = findViewById(R.id.toggle_notif_phase);
+        TextInputLayout tilNotif = findViewById(R.id.til_notif_to);
+        EditText etNotif = findViewById(R.id.et_notif_to);
+        MaterialButtonToggleGroup toggleNotifUnit = findViewById(R.id.toggle_notif_unit);
+        SwitchMaterial swNotifDefault = findViewById(R.id.sw_notif_to_default);
+
+        if (toggleIslandPhase == null || tilIsland == null || etIsland == null
+                || toggleIslandUnit == null || swIslandDefault == null
+                || toggleNotifPhase == null || tilNotif == null || etNotif == null
+                || toggleNotifUnit == null || swNotifDefault == null) {
+            return;
+        }
+
+        int checkedIsland = toggleIslandPhase.getCheckedButtonId();
+        int idxIsland = (checkedIsland == R.id.btn_island_phase_active) ? 1
+                : (checkedIsland == R.id.btn_island_phase_post) ? 2 : 0;
+        int savedIsVal = sp.getInt("to_island_val_" + TO_PHASES[idxIsland], -1);
+        String savedIsUnit = sp.getString("to_island_unit_" + TO_PHASES[idxIsland], "m");
+        boolean islandDefault = savedIsVal < 0;
+        swIslandDefault.setChecked(islandDefault);
+        etIsland.setText(islandDefault ? "" : String.valueOf(savedIsVal));
+        toggleIslandUnit.check("s".equals(savedIsUnit) ? R.id.btn_island_s : R.id.btn_island_m);
+        setTimeoutRowEnabled(tilIsland, toggleIslandUnit, !islandDefault);
+
+        String savedTrigger = sp.getString(KEY_NOTIF_DISMISS_TRIGGER, "pre");
+        int triggerIdx = "active".equals(savedTrigger) ? 1 : ("post".equals(savedTrigger) ? 2 : 0);
+        if (sp.getInt("to_notif_val_" + TO_PHASES[triggerIdx], -1) < 0) {
+            for (int i = 0; i < 3; i++) {
+                if (sp.getInt("to_notif_val_" + TO_PHASES[i], -1) >= 0) {
+                    triggerIdx = i;
+                    break;
+                }
+            }
+        }
+        boolean notifAllDefault = true;
+        for (int i = 0; i < 3; i++) {
+            if (sp.getInt("to_notif_val_" + TO_PHASES[i], -1) >= 0) {
+                notifAllDefault = false;
+                break;
+            }
+        }
+        swNotifDefault.setChecked(notifAllDefault);
+        toggleNotifPhase.check(triggerIdx == 1 ? R.id.btn_notif_phase_active
+                : (triggerIdx == 2 ? R.id.btn_notif_phase_post : R.id.btn_notif_phase_pre));
+        int savedNoVal = sp.getInt("to_notif_val_" + TO_PHASES[triggerIdx], -1);
+        String savedNoUnit = sp.getString("to_notif_unit_" + TO_PHASES[triggerIdx], "m");
+        etNotif.setText(notifAllDefault || savedNoVal < 0 ? "" : String.valueOf(savedNoVal));
+        toggleNotifUnit.check("s".equals(savedNoUnit) ? R.id.btn_notif_s : R.id.btn_notif_m);
+        boolean notifEnabled = !notifAllDefault;
+        setTimeoutRowEnabled(tilNotif, toggleNotifUnit, notifEnabled);
+        toggleNotifPhase.setEnabled(notifEnabled);
+        toggleNotifPhase.setAlpha(notifEnabled ? 1f : 0.4f);
     }
 
     private void refreshAfterConfigSynced() {

@@ -786,6 +786,7 @@ public class MainActivity extends AppCompatActivity {
 
         findViewById(R.id.btn_save_custom).setOnClickListener(v -> {
 
+            int autoAlignedCount = alignExpandedTimerDirectionWithStatusBarFromUi();
             SharedPreferences.Editor ed = sp.edit();
             // 通知 voiceassist 进程同步最新配置（绕过 SELinux 跨 UID 文件读取限制）
 
@@ -796,12 +797,22 @@ public class MainActivity extends AppCompatActivity {
                 ed.putString("tpl_a"      + SUFFIXES[i], tplA);
                 ed.putString("tpl_b"      + SUFFIXES[i], tplB);
                 ed.putString("tpl_ticker" + SUFFIXES[i], tplTicker);
+                String alignedHintTitle = ((EditText) findViewById(CUSTOM_IDS_EXPANDED_V2[1][i]))
+                        .getText().toString().trim();
+                String alignedHintSubTitle = ((EditText) findViewById(CUSTOM_IDS_EXPANDED_V2[2][i]))
+                        .getText().toString().trim();
+                ed.putString("tpl_hint_title" + SUFFIXES[i], alignedHintTitle);
+                ed.putString("tpl_hint_subtitle" + SUFFIXES[i], alignedHintSubTitle);
             }
             boolean iconA = swIconA.isChecked();
             ed.putBoolean("icon_a", iconA);
             ed.apply();
 
-            tvHint.setText("已保存，下次通知生效");
+            if (autoAlignedCount > 0) {
+                tvHint.setText("已保存，下次通知生效（已自动对齐 " + autoAlignedCount + " 处计时方向）");
+            } else {
+                tvHint.setText("已保存，下次通知生效");
+            }
             tvHint.setVisibility(View.VISIBLE);
             // 保存后清除指示
             customDirty = false;
@@ -811,8 +822,14 @@ public class MainActivity extends AppCompatActivity {
         View btnSaveExpandedView = findViewById(R.id.btn_save_expanded);
         if (btnSaveExpandedView != null) {
             btnSaveExpandedView.setOnClickListener(v -> {
+                int autoAlignedCount = alignStatusBarTimerDirectionWithExpandedFromUi();
                 SharedPreferences.Editor ed = sp.edit();
                 for (int i = 0; i < 3; i++) {
+                    // 保存展开态前，先把因“同阶段计时类型统一”产生的状态栏 tpl_b 同步写回，
+                    // 避免 UI 已变更但配置未保存导致状态栏卡片误报“未保存”。
+                    String alignedTplB = ((EditText) findViewById(IDS_B[i]))
+                            .getText().toString().trim();
+                    ed.putString("tpl_b" + SUFFIXES[i], alignedTplB);
                     for (int k = 0; k < EXPANDED_TPL_KEYS.length; k++) {
                         String expandedValue = ((EditText) findViewById(CUSTOM_IDS_EXPANDED_V2[k][i]))
                                 .getText().toString().trim();
@@ -821,7 +838,11 @@ public class MainActivity extends AppCompatActivity {
                 }
                 ed.apply();
                 if (tvExpandedHint != null) {
-                    tvExpandedHint.setText("已保存，下次通知生效");
+                    if (autoAlignedCount > 0) {
+                        tvExpandedHint.setText("已保存，下次通知生效（已自动对齐 " + autoAlignedCount + " 处计时方向）");
+                    } else {
+                        tvExpandedHint.setText("已保存，下次通知生效");
+                    }
                     tvExpandedHint.setVisibility(View.VISIBLE);
                 }
                 updateCustomDirtyIndicator();
@@ -835,6 +856,97 @@ public class MainActivity extends AppCompatActivity {
 
         mCustomCardBound = true;
 
+    }
+
+    private int alignExpandedTimerDirectionWithStatusBarFromUi() {
+        int changed = 0;
+        for (int i = 0; i < CUSTOM_SUFFIXES.length; i++) {
+            EditText etStatusBarB = findViewById(CUSTOM_IDS_B[i]);
+            EditText etExpandedHintTitle = findViewById(CUSTOM_IDS_EXPANDED_V2[1][i]); // tpl_hint_title
+            EditText etExpandedHintSubTitle = findViewById(CUSTOM_IDS_EXPANDED_V2[2][i]); // tpl_hint_subtitle
+            if (etStatusBarB == null || etExpandedHintTitle == null || etExpandedHintSubTitle == null) continue;
+
+            String statusBarText = etStatusBarB.getText() == null ? "" : etStatusBarB.getText().toString().trim();
+            int statusKind = detectTimerKind(statusBarText);
+            changed += alignOneExpandedTimerField(etExpandedHintTitle, statusKind);
+            changed += alignOneExpandedTimerField(etExpandedHintSubTitle, statusKind);
+        }
+        return changed;
+    }
+
+    private int alignStatusBarTimerDirectionWithExpandedFromUi() {
+        int changed = 0;
+        for (int i = 0; i < CUSTOM_SUFFIXES.length; i++) {
+            EditText etStatusBarB = findViewById(CUSTOM_IDS_B[i]);
+            EditText etExpandedHintTitle = findViewById(CUSTOM_IDS_EXPANDED_V2[1][i]); // tpl_hint_title
+            EditText etExpandedHintSubTitle = findViewById(CUSTOM_IDS_EXPANDED_V2[2][i]); // tpl_hint_subtitle
+            if (etStatusBarB == null || etExpandedHintTitle == null || etExpandedHintSubTitle == null) continue;
+
+            int expandedKind = detectExpandedTimerKindForStage(
+                    etExpandedHintTitle.getText() == null ? "" : etExpandedHintTitle.getText().toString().trim(),
+                    etExpandedHintSubTitle.getText() == null ? "" : etExpandedHintSubTitle.getText().toString().trim());
+            if (expandedKind != -1 && expandedKind != 1) continue;
+            changed += alignStatusBarTimerField(etStatusBarB, expandedKind);
+        }
+        return changed;
+    }
+
+    private int detectExpandedTimerKindForStage(String hintTitle, String hintSubTitle) {
+        int titleKind = detectTimerKind(hintTitle);
+        if (titleKind == -1 || titleKind == 1) return titleKind;
+        int subKind = detectTimerKind(hintSubTitle);
+        if (subKind == -1 || subKind == 1) return subKind;
+        return 0;
+    }
+
+    private int alignStatusBarTimerField(EditText target, int expandedKind) {
+        if (target == null) return 0;
+        String text = target.getText() == null ? "" : target.getText().toString().trim();
+        int kind = detectTimerKind(text);
+        if ((kind == -1 || kind == 1) && kind != expandedKind) {
+            String aligned = forceTimerKind(text, expandedKind);
+            if (!aligned.equals(text)) {
+                target.setText(aligned);
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    private int alignOneExpandedTimerField(EditText target, int statusKind) {
+        if (target == null) return 0;
+        String text = target.getText() == null ? "" : target.getText().toString().trim();
+        int kind = detectTimerKind(text);
+        if ((statusKind == -1 || statusKind == 1)
+                && (kind == -1 || kind == 1)
+                && statusKind != kind) {
+            String aligned = forceTimerKind(text, statusKind);
+            if (!aligned.equals(text)) {
+                target.setText(aligned);
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    private int detectTimerKind(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        boolean hasCountdown = text.contains("{\u5012\u8ba1\u65f6}");
+        boolean hasElapsed = text.contains("{\u6b63\u8ba1\u65f6}");
+        if (hasCountdown && hasElapsed) return 2;
+        if (hasCountdown) return -1;
+        if (hasElapsed) return 1;
+        return 0;
+    }
+
+    private String forceTimerKind(String text, int targetKind) {
+        if (text == null) return "";
+        final String countdown = "{\u5012\u8ba1\u65f6}";
+        final String elapsed = "{\u6b63\u8ba1\u65f6}";
+        if (targetKind >= 0) {
+            return text.replace(countdown, elapsed);
+        }
+        return text.replace(elapsed, countdown);
     }
 
     private void refreshCustomCardFromPrefs() {

@@ -230,6 +230,15 @@
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:alpha="0.75" />
 
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="12dp"
+                        android:text="保存时会做同阶段计时冲突校验：保存状态栏岛时会将展开态主要小文本1/2对齐到状态栏岛B；保存展开态时会将状态栏岛B对齐到展开态。同阶段展开态与状态栏岛B只能保留一种计时类型（正计时或倒计时）。"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:alpha="0.75" />
+
                     <!-- ── 上课前 ───────────────────────────── -->
                     <TextView
                         android:layout_width="wrap_content"
@@ -457,7 +466,16 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:layout_marginBottom="14dp"
-                        android:text="可用变量：{课名} {开始} {结束} {教室} {节次} {教师} {倒计时} {正计时}；上课前不支持{正计时}，下课后不支持{倒计时}。计时器仅主要小文本支持且不可与其他字符串等拼接。"
+                        android:text="可用变量：{课名} {开始} {结束} {教室} {节次} {教师} {倒计时} {正计时}；上课前不支持{正计时}，下课后不支持{倒计时}。计时变量仅主要小文本1/2支持，且不可与其他字符串拼接。"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:alpha="0.75" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="12dp"
+                        android:text="保存时会做同阶段计时冲突校验：保存状态栏岛时会将展开态主要小文本1/2对齐到状态栏岛B；保存展开态时会将状态栏岛B对齐到展开态。同阶段展开态与状态栏岛B只能保留一种计时类型（正计时或倒计时）。"
                         android:textAppearance="?attr/textAppearanceBodySmall"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:alpha="0.75" />

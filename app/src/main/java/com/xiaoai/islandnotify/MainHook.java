@@ -66,6 +66,8 @@ public class MainHook {
     private static final String ACTION_NOTIF_CANCEL = "com.xiaoai.islandnotify.ACTION_NOTIF_CANCEL";
     /** shareData 拖拽分享图片在 miui.focus.pics Bundle 中的 key */
     private static final String PIC_KEY_SHARE = "miui.focus.pic_share";
+    /** 测试通知专用标记：用于避免被“旧课表残留精确清理”误删 */
+    private static final String KEY_TEST_NOTIF_MARKER = "xiaoai.test.manual_notification";
     /** voiceassist Manifest 中已声明的 Service，用于 AlarmManager 在进程死后强制拉起 */
     private static final String UPLOAD_STATE_SERVICE = "com.xiaomi.voiceassistant.UploadStateService";
 
@@ -337,6 +339,7 @@ public class MainHook {
                             tNotif.extras.putString("xiaoai.test.classroom",   tClassroom);
                             tNotif.extras.putString("xiaoai.test.section_range", tSection);
                             tNotif.extras.putString("xiaoai.test.teacher", tTeacher);
+                            tNotif.extras.putBoolean(KEY_TEST_NOTIF_MARKER, true);
 
                             long nowEpochMs = System.currentTimeMillis();
                             int seqInMs;
@@ -1144,8 +1147,11 @@ public class MainHook {
                         || "xiaoai_course_reminder_alert".equals(ch)
                         || ISLAND_UPDATE_CHANNEL.equals(ch)
                         || ch.contains("COURSE_SCHEDULER_REMINDER");
+                boolean isManualTest = (n.extras != null && n.extras.getBoolean(KEY_TEST_NOTIF_MARKER, false))
+                        || safeStr(sbn.getTag()).startsWith("xiaoai_test_");
                         
                 if (isOurs) {
+                    if (isManualTest) continue;
                     int id = sbn.getId();
                     if (!validIds.contains(id)) {
                         nm.cancel(sbn.getTag(), id);

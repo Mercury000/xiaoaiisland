@@ -106,11 +106,14 @@ public class MainHook {
     private final Object mRescheduleToken = new Object();
     /** 上次成功调度时 weekCourseBean 的 hashCode；FileObserver 触发时若内容未变则跳过重调度，避免补发重复通知 */
     private volatile int mLastCourseDataHash = 0;
-    /** 测试通知自增 ID，避免多次测试因相同 ID 互相替换 */
-    private static final java.util.concurrent.atomic.AtomicInteger sTestNotifId =
-            new java.util.concurrent.atomic.AtomicInteger(2001);
+    /** 测试通知时间戳去重：记录上一次毫秒值 */
+    private static volatile long sLastTestNotifEpochMs = 0L;
+    /** 测试通知时间戳去重：同毫秒内自增序号 */
+    private static volatile int sLastTestNotifSeqInMs = 0;
     /** 上一条测试通知的 ID，用于发新测试前自动取消旧通知；-1 表示尚无 */
     private static volatile int sLastTestNotifId = -1;
+    /** 上一条测试通知的 Tag，配合 ID 精确取消，避免误伤同 ID 的非测试通知 */
+    private static volatile String sLastTestNotifTag = null;
     /** 已调度的课前提醒 alarmId 集合，关闭开关或重新调度时用于批量取消 */
     private final java.util.Set<Integer> mScheduledAlarmIds = new java.util.HashSet<>();
 
@@ -335,17 +338,41 @@ public class MainHook {
                             tNotif.extras.putString("xiaoai.test.section_range", tSection);
                             tNotif.extras.putString("xiaoai.test.teacher", tTeacher);
 
-                            int tNotifId = sTestNotifId.getAndIncrement();
+                            long nowEpochMs = System.currentTimeMillis();
+                            int seqInMs;
+                            synchronized (MainHook.class) {
+                                if (nowEpochMs == sLastTestNotifEpochMs) {
+                                    sLastTestNotifSeqInMs++;
+                                } else {
+                                    sLastTestNotifEpochMs = nowEpochMs;
+                                    sLastTestNotifSeqInMs = 0;
+                                }
+                                seqInMs = sLastTestNotifSeqInMs;
+                            }
+                            int tNotifId = (int) (nowEpochMs & 0x7fffffffL);
+                            if (seqInMs > 0) {
+                                tNotifId = (tNotifId + seqInMs) & 0x7fffffff;
+                            }
+                            if (tNotifId <= 0) {
+                                tNotifId = 1 + seqInMs;
+                            }
+                            String tNotifTag = "xiaoai_test_" + nowEpochMs + "_" + seqInMs;
                             // 先取消上一条测试通知，避免堆积
                             if (sLastTestNotifId != -1) {
-                                tnm.cancel(sLastTestNotifId);
-                                XposedBridge.log(TAG + ": 已取消上一条测试通知 id=" + sLastTestNotifId);
+                                if (sLastTestNotifTag != null && !sLastTestNotifTag.isEmpty()) {
+                                    tnm.cancel(sLastTestNotifTag, sLastTestNotifId);
+                                } else {
+                                    tnm.cancel(sLastTestNotifId);
+                                }
+                                XposedBridge.log(TAG + ": 已取消上一条测试通知 tag=" + sLastTestNotifTag
+                                        + " id=" + sLastTestNotifId);
                             }
                             sLastTestNotifId = tNotifId;
+                            sLastTestNotifTag = tNotifTag;
                             XposedBridge.log(TAG + ": 即将发出测试通知 → " + tCourseName + " @" + tStartTime);
                             CourseInfo tInfo = new CourseInfo(tCourseName, tStartTime, tEndTime, tClassroom, tSection, tTeacher);
-                            applyIslandParams(context, tNotif, tInfo, tNotifId, null);
-                            tnm.notify(tNotifId, tNotif);
+                            applyIslandParams(context, tNotif, tInfo, tNotifId, tNotifTag);
+                            tnm.notify(tNotifTag, tNotifId, tNotif);
                             XposedBridge.log(TAG + ": 已在目标进程发出测试通知 id=" + tNotifId);
                             // 测试通知按用户设定的时间逻辑调度静音/取消静音闹钟：
                             // 分钟数直接从 intent 读取（MainActivity 调用时已携带），不读 SP，消除跨进程缓存旧值问题

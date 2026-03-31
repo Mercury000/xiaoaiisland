@@ -137,11 +137,11 @@ public class MainActivity extends AppCompatActivity {
     };
     private static final String[][] DEFAULT_EXPANDED_TPLS = {
             // pre
-            {"{课名}", "{开始}-{结束}", "", "", "{教室}", "即将上课", "地点"},
+            {"{课名}", "{开始} | {结束}", "", "", "{教室}", "即将上课", "地点"},
             // active
-            {"{课名}", "{开始}-{结束}", "", "", "{教室}", "已经上课", "地点"},
+            {"{课名}", "{开始} | {结束}", "", "", "{教室}", "已经上课", "地点"},
             // post
-            {"{课名}", "{开始}-{结束}", "", "", "{教室}", "已经下课", "地点"}
+            {"{课名}", "{开始} | {结束}", "", "", "{教室}", "已经下课", "地点"}
     };
     private static final int[][] CUSTOM_IDS_EXPANDED_V2 = {
             {R.id.et_tpl_base_title_pre, R.id.et_tpl_base_title_active, R.id.et_tpl_base_title_post},
@@ -153,9 +153,9 @@ public class MainActivity extends AppCompatActivity {
             {R.id.et_tpl_base_subcontent_pre, R.id.et_tpl_base_subcontent_active, R.id.et_tpl_base_subcontent_post}
     };
     private static final String[][] DEFAULT_EXPANDED_TPLS_V2 = {
-            {"{\u8bfe\u540d}", "{\u5012\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u5373\u5c06\u4e0a\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb}-{\u7ed3\u675f}", ""},
-            {"{\u8bfe\u540d}", "{\u5012\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u5df2\u7ecf\u4e0a\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb}-{\u7ed3\u675f}", ""},
-            {"{\u8bfe\u540d}", "{\u6b63\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u5df2\u7ecf\u4e0b\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb}-{\u7ed3\u675f}", ""}
+            {"{\u8bfe\u540d}", "{\u5012\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u5373\u5c06\u4e0a\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb} | {\u7ed3\u675f}", ""},
+            {"{\u8bfe\u540d}", "{\u5012\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u5df2\u7ecf\u4e0a\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb} | {\u7ed3\u675f}", ""},
+            {"{\u8bfe\u540d}", "{\u6b63\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u5df2\u7ecf\u4e0b\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb} | {\u7ed3\u675f}", ""}
     };
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";

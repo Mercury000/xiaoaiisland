@@ -2028,7 +2028,7 @@ public class MainHook {
             // tpl_base_title / tpl_base_content / tpl_base_subcontent
             // tpl_hint_title / tpl_hint_subtitle / tpl_hint_content / tpl_hint_subcontent
             String defaultTimeLine = info.startTime
-                    + ((info.endTime == null || info.endTime.isEmpty()) ? "" : "-" + info.endTime);
+                    + ((info.endTime == null || info.endTime.isEmpty()) ? "" : " | " + info.endTime);
             String baseTitle = applyTimerVars(applyExtraVars(resolveTemplate(
                     getStagedPref(prefs, "tpl_base_title", stageSuffix),
                     info, info.courseName), info), state, startMs, endMs, now);

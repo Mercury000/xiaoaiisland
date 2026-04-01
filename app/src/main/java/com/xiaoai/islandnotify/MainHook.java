@@ -807,14 +807,10 @@ public class MainHook {
      */
     private void scheduleTodayCourseReminders(Context ctx, String cachedBeanJson, boolean skipRepost) {
         try {
-            // ── 1. 先读数据，内容哈希去重（必须在 cancel 前），避免相同课表重复写盘触发补发 ──
             final String beanJson;
             if (cachedBeanJson != null) {
-                // 来自 FileObserver 回调：直接使用已读好的 bean，不再二次读盘，
-                // 且 mLastCourseDataHash 已由 callback 写入，此处不覆盖，防止双重读导致 hash 不一致。
                 beanJson = cachedBeanJson;
             } else {
-                // 来自强制重调路径（跨日/提醒分钟变化等）：从磁盘读取最新值并更新 hash。
                 @SuppressWarnings("deprecation")
                 SharedPreferences coursePrefs = ctx.getSharedPreferences(
                         PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
@@ -831,55 +827,41 @@ public class MainHook {
                 return;
             }
 
-            // ── 2. 取消所有旧闹钟，且计算新课表的所有 valid ID 用于后续精确清理 ──
-            // MODE_MULTI_PROCESS 保证从磁盘读取最新值；cancel 在 hash 检查之后，避免提前撤销正在运行的 alarm
             cancelAllScheduledAlarms(ctx);
             mScheduledAlarmIds.clear();
             java.util.Set<Integer> validAlarmIds = new java.util.HashSet<>();
 
-
-            // ── 2b. 节假日 / 调休 检查 ─────────────────────────────────────────
             java.text.SimpleDateFormat holidayFmt =
                     new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
             String todayDateStr = holidayFmt.format(new java.util.Date());
-            // 节假日：取消旧闹钟后直接返回，不发任何提醒
             if (HolidayManager.isHoliday(ctx, todayDateStr)) {
                 XposedBridge.log(TAG + ": 今日 " + todayDateStr + " 为节假日，跳过课前提醒调度");
                 return;
             }
-            // 调休工作日：记录替换信息，后续覆盖 todayDay / currentWeek
             HolidayManager.HolidayEntry workSwapDay = HolidayManager.getWorkSwap(ctx, todayDateStr);
 
-            // 今天是星期几（课程数据: 1=周一, 7=周日）
             java.util.Calendar cal = java.util.Calendar.getInstance();
-            int calDay   = cal.get(java.util.Calendar.DAY_OF_WEEK);
+            int calDay = cal.get(java.util.Calendar.DAY_OF_WEEK);
             int todayDay = (calDay == java.util.Calendar.SUNDAY) ? 7 : (calDay - 1);
 
-            JSONObject root    = new JSONObject(beanJson);
-            JSONObject data    = root.getJSONObject("data");
-            JSONObject setting = data.getJSONObject("setting");
-            // 直接使用服务端 presentWeek（已处理开学延期、调课周等特殊情况）
-            int currentWeek = setting.optInt("presentWeek", 0);
-            // 调休工作日：将当天星期和周次替换为指定的调休酬条件
+            CourseScheduleParser.ParsedSchedule parsed = CourseScheduleParser.parse(beanJson);
+            int currentWeek = parsed.presentWeek;
             if (workSwapDay != null && workSwapDay.followWeek > 0 && workSwapDay.followWeekday > 0) {
                 XposedBridge.log(TAG + ": 今日 " + todayDateStr + " 为调休工作日，"
-                        + "按\u7b2c" + workSwapDay.followWeek + "周 " + workSwapDay.followDesc() + " 调度");
-                todayDay    = workSwapDay.followWeekday;
+                        + "按第" + workSwapDay.followWeek + "周" + workSwapDay.followDesc() + " 调度");
+                todayDay = workSwapDay.followWeekday;
                 currentWeek = workSwapDay.followWeek;
             }
-            // 超出学期总周数则本学期已结束，无需调度任何课程
-            int totalWeek = setting.optInt("totalWeek", 0);
+
+            int totalWeek = parsed.totalWeek;
             if (totalWeek > 0 && currentWeek > totalWeek) {
-                XposedBridge.log(TAG + ": 当前第 " + currentWeek + " 周，已超过学期总周数 "
+                XposedBridge.log(TAG + ": 当前第" + currentWeek + " 周，已超过学期总周数 "
                         + totalWeek + "，跳过调度");
                 return;
             }
-            JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
-            JSONArray courses      = data.getJSONArray("courses");
 
             SharedPreferences prefs = getConfigPrefs(ctx);
             SharedPreferences runtimePrefs = ctx.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
-            // 将学期总周数写入宿主运行态存储，并广播给模块 UI
             if (totalWeek > 0) {
                 runtimePrefs.edit().putInt(KEY_COURSE_TOTAL_WEEK, totalWeek).apply();
                 Intent twIntent = new Intent(TotalWeekReceiver.ACTION_UPDATE_TOTAL_WEEK);
@@ -887,95 +869,71 @@ public class MainHook {
                 twIntent.putExtra(KEY_COURSE_TOTAL_WEEK, totalWeek);
                 ctx.sendBroadcast(twIntent);
             }
-            int reminderMinutes     = readConfigInt(prefs, KEY_REMINDER_MINUTES, DEFAULT_REMINDER_MINUTES);
-            long nowMs              = System.currentTimeMillis();
-            long reminderMs         = (long) reminderMinutes * 60_000L;
+            int reminderMinutes = readConfigInt(prefs, KEY_REMINDER_MINUTES, DEFAULT_REMINDER_MINUTES);
+            long nowMs = System.currentTimeMillis();
+            long reminderMs = (long) reminderMinutes * 60_000L;
 
-            // ── 第一遍：收集今日有效课程 [startMs, endMs, originalIndex] ──
-            java.util.List<long[]> todaySlots = new java.util.ArrayList<>();
-            for (int i = 0; i < courses.length(); i++) {
-                JSONObject course = courses.getJSONObject(i);
-                if (course.getInt("day") != todayDay) continue;
-                if (!isCourseInCurrentWeek(course, currentWeek)) continue;
-
-                int[] sectionBounds = parseCourseSectionBounds(course);
-                if (sectionBounds == null) continue;
-                int firstSec = sectionBounds[0];
-                int lastSec  = sectionBounds[1];
-
-                String startTime = getSectionTime(sectionTimes, firstSec, true);
-                String endTime   = getSectionTime(sectionTimes, lastSec,  false);
-                if (startTime.isEmpty() || endTime.isEmpty()) continue;
-
-                long startMs = computeClassStartMs(startTime);
-                long endMs   = computeClassStartMs(endTime);
+            java.util.List<TodayCourseSlot> todaySlots = new java.util.ArrayList<>();
+            for (CourseScheduleParser.CourseSlot course : parsed.courses) {
+                if (course.day != todayDay) continue;
+                if (!course.isInWeek(currentWeek)) continue;
+                long startMs = computeClassStartMs(course.startTime);
+                long endMs = computeClassStartMs(course.endTime);
                 if (startMs < 0 || endMs < 0) continue;
-
-                todaySlots.add(new long[]{startMs, endMs, i});
+                todaySlots.add(new TodayCourseSlot(course, startMs, endMs));
             }
-            // 按开始时间升序，确保连续课程检测的方向正确
-            todaySlots.sort((a, b) -> Long.compare(a[0], b[0]));
+            todaySlots.sort((a, b) -> Long.compare(a.startMs, b.startMs));
 
-            // ── 第二遍：逐课计算触发时间，检测连续课程 ──
-            mConsecutiveAnchors.clear(); // 每次重新调度前重置锚点集合
+            mConsecutiveAnchors.clear();
             int scheduledCount = 0;
-            int prevLoopAlarmId = -1;     // 上一课的 alarmId，用于连续检测时标记锚点
+            int prevLoopAlarmId = -1;
             for (int si = 0; si < todaySlots.size(); si++) {
-                long[] slot   = todaySlots.get(si);
-                long startMs  = slot[0];
-                long endMs    = slot[1];
-                int  idx      = (int) slot[2];
+                TodayCourseSlot slot = todaySlots.get(si);
+                CourseScheduleParser.CourseSlot course = slot.slot;
+                long startMs = slot.startMs;
+                long endMs = slot.endMs;
 
-                JSONObject course = courses.getJSONObject(idx);
-                int[] sectionBounds = parseCourseSectionBounds(course);
-                if (sectionBounds == null) continue;
-                int firstSec      = sectionBounds[0];
-                int lastSec       = sectionBounds[1];
-                String startTime  = getSectionTime(sectionTimes, firstSec, true);
-                String endTime    = getSectionTime(sectionTimes, lastSec,  false);
-                String courseName = course.getString("name");
-                String classroom  = course.optString("position", "");
-                String sectionRange = firstSec + "-" + lastSec;
-                String teacher = extractTeacher(course);
-                CourseInfo info   = new CourseInfo(courseName, startTime, endTime, classroom, sectionRange, teacher);
-                // 将所有关键参数纳入 hash 计算，确保教室、结束时间等发生变化时，能生成新的 alarmId 
-                // 从而让旧的 alarm（未包含在新 validIds 中）被精确清理，并重新排布新闹钟触发岛更新
-                // 确保生成 id 后直接抛弃高 8 位给后面的或操作腾出绝对干净的空间
-                int alarmId       = Math.abs((courseName + startTime + endTime + classroom + sectionRange + teacher).hashCode()) & 0x00FFFFFF;
+                String startTime = course.startTime;
+                String endTime = course.endTime;
+                String courseName = course.courseName;
+                String classroom = course.classroom;
+                String sectionRange = course.sectionRange;
+                String teacher = course.teacher;
+                CourseInfo info = new CourseInfo(courseName, startTime, endTime, classroom, sectionRange, teacher);
+
+                int alarmId = Math.abs((courseName + startTime + endTime + classroom + sectionRange + teacher)
+                        .hashCode()) & 0x00FFFFFF;
                 validAlarmIds.add(alarmId);
 
-                // 默认触发时间：课程开始前 N 分钟
-                long triggerMs    = startMs - reminderMs;
+                long triggerMs = startMs - reminderMs;
                 boolean isConsecutive = false;
 
-                // 若上一门课与本节的课间 <= 提醒分钟数，则视为连续课程
                 if (si > 0) {
-                    long prevEndMs = todaySlots.get(si - 1)[1];
-                    long breakMs   = startMs - prevEndMs;
+                    long prevEndMs = todaySlots.get(si - 1).endMs;
+                    long breakMs = startMs - prevEndMs;
                     if (breakMs >= 0 && breakMs <= reminderMs) {
-                        // 连续：在上节课下课时触发本节提醒
-                        triggerMs     = prevEndMs;
+                        triggerMs = prevEndMs;
                         isConsecutive = true;
-                        // 上一课有连续后续，标记为锚点：injectIslandParams 跳过其 cancel alarm
                         if (prevLoopAlarmId != -1) mConsecutiveAnchors.add(prevLoopAlarmId);
                         XposedBridge.log(TAG + ": [连续课程] " + courseName
                                 + " 课间=" + (breakMs / 60_000) + "min <= 提醒"
                                 + reminderMinutes + "min，将在上节下课时触发");
                     }
                 }
-                prevLoopAlarmId = alarmId; // 始终更新，供下次迭代判断
+                prevLoopAlarmId = alarmId;
 
                 if (triggerMs <= nowMs) {
-                    // 在提醒窗口内或课程进行中（含进程重启场景）→ 立即补发通知
                     if (nowMs < endMs && !skipRepost && sRepostEnabled) {
-                        // 检查通知栏是否已有同 ID 通知，避免重复补发导致岛重新弹出
                         android.app.NotificationManager repostNm =
                                 ctx.getSystemService(android.app.NotificationManager.class);
                         boolean alreadyPosted = false;
                         if (repostNm != null) {
                             for (android.service.notification.StatusBarNotification sbn
                                     : repostNm.getActiveNotifications()) {
-                                if (sbn.getId() == alarmId) { alreadyPosted = true; break; }
+                                if (sbn.getId() == alarmId) {
+                                    alreadyPosted = true;
+                                    break;
+                                }
                             }
                         }
                         if (!alreadyPosted) {
@@ -994,12 +952,11 @@ public class MainHook {
                 scheduledCount++;
             }
             XposedBridge.log(TAG + ": 今日课前提醒已调度 " + scheduledCount
-                    + " 条（第 " + currentWeek + " 周，提前 " + reminderMinutes + " 分钟）");
+                    + " 条（第" + currentWeek + " 周，提前 " + reminderMinutes + " 分钟）");
 
-            // ── 3. 精确清理：取消那些属于我方但不在新课表 valid 集合中的活跃通知 ──
             cancelStaleNotifications(ctx, validAlarmIds);
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": scheduleTodayCourseReminders 失败 → " + e.getMessage());
+            XposedBridge.log(TAG + ": scheduleTodayCourseReminders 失败 -> " + e.getMessage());
         }
     }
 
@@ -1009,63 +966,11 @@ public class MainHook {
      * startSemester 等无关字段，避免误判「内容已变化」。
      */
     private int stableCourseHash(String beanJson) {
-        if (beanJson == null || beanJson.isEmpty()) return 0;
-        try {
-            org.json.JSONObject root    = new org.json.JSONObject(beanJson);
-            org.json.JSONObject data    = root.getJSONObject("data");
-            org.json.JSONObject setting = data.getJSONObject("setting");
-            // presentWeek 每周变化一次（周次推进），必须纳入哈希否则新周课表不重调度
-            // updateTime / level / rtPresentWeek / startSemester 每次写盘都变，排除
-            String stable = data.optJSONArray("courses").toString()
-                    + setting.optString("sectionTimes")
-                    + setting.optString("totalWeek")
-                    + setting.optString("weekStart")
-                    + setting.optInt("presentWeek", 0);
-            return stable.hashCode();
-        } catch (Throwable e) {
-            return beanJson.hashCode();
-        }
+        return CourseScheduleParser.stableHash(beanJson);
     }
 
-    private boolean isCourseInCurrentWeek(JSONObject course, int currentWeek) {
-        if (course == null) return false;
-        String weeksCsv = safeStr(course.optString("weeks", ""));
-        if (weeksCsv.isEmpty()) return false;
-        for (String week : weeksCsv.split(",")) {
-            try {
-                if (Integer.parseInt(week.trim()) == currentWeek) return true;
-            } catch (NumberFormatException ignored) {}
-        }
-        return false;
-    }
 
-    private int[] parseCourseSectionBounds(JSONObject course) {
-        if (course == null) return null;
-        String sectionsCsv = safeStr(course.optString("sections", ""));
-        if (sectionsCsv.isEmpty()) return null;
-        String[] sections = sectionsCsv.split(",");
-        if (sections.length == 0) return null;
-        try {
-            int first = Integer.parseInt(sections[0].trim());
-            int last = Integer.parseInt(sections[sections.length - 1].trim());
-            return new int[]{first, last};
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
-    }
 
-    /** 从 sectionTimes JSON 数组中查找某节课的开始或结束时间（HH:mm）。 */
-    private String getSectionTime(JSONArray sectionTimes, int sectionIndex, boolean isStart) {
-        try {
-            for (int i = 0; i < sectionTimes.length(); i++) {
-                JSONObject st = sectionTimes.getJSONObject(i);
-                if (st.getInt("i") == sectionIndex) {
-                    return isStart ? st.getString("s") : st.getString("e");
-                }
-            }
-        } catch (Exception ignored) {}
-        return "";
-    }
 
     /**
      * 为单节课程注册一个 AlarmManager 精确唤醒闹钟（在 voiceassist 进程内）。
@@ -1351,12 +1256,11 @@ public class MainHook {
      *                      仅重新调度未来闹钟。
      */
     private void scheduleTodayMuteAlarms(Context ctx, boolean skipImmediate) {
-        cancelAllMuteAlarms(ctx);           // 先无条件取消旧闹钟，防止关闭静音后残留
+        cancelAllMuteAlarms(ctx);
         if (!sMuteEnabled && !sUnmuteEnabled && !sDndEnabled && !sUnDndEnabled) {
             return;
         }
         try {
-            // ── 节假日 / 调休检查 ──
             java.text.SimpleDateFormat dateFmt =
                     new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
             String todayDateStr = dateFmt.format(new java.util.Date());
@@ -1375,48 +1279,41 @@ public class MainHook {
             }
 
             java.util.Calendar cal = java.util.Calendar.getInstance();
-            int calDay      = cal.get(java.util.Calendar.DAY_OF_WEEK);
+            int calDay = cal.get(java.util.Calendar.DAY_OF_WEEK);
             int calTodayDay = (calDay == java.util.Calendar.SUNDAY) ? 7 : (calDay - 1);
-            int todayDay    = (workSwap != null && workSwap.followWeekday > 0) ? workSwap.followWeekday : calTodayDay;
+            int todayDay = (workSwap != null && workSwap.followWeekday > 0)
+                    ? workSwap.followWeekday : calTodayDay;
 
-            JSONObject root    = new JSONObject(beanJson);
-            JSONObject data    = root.getJSONObject("data");
-            JSONObject setting = data.getJSONObject("setting");
-            // 直接使用服务端 presentWeek（已处理开学延期、调课周等特殊情况）
-            int baseWeek = setting.optInt("presentWeek", 0);
-            final int currentWeek = (workSwap != null && workSwap.followWeek > 0) ? workSwap.followWeek : baseWeek;
-            JSONArray sectionTimes = new JSONArray(setting.getString("sectionTimes"));
-            JSONArray courses      = data.getJSONArray("courses");
+            CourseScheduleParser.ParsedSchedule parsed = CourseScheduleParser.parse(beanJson);
+            int baseWeek = parsed.presentWeek;
+            final int currentWeek = (workSwap != null && workSwap.followWeek > 0)
+                    ? workSwap.followWeek : baseWeek;
 
             SharedPreferences prefs = getConfigPrefs(ctx);
-            int muteMinsBefore  = readConfigInt(prefs, KEY_MUTE_MINS_BEFORE, DEFAULT_MUTE_MINS_BEFORE);
+            int muteMinsBefore = readConfigInt(prefs, KEY_MUTE_MINS_BEFORE, DEFAULT_MUTE_MINS_BEFORE);
             int unmuteMinsAfter = readConfigInt(prefs, KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER);
-            int dndMinsBefore   = readConfigInt(prefs, KEY_DND_MINS_BEFORE, DEFAULT_DND_MINS_BEFORE);
-            int unDndMinsAfter  = readConfigInt(prefs, KEY_UNDND_MINS_AFTER, DEFAULT_UNDND_MINS_AFTER);
+            int dndMinsBefore = readConfigInt(prefs, KEY_DND_MINS_BEFORE, DEFAULT_DND_MINS_BEFORE);
+            int unDndMinsAfter = readConfigInt(prefs, KEY_UNDND_MINS_AFTER, DEFAULT_UNDND_MINS_AFTER);
             long nowMs = System.currentTimeMillis();
-            int count  = 0;
+            int count = 0;
 
-
-            for (int i = 0; i < courses.length(); i++) {
-                JSONObject course = courses.getJSONObject(i);
-                if (course.getInt("day") != todayDay) continue;
-                if (!isCourseInCurrentWeek(course, currentWeek)) continue;
-                int[] sectionBounds = parseCourseSectionBounds(course);
-                if (sectionBounds == null) continue;
-                String startTime = getSectionTime(sectionTimes, sectionBounds[0], true);
-                String endTime   = getSectionTime(sectionTimes, sectionBounds[1], false);
+            for (CourseScheduleParser.CourseSlot course : parsed.courses) {
+                if (course.day != todayDay) continue;
+                if (!course.isInWeek(currentWeek)) continue;
+                String startTime = course.startTime;
+                String endTime = course.endTime;
                 if (startTime.isEmpty() || endTime.isEmpty()) continue;
+
                 long startMs = computeClassStartMs(startTime);
-                long endMs   = computeClassStartMs(endTime);
+                long endMs = computeClassStartMs(endTime);
                 if (startMs < 0 || endMs < 0) continue;
-                String courseName = course.getString("name");
-                // 确保生成 id 后直接抛弃高 8 位给后面的或操作腾出绝对干净的空间
+
+                String courseName = course.courseName;
                 int alarmId = Math.abs((courseName + startTime).hashCode()) & 0x00FFFFFF;
 
                 if (sMuteEnabled) {
                     long muteTriggerMs = startMs - (long) muteMinsBefore * 60_000L;
                     if (muteTriggerMs <= nowMs && nowMs < endMs && !skipImmediate && sRepostEnabled) {
-                        // 已在课中且静音时刻已过 → 仅在未静音时立即静音
                         AudioManager audioMgr = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
                         if (audioMgr != null && audioMgr.getRingerMode() != AudioManager.RINGER_MODE_SILENT) {
                             applyMuteState(ctx, true, courseName);
@@ -1438,7 +1335,6 @@ public class MainHook {
                 if (sDndEnabled) {
                     long dndTriggerMs = startMs - (long) dndMinsBefore * 60_000L;
                     if (dndTriggerMs <= nowMs && nowMs < endMs && !skipImmediate && sRepostEnabled) {
-                        // 已在课中 → 仅在勿扰未开启时才设置
                         android.app.NotificationManager dndNm =
                                 ctx.getSystemService(android.app.NotificationManager.class);
                         if (dndNm != null && dndNm.getCurrentInterruptionFilter()
@@ -1462,7 +1358,7 @@ public class MainHook {
             }
             XposedBridge.log(TAG + ": 静音/勿扰闹钟已调度 " + count + " 个");
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": scheduleTodayMuteAlarms 失败 → " + e.getMessage());
+            XposedBridge.log(TAG + ": scheduleTodayMuteAlarms 失败 -> " + e.getMessage());
         }
     }
 
@@ -2034,14 +1930,6 @@ public class MainHook {
         PrefsAccess.clearIfNotEmpty(prefs);
     }
 
-    private String extractTeacher(JSONObject course) {
-        if (course == null) return "";
-        String teacher = course.optString("teacher", "");
-        if (teacher == null || teacher.isEmpty()) teacher = course.optString("teacherName", "");
-        if (teacher == null || teacher.isEmpty()) teacher = course.optString("teacher_name", "");
-        if (teacher == null || teacher.isEmpty()) teacher = course.optString("teachers", "");
-        return teacher == null ? "" : teacher;
-    }
 
     private void runInitialMigrationFiltered(SharedPreferences remote, SharedPreferences local,
                                              String label, boolean configOnly) {
@@ -2335,6 +2223,18 @@ public class MainHook {
     // ─────────────────────────────────────────────────────────────
     // 数据结构
     // ─────────────────────────────────────────────────────────────
+
+    private static final class TodayCourseSlot {
+        final CourseScheduleParser.CourseSlot slot;
+        final long startMs;
+        final long endMs;
+
+        TodayCourseSlot(CourseScheduleParser.CourseSlot slot, long startMs, long endMs) {
+            this.slot = slot;
+            this.startMs = startMs;
+            this.endMs = endMs;
+        }
+    }
 
     private static class CourseInfo {
         final String courseName;

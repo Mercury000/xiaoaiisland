@@ -190,7 +190,7 @@ final class TimeoutCardController {
         notifyDirty(onDirtyChanged);
     }
 
-    private static void setTimeoutRowEnabled(
+    static void setTimeoutRowEnabled(
             TextInputLayout til, MaterialButtonToggleGroup unitToggle, boolean enabled) {
         til.setEnabled(enabled);
         til.setAlpha(enabled ? 1f : 0.4f);
@@ -198,7 +198,7 @@ final class TimeoutCardController {
         unitToggle.setAlpha(enabled ? 1f : 0.4f);
     }
 
-    private static int stageIndexFromButtonId(int checkedId, int[] stageButtons) {
+    static int stageIndexFromButtonId(int checkedId, int[] stageButtons) {
         if (stageButtons == null || stageButtons.length == 0) return ConfigDefaults.STAGE_PRE;
         for (int i = 0; i < stageButtons.length; i++) {
             if (stageButtons[i] == checkedId) return i;
@@ -206,7 +206,7 @@ final class TimeoutCardController {
         return ConfigDefaults.STAGE_PRE;
     }
 
-    private static int buttonIdForStage(int[] stageButtons, int stageIndex) {
+    static int buttonIdForStage(int[] stageButtons, int stageIndex) {
         if (stageButtons == null || stageButtons.length == 0) return View.NO_ID;
         return stageButtons[ConfigDefaults.normalizeStageIndex(stageIndex)];
     }

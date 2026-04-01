@@ -855,7 +855,8 @@ public class MainActivity extends AppCompatActivity {
         TimeoutConfig saved = TimeoutConfig.read(getConfigPrefs());
         // 岛：当前阶段
         MaterialButtonToggleGroup toggleIslandPhase = findViewById(R.id.toggle_island_phase);
-        int idxIsland = stageIndexFromButtonId(toggleIslandPhase.getCheckedButtonId(), ISLAND_PHASE_BUTTON_IDS);
+        int idxIsland = TimeoutCardController.stageIndexFromButtonId(
+                toggleIslandPhase.getCheckedButtonId(), ISLAND_PHASE_BUTTON_IDS);
         EditText etIsland = findViewById(R.id.et_island_to);
         String curIslandStr = etIsland.getText() != null ? etIsland.getText().toString().trim() : "";
         int curIslandVal = curIslandStr.isEmpty() ? ConfigDefaults.TIMEOUT_VALUE : tryParseInt(curIslandStr, ConfigDefaults.TIMEOUT_VALUE);
@@ -873,7 +874,8 @@ public class MainActivity extends AppCompatActivity {
 
         // 通知：仅允许单选一个触发阶段
         MaterialButtonToggleGroup toggleNotifPhase = findViewById(R.id.toggle_notif_phase);
-        int idxNotif = stageIndexFromButtonId(toggleNotifPhase.getCheckedButtonId(), NOTIF_PHASE_BUTTON_IDS);
+        int idxNotif = TimeoutCardController.stageIndexFromButtonId(
+                toggleNotifPhase.getCheckedButtonId(), NOTIF_PHASE_BUTTON_IDS);
         SwitchMaterial swNotifDefault  = findViewById(R.id.sw_notif_to_default);
         EditText etNotif = findViewById(R.id.et_notif_to);
         String curNotifStr = etNotif.getText() != null ? etNotif.getText().toString().trim() : "";
@@ -943,28 +945,6 @@ public class MainActivity extends AppCompatActivity {
     private void initTimeoutCard() {
         btnSaveTimeout = findViewById(R.id.btn_save_timeout);
         TimeoutCardController.bind(this, getConfigPrefs(), this::updateTimeoutDirtyIndicator);
-    }
-
-    /** 设置超时行（TextInputLayout + 单位切换按钮）的启用/禁用状态。 */
-    private void setTimeoutRowEnabled(TextInputLayout til,
-            MaterialButtonToggleGroup unitToggle, boolean enabled) {
-        til.setEnabled(enabled);
-        til.setAlpha(enabled ? 1f : 0.4f);
-        unitToggle.setEnabled(enabled);
-        unitToggle.setAlpha(enabled ? 1f : 0.4f);
-    }
-
-    private int stageIndexFromButtonId(int checkedId, int[] stageButtons) {
-        if (stageButtons == null || stageButtons.length == 0) return ConfigDefaults.STAGE_PRE;
-        for (int i = 0; i < stageButtons.length; i++) {
-            if (stageButtons[i] == checkedId) return i;
-        }
-        return ConfigDefaults.STAGE_PRE;
-    }
-
-    private int buttonIdForStage(int[] stageButtons, int stageIndex) {
-        if (stageButtons == null || stageButtons.length == 0) return View.NO_ID;
-        return stageButtons[ConfigDefaults.normalizeStageIndex(stageIndex)];
     }
 
     private static final String ALIAS = "com.xiaoai.islandnotify.MainActivityAlias";
@@ -1833,24 +1813,26 @@ public class MainActivity extends AppCompatActivity {
         }
 
         int checkedIsland = toggleIslandPhase.getCheckedButtonId();
-        int idxIsland = stageIndexFromButtonId(checkedIsland, ISLAND_PHASE_BUTTON_IDS);
+        int idxIsland = TimeoutCardController.stageIndexFromButtonId(
+                checkedIsland, ISLAND_PHASE_BUTTON_IDS);
         int savedIsVal = cfg.islandVals[idxIsland];
         String savedIsUnit = cfg.islandUnits[idxIsland];
         boolean islandDefault = savedIsVal < 0;
         swIslandDefault.setChecked(islandDefault);
         etIsland.setText(islandDefault ? "" : String.valueOf(savedIsVal));
         toggleIslandUnit.check("s".equals(savedIsUnit) ? R.id.btn_island_s : R.id.btn_island_m);
-        setTimeoutRowEnabled(tilIsland, toggleIslandUnit, !islandDefault);
+        TimeoutCardController.setTimeoutRowEnabled(tilIsland, toggleIslandUnit, !islandDefault);
 
         int triggerIdx = cfg.notifTriggerStage;
         swNotifDefault.setChecked(cfg.notifGlobalDefault);
-        toggleNotifPhase.check(buttonIdForStage(NOTIF_PHASE_BUTTON_IDS, triggerIdx));
+        toggleNotifPhase.check(
+                TimeoutCardController.buttonIdForStage(NOTIF_PHASE_BUTTON_IDS, triggerIdx));
         int savedNoVal = cfg.notifVals[triggerIdx];
         String savedNoUnit = cfg.notifUnits[triggerIdx];
         etNotif.setText(cfg.notifGlobalDefault || savedNoVal < 0 ? "" : String.valueOf(savedNoVal));
         toggleNotifUnit.check("s".equals(savedNoUnit) ? R.id.btn_notif_s : R.id.btn_notif_m);
         boolean notifEnabled = !cfg.notifGlobalDefault;
-        setTimeoutRowEnabled(tilNotif, toggleNotifUnit, notifEnabled);
+        TimeoutCardController.setTimeoutRowEnabled(tilNotif, toggleNotifUnit, notifEnabled);
         toggleNotifPhase.setEnabled(notifEnabled);
         toggleNotifPhase.setAlpha(notifEnabled ? 1f : 0.4f);
     }

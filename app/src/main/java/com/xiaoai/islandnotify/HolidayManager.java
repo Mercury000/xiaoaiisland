@@ -15,9 +15,22 @@ public class HolidayManager {
 
     public static final String PREFS_HOLIDAY = "island_holiday";
     public static final String EXTRA_LIST_PREFIX = "holiday_list_";
+    private static volatile SharedPreferences sRemotePrefs;
 
     public static final int TYPE_HOLIDAY = 0;
     public static final int TYPE_WORKSWAP = 1;
+
+    public static void setRemotePrefs(SharedPreferences remotePrefs) {
+        sRemotePrefs = remotePrefs;
+    }
+
+    public static void clearRemotePrefs() {
+        sRemotePrefs = null;
+    }
+
+    private static SharedPreferences resolvePrefs() {
+        return PrefsAccess.resolve(sRemotePrefs);
+    }
 
     public static class HolidayEntry {
         public String date;
@@ -84,7 +97,7 @@ public class HolidayManager {
     }
 
     public static List<HolidayEntry> loadEntries(Context ctx, int year) {
-        SharedPreferences sp = ctx.getSharedPreferences(PREFS_HOLIDAY, Context.MODE_PRIVATE);
+        SharedPreferences sp = resolvePrefs();
         String raw = sp.getString("list_" + year, null);
         List<HolidayEntry> list = new ArrayList<>();
         if (raw == null || raw.isEmpty()) return list;
@@ -105,7 +118,7 @@ public class HolidayManager {
     }
 
     public static void saveEntries(Context ctx, int year, List<HolidayEntry> entries) {
-        ctx.getSharedPreferences(PREFS_HOLIDAY, Context.MODE_PRIVATE)
+        resolvePrefs()
                 .edit()
                 .putString("list_" + year, entriesToJson(entries))
                 .apply();
@@ -132,7 +145,7 @@ public class HolidayManager {
     }
 
     public static void clearAll(Context ctx) {
-        SharedPreferences sp = ctx.getSharedPreferences(PREFS_HOLIDAY, Context.MODE_PRIVATE);
+        SharedPreferences sp = resolvePrefs();
         SharedPreferences.Editor editor = sp.edit();
         for (String key : sp.getAll().keySet()) {
             if (key.startsWith("list_")) editor.remove(key);

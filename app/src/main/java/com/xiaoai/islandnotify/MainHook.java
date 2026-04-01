@@ -2455,20 +2455,39 @@ public class MainHook {
 
     private void bootstrapRemotePrefsUnified(Context ctx) {
         try {
-            SharedPreferences remote = XposedBridge.getRemotePreferences(PREFS_NAME);
             SharedPreferences remoteHoliday = XposedBridge.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
             SharedPreferences hostConfig = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             SharedPreferences hostRuntime = ctx.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
             SharedPreferences hostHoliday = ctx.getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
 
-            runInitialMigrationFiltered(remote, hostConfig, "配置", true);
-            runInitialMigrationFiltered(remoteHoliday, hostHoliday, "节假日", false);
-            // 先同步 remote -> local，再在本地做规范化与运行态迁移，避免漏迁移远端旧键
-            migrateLegacyConfigOnce(hostConfig);
+            HolidayManager.setRemotePrefs(remoteHoliday);
             migrateRuntimeStorageOnce(hostConfig, hostRuntime, null);
+            purgeHostConfigKeys(hostConfig);
+            clearPrefs(hostHoliday);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": bootstrapRemotePrefsUnified failed -> " + t.getMessage());
         }
+    }
+
+    private void purgeHostConfigKeys(SharedPreferences hostConfig) {
+        if (hostConfig == null) return;
+        try {
+            java.util.Map<String, ?> all = hostConfig.getAll();
+            if (all == null || all.isEmpty()) return;
+            SharedPreferences.Editor ed = hostConfig.edit();
+            boolean changed = false;
+            for (String key : all.keySet()) {
+                if (isConfigKey(key)) {
+                    ed.remove(key);
+                    changed = true;
+                }
+            }
+            if (changed) ed.apply();
+        } catch (Throwable ignored) {}
+    }
+
+    private void clearPrefs(SharedPreferences prefs) {
+        PrefsAccess.clearIfNotEmpty(prefs);
     }
 
     private String extractTeacher(JSONObject course) {
@@ -2863,16 +2882,15 @@ public class MainHook {
      * createPackageContext+MODE_PRIVATE 在 Android 9+ 会被 SELinux 拦截，无法使用。
      */
     private SharedPreferences loadConfigPrefsRemoteFirst(Context ctx) {
-        SharedPreferences local = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         try {
             com.xiaoai.islandnotify.modernhook.XSharedPreferences remote =
                     new com.xiaoai.islandnotify.modernhook.XSharedPreferences(PREFS_NAME);
             remote.reload();
-            if (!remote.getAll().isEmpty()) return remote;
+            return remote;
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": remote prefs load failed -> " + t.getMessage());
+            return new com.xiaoai.islandnotify.modernhook.XSharedPreferences(PREFS_NAME);
         }
-        return local;
     }
 
     private SharedPreferences getConfigPrefs(Context ctx) {

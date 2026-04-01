@@ -162,6 +162,26 @@ public class MainActivity extends AppCompatActivity {
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
 
+    private SharedPreferences getConfigPrefs() {
+        return PrefsAccess.resolve(mRemotePrefs);
+    }
+
+    private SharedPreferences.Editor editConfigPrefs() {
+        return PrefsAccess.edit(mRemotePrefs);
+    }
+
+    private SharedPreferences getHolidayPrefs() {
+        return PrefsAccess.resolve(mRemoteHolidayPrefs);
+    }
+
+    private SharedPreferences.Editor editHolidayPrefs() {
+        return PrefsAccess.edit(mRemoteHolidayPrefs);
+    }
+
+    private void clearLocalPrefs(String prefsName) {
+        PrefsAccess.clearLocal(this, prefsName);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         // 必须在 super.onCreate 前调用，才能正确应用动态色彩
@@ -224,16 +244,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        if (mLocalPrefMirrorListener != null) {
-            local.unregisterOnSharedPreferenceChangeListener(mLocalPrefMirrorListener);
-            mLocalPrefMirrorListener = null;
-        }
-        SharedPreferences holiday = getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
-        if (mLocalHolidayMirrorListener != null) {
-            holiday.unregisterOnSharedPreferenceChangeListener(mLocalHolidayMirrorListener);
-            mLocalHolidayMirrorListener = null;
-        }
+        HolidayManager.clearRemotePrefs();
         super.onDestroy();
     }
 
@@ -251,10 +262,10 @@ public class MainActivity extends AppCompatActivity {
                         + "\nAPI: " + apiVersion
                         + "  Version: " + service.getFrameworkVersionCode();
                 if (apiVersion >= 101) {
-                    initRemotePrefsBridgeV2(service);
+                    initRemotePrefsBridgeRemoteOnly(service);
                     requestMissingScopeIfNeeded(service);
                 } else {
-                    initRemotePrefsBridge(service);
+                    initRemotePrefsBridgeRemoteOnly(service);
                 }
                 runOnUiThread(MainActivity.this::updateModuleStatus);
             }
@@ -264,12 +275,49 @@ public class MainActivity extends AppCompatActivity {
                 mXposedService = null;
                 mRemotePrefs = null;
                 mRemoteHolidayPrefs = null;
+                HolidayManager.clearRemotePrefs();
                 mScopeRequested = false;
                 mFrameworkActive = false;
                 mFrameworkDesc = "";
                 runOnUiThread(MainActivity.this::updateModuleStatus);
             }
         });
+    }
+
+    private void initRemotePrefsBridgeRemoteOnly(XposedService service) {
+        try {
+            SharedPreferences remote = service.getRemotePreferences(PREFS_NAME);
+            mRemotePrefs = remote;
+
+            SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            migrateLocalToRemoteIfNeeded(remote, local, "配置", true);
+            migrateLegacyConfigOnce(remote);
+            clearLocalPrefs(PREFS_NAME);
+
+            SharedPreferences remoteHoliday = service.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
+            mRemoteHolidayPrefs = remoteHoliday;
+            SharedPreferences localHoliday = getSharedPreferences(HolidayManager.PREFS_HOLIDAY, Context.MODE_PRIVATE);
+            migrateLocalToRemoteIfNeeded(remoteHoliday, localHoliday, "节假日", false);
+            clearLocalPrefs(HolidayManager.PREFS_HOLIDAY);
+            HolidayManager.setRemotePrefs(remoteHoliday);
+
+            runOnUiThread(this::refreshAfterConfigSynced);
+        } catch (Throwable t) {
+            Log.w("IslandNotify", "initRemotePrefsBridgeRemoteOnly failed: " + t.getMessage());
+        }
+    }
+
+    private void migrateLocalToRemoteIfNeeded(SharedPreferences remote, SharedPreferences local,
+                                              String label, boolean configOnly) {
+        if (remote == null || local == null) return;
+        Map<String, ?> remoteAll = remote.getAll();
+        Map<String, ?> localAll = local.getAll();
+        boolean remoteEmpty = remoteAll == null || remoteAll.isEmpty();
+        boolean localEmpty = localAll == null || localAll.isEmpty();
+        if (remoteEmpty && !localEmpty) {
+            copyAllToTargetFiltered(remote, localAll, configOnly);
+            Log.d("IslandNotify", "首次迁移(" + label + "): local -> remote prefs");
+        }
     }
 
     private void initRemotePrefsBridgeV2(XposedService service) {
@@ -730,7 +778,7 @@ public class MainActivity extends AppCompatActivity {
             refreshCustomCardFromPrefs();
             return;
         }
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
         applyExpandedFieldOrderHints();
 
         // 三个阶段 SP 后缀：_pre=上课前  _active=上课中  _post=下课后
@@ -795,7 +843,7 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btn_save_custom).setOnClickListener(v -> {
 
             int autoAlignedCount = alignExpandedTimerDirectionWithStatusBarFromUi();
-            SharedPreferences.Editor ed = sp.edit();
+            SharedPreferences.Editor ed = editConfigPrefs();
             // 通知 voiceassist 进程同步最新配置（绕过 SELinux 跨 UID 文件读取限制）
 
             for (int i = 0; i < 3; i++) {
@@ -831,7 +879,7 @@ public class MainActivity extends AppCompatActivity {
         if (btnSaveExpandedView != null) {
             btnSaveExpandedView.setOnClickListener(v -> {
                 int autoAlignedCount = alignStatusBarTimerDirectionWithExpandedFromUi();
-                SharedPreferences.Editor ed = sp.edit();
+                SharedPreferences.Editor ed = editConfigPrefs();
                 for (int i = 0; i < 3; i++) {
                     // 保存展开态前，先把因“同阶段计时类型统一”产生的状态栏 tpl_b 同步写回，
                     // 避免 UI 已变更但配置未保存导致状态栏卡片误报“未保存”。
@@ -958,7 +1006,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void refreshCustomCardFromPrefs() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
         for (int i = 0; i < 3; i++) {
             ((EditText) findViewById(CUSTOM_IDS_A[i])).setText(
                     sp.getString("tpl_a" + CUSTOM_SUFFIXES[i], DEFAULT_TPL_A[i]));
@@ -980,7 +1028,7 @@ public class MainActivity extends AppCompatActivity {
      * 检查「自定义模板」卡片是否有未保存变更
      */
     private boolean isStatusCustomDirty() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
         final String[] SUFFIXES = {"_pre", "_active", "_post"};
         final int[] IDS_A      = {R.id.et_tpl_a_pre,      R.id.et_tpl_a_active,      R.id.et_tpl_a_post};
         final int[] IDS_B      = {R.id.et_tpl_b_pre,      R.id.et_tpl_b_active,      R.id.et_tpl_b_post};
@@ -1000,7 +1048,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean isExpandedCustomDirty() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
         final String[] SUFFIXES = {"_pre", "_active", "_post"};
         for (int i = 0; i < 3; i++) {
             for (int k = 0; k < EXPANDED_TPL_KEYS.length; k++) {
@@ -1056,7 +1104,7 @@ public class MainActivity extends AppCompatActivity {
      * 检查「超时设置」卡片当前可见项是否与已保存值不同（表明存在未保存修改）
      */
     private boolean isTimeoutDirty() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
         // 岛：当前阶段
         MaterialButtonToggleGroup toggleIslandPhase = findViewById(R.id.toggle_island_phase);
         int checkedIsland = toggleIslandPhase.getCheckedButtonId();
@@ -1168,7 +1216,7 @@ public class MainActivity extends AppCompatActivity {
      * val == -1 表示系统默认；val > 0 表示自定义。
      */
     private void initTimeoutCard() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
 
         // ── 岛：三阶段独立设置 ─────────────────────────────────────────
         final int[]    islandVals  = new int[3];
@@ -1339,7 +1387,7 @@ public class MainActivity extends AppCompatActivity {
             saveIslandUI.run();
 
             // 若全局默认被选中，确保所有 notifVals 为 -1
-            SharedPreferences.Editor ed = sp.edit();
+            SharedPreferences.Editor ed = editConfigPrefs();
 
             // 岛：三阶段键
             for (int i = 0; i < 3; i++) {
@@ -1406,7 +1454,7 @@ public class MainActivity extends AppCompatActivity {
      * 仅开放提醒时间自定义，保存时同步 reminder_minutes_before 到 voiceassist 进程。
      */
     private void initReminderCard() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
         EditText etMinutes = findViewById(R.id.et_reminder_minutes);
         TextView tvHint    = findViewById(R.id.tv_reminder_hint);
 
@@ -1425,7 +1473,7 @@ public class MainActivity extends AppCompatActivity {
                 minutes = 15;
             }
             etMinutes.setText(String.valueOf(minutes));
-            sp.edit().putInt("reminder_minutes_before", minutes).apply();
+            editConfigPrefs().putInt("reminder_minutes_before", minutes).apply();
 
 
             tvHint.setText("已保存，重新调度今日提醒（提前 " + minutes + " 分钟）");
@@ -1439,7 +1487,7 @@ public class MainActivity extends AppCompatActivity {
      * 静音与勿扰（DND）完全独立，可同时启用，各自独立配置触发时间。
      */
     private void initMuteCard() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
 
         SwitchMaterial swMute        = findViewById(R.id.sw_mute_enabled);
         SwitchMaterial swRepost      = findViewById(R.id.sw_repost_enabled);
@@ -1477,31 +1525,31 @@ public class MainActivity extends AppCompatActivity {
 
         // 全局补发开关
         swRepost.setOnCheckedChangeListener((btn, checked) -> {
-            sp.edit().putBoolean(KEY_REPOST_ENABLED, checked).apply();
+            editConfigPrefs().putBoolean(KEY_REPOST_ENABLED, checked).apply();
         });
 
         // 静音开关
         swMute.setOnCheckedChangeListener((btn, checked) -> {
             llMute.setVisibility(checked ? View.VISIBLE : View.GONE);
-            sp.edit().putBoolean("mute_enabled", checked).apply();
+            editConfigPrefs().putBoolean("mute_enabled", checked).apply();
         });
 
         // 取消静音开关
         swUnmute.setOnCheckedChangeListener((btn, checked) -> {
             llUnmute.setVisibility(checked ? View.VISIBLE : View.GONE);
-            sp.edit().putBoolean("unmute_enabled", checked).apply();
+            editConfigPrefs().putBoolean("unmute_enabled", checked).apply();
         });
 
         // 勿扰开关
         swDnd.setOnCheckedChangeListener((btn, checked) -> {
             llDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
-            sp.edit().putBoolean("dnd_enabled", checked).apply();
+            editConfigPrefs().putBoolean("dnd_enabled", checked).apply();
         });
 
         // 取消勿扰开关
         swUnDnd.setOnCheckedChangeListener((btn, checked) -> {
             llUnDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
-            sp.edit().putBoolean("undnd_enabled", checked).apply();
+            editConfigPrefs().putBoolean("undnd_enabled", checked).apply();
         });
 
         com.google.android.material.button.MaterialButtonToggleGroup toggleMode = findViewById(R.id.toggle_island_button_mode);
@@ -1525,7 +1573,7 @@ public class MainActivity extends AppCompatActivity {
             etDndBefore.setText(String.valueOf(dndBefore));
             etUnDndAfter.setText(String.valueOf(unDndAfter));
 
-            sp.edit()
+            editConfigPrefs()
               .putInt("mute_mins_before",  muteBefore)
               .putInt("unmute_mins_after", unmuteAfter)
               .putInt("dnd_mins_before",   dndBefore)
@@ -1548,7 +1596,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initWakeupCard() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
 
         com.google.android.material.switchmaterial.SwitchMaterial swMorning = findViewById(R.id.sw_wakeup_morning);
         View llMorning = findViewById(R.id.ll_wakeup_morning_content);
@@ -1576,12 +1624,12 @@ public class MainActivity extends AppCompatActivity {
 
         swMorning.setOnCheckedChangeListener((btn, checked) -> {
             llMorning.setVisibility(checked ? View.VISIBLE : View.GONE);
-            sp.edit().putBoolean("wakeup_morning_enabled", checked).apply();
+            editConfigPrefs().putBoolean("wakeup_morning_enabled", checked).apply();
         });
 
         swAfternoon.setOnCheckedChangeListener((btn, checked) -> {
             llAfternoon.setVisibility(checked ? View.VISIBLE : View.GONE);
-            sp.edit().putBoolean("wakeup_afternoon_enabled", checked).apply();
+            editConfigPrefs().putBoolean("wakeup_afternoon_enabled", checked).apply();
         });
 
         findViewById(R.id.btn_add_morning_rule).setOnClickListener(v -> addRuleRow(llMorningRules, 1, 7, 0));
@@ -1596,7 +1644,7 @@ public class MainActivity extends AppCompatActivity {
             String morningRulesJson   = collectRulesJson(llMorningRules);
             String afternoonRulesJson = collectRulesJson(llAfternoonRules);
 
-            sp.edit()
+            editConfigPrefs()
               .putInt("wakeup_morning_last_sec",         lastSec)
               .putInt("wakeup_afternoon_first_sec",      firstSec)
               .putString("wakeup_morning_rules_json",    morningRulesJson)
@@ -1850,7 +1898,7 @@ public class MainActivity extends AppCompatActivity {
                 cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE));
 
         // 直接从 SP 读取当前静音设置一起带入 intent，避免 voiceassist 读 SP 缓存旧値
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
         boolean muteEnabled   = sp.getBoolean("mute_enabled",   false);
         int     muteBefore    = sp.getInt("mute_mins_before",    0);
         boolean unmuteEnabled = sp.getBoolean("unmute_enabled", false);
@@ -2511,10 +2559,7 @@ public class MainActivity extends AppCompatActivity {
     private void syncHolidayToHook(int year) {
         List<HolidayManager.HolidayEntry> entries = HolidayManager.loadEntries(this, year);
         String json = HolidayManager.entriesToJson(entries);
-        SharedPreferences remoteHoliday = mRemoteHolidayPrefs;
-        if (remoteHoliday != null) {
-            remoteHoliday.edit().putString("list_" + year, json).apply();
-        }
+        editHolidayPrefs().putString("list_" + year, json).apply();
     }
 
     /** 若今天落在 [date, endDate] 范围内（含），向 Hook 发送重新调度广播。 */
@@ -2564,7 +2609,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void refreshTimeoutCardFromPrefs() {
-        SharedPreferences sp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences sp = getConfigPrefs();
 
         MaterialButtonToggleGroup toggleIslandPhase = findViewById(R.id.toggle_island_phase);
         TextInputLayout tilIsland = findViewById(R.id.til_island_to);
@@ -2644,23 +2689,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private int resetAllConfigToDefaults() {
-        SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        SharedPreferences remote = mRemotePrefs;
+        SharedPreferences remote = getConfigPrefs();
         int removedCount = 0;
-        Map<String, ?> localAll = local.getAll();
-        if (localAll != null) removedCount += localAll.size();
-        if (remote != null) {
-            Map<String, ?> remoteAll = remote.getAll();
-            if (remoteAll != null) removedCount += remoteAll.size();
-        }
-        SharedPreferences.Editor localEd = local.edit();
-        SharedPreferences.Editor remoteEd = (remote != null) ? remote.edit() : null;
-        localEd.clear();
-        if (remoteEd != null) remoteEd.clear();
-        applyDefaultTemplateValues(localEd);
-        if (remoteEd != null) applyDefaultTemplateValues(remoteEd);
-        localEd.apply();
-        if (remoteEd != null) remoteEd.apply();
+        Map<String, ?> remoteAll = remote.getAll();
+        if (remoteAll != null) removedCount += remoteAll.size();
+        SharedPreferences.Editor remoteEd = remote.edit();
+        remoteEd.clear();
+        applyDefaultTemplateValues(remoteEd);
+        remoteEd.apply();
+        clearLocalPrefs(PREFS_NAME);
         return removedCount;
     }
 

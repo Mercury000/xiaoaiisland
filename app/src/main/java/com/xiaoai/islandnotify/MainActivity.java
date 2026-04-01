@@ -1146,30 +1146,11 @@ public class MainActivity extends AppCompatActivity {
      * 仅开放提醒时间自定义，保存时同步 reminder_minutes_before 到 voiceassist 进程。
      */
     private void initReminderCard() {
-        EditText etMinutes = findViewById(R.id.et_reminder_minutes);
-        TextView tvHint    = findViewById(R.id.tv_reminder_hint);
-
-        int savedMinutes = readConfigInt("reminder_minutes_before", ConfigDefaults.REMINDER_MINUTES);
-        etMinutes.setText(String.valueOf(savedMinutes));
-
-        // 保存分钟数并重新调度
-        findViewById(R.id.btn_save_reminder).setOnClickListener(v -> {
-            String str = etMinutes.getText() != null ? etMinutes.getText().toString().trim() : "";
-            int minutes;
-            try {
-                minutes = Integer.parseInt(str);
-                if (minutes < 1) minutes = 1;
-                if (minutes > 120) minutes = 120;
-            } catch (NumberFormatException e) {
-                minutes = ConfigDefaults.REMINDER_MINUTES;
-            }
-            etMinutes.setText(String.valueOf(minutes));
-            editConfigPrefs().putInt("reminder_minutes_before", minutes).apply();
-
-
-            tvHint.setText("已保存，重新调度今日提醒（提前 " + minutes + " 分钟）");
-            tvHint.setVisibility(View.VISIBLE);
-        });
+        ReminderCardController.bind(
+                this,
+                readConfigInt("reminder_minutes_before", ConfigDefaults.REMINDER_MINUTES),
+                ConfigDefaults.REMINDER_MINUTES,
+                minutes -> editConfigPrefs().putInt("reminder_minutes_before", minutes).apply());
     }
 
     /**

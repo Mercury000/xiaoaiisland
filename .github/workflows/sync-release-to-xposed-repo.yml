@@ -1,0 +1,178 @@
+name: Sync Release To Xposed Repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: "Source release tag in this repo (e.g. 2026040101)"
+        required: true
+        type: string
+      target_repo:
+        description: "Target repository (owner/repo)"
+        required: true
+        default: "Xposed-Modules-Repo/com.xiaoai.islandnotify"
+        type: string
+      target_tag:
+        description: "Target tag (empty => sourceTag-sourceTag)"
+        required: false
+        default: ""
+        type: string
+      release_name:
+        description: "Target release title (empty => source release title)"
+        required: false
+        default: ""
+        type: string
+      release_body:
+        description: "Target release body (empty => source release body)"
+        required: false
+        default: ""
+        type: string
+      overwrite_existing:
+        description: "Delete existing target release/tag before recreate"
+        required: true
+        default: false
+        type: boolean
+      mark_as_prerelease:
+        description: "Force target release as prerelease"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  sync-release:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REPO: ${{ github.repository }}
+      SOURCE_TAG: ${{ inputs.source_tag }}
+      TARGET_REPO: ${{ inputs.target_repo }}
+      INPUT_TARGET_TAG: ${{ inputs.target_tag }}
+      INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+      INPUT_RELEASE_BODY: ${{ inputs.release_body }}
+      INPUT_PRERELEASE: ${{ inputs.mark_as_prerelease }}
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+    steps:
+      - name: Validate token
+        shell: bash
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "RELEASE_TOKEN is missing; cannot publish to target repo."
+            exit 1
+          fi
+
+      - name: Resolve source release and target metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC_JSON="$(gh api "repos/${SOURCE_REPO}/releases/tags/${SOURCE_TAG}")"
+          SRC_NAME="$(jq -r '.name // empty' <<<"$SRC_JSON")"
+          SRC_BODY="$(jq -r '.body // ""' <<<"$SRC_JSON")"
+          SRC_PRERELEASE="$(jq -r '.prerelease' <<<"$SRC_JSON")"
+
+          if [ -n "${INPUT_TARGET_TAG}" ]; then
+            TARGET_TAG="${INPUT_TARGET_TAG}"
+          else
+            TARGET_TAG="${SOURCE_TAG}-${SOURCE_TAG}"
+          fi
+
+          if [ -n "${INPUT_RELEASE_NAME}" ]; then
+            TARGET_NAME="${INPUT_RELEASE_NAME}"
+          else
+            if [ -n "${SRC_NAME}" ]; then
+              TARGET_NAME="${SRC_NAME}"
+            else
+              TARGET_NAME="${TARGET_TAG}"
+            fi
+          fi
+
+          if [ -n "${INPUT_RELEASE_BODY}" ]; then
+            TARGET_BODY="${INPUT_RELEASE_BODY}"
+          else
+            TARGET_BODY="${SRC_BODY}"
+          fi
+
+          if [ "${INPUT_PRERELEASE}" = "true" ]; then
+            TARGET_PRERELEASE="true"
+          else
+            TARGET_PRERELEASE="${SRC_PRERELEASE}"
+          fi
+
+          BODY_FILE="$RUNNER_TEMP/target_release_body.md"
+          printf '%s\n' "$TARGET_BODY" > "$BODY_FILE"
+
+          {
+            echo "target_tag=${TARGET_TAG}"
+            echo "target_name=${TARGET_NAME}"
+            echo "target_prerelease=${TARGET_PRERELEASE}"
+            echo "body_file=${BODY_FILE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download source release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          SRC_JSON="$(gh api "repos/${SOURCE_REPO}/releases/tags/${SOURCE_TAG}")"
+          jq -c '.assets[]?' <<<"$SRC_JSON" | while read -r asset; do
+            name="$(jq -r '.name // empty' <<<"$asset")"
+            url="$(jq -r '.url // empty' <<<"$asset")"
+            if [ -z "$name" ] || [ -z "$url" ]; then
+              continue
+            fi
+            echo "Downloading asset: $name"
+            gh api -H "Accept: application/octet-stream" "$url" > "release-assets/$name"
+          done
+
+          count="$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          echo "Downloaded assets: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "No assets found in source release."
+            exit 1
+          fi
+
+      - name: Delete existing target release (optional)
+        if: ${{ inputs.overwrite_existing }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.meta.outputs.target_tag }}'
+          if gh release view "$tag" -R "$TARGET_REPO" >/dev/null 2>&1; then
+            gh release delete "$tag" -R "$TARGET_REPO" --yes --cleanup-tag
+          fi
+
+      - name: Create target release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.meta.outputs.target_tag }}'
+          name='${{ steps.meta.outputs.target_name }}'
+          body_file='${{ steps.meta.outputs.body_file }}'
+
+          extra=()
+          if [ '${{ steps.meta.outputs.target_prerelease }}' = 'true' ]; then
+            extra+=(--prerelease)
+          fi
+
+          gh release create "$tag" \
+            -R "$TARGET_REPO" \
+            --title "$name" \
+            --notes-file "$body_file" \
+            "${extra[@]}"
+
+      - name: Upload assets to target release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.meta.outputs.target_tag }}'
+          gh release upload "$tag" release-assets/* -R "$TARGET_REPO" --clobber
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "Synced ${SOURCE_REPO}@${SOURCE_TAG} -> ${TARGET_REPO}@${{ steps.meta.outputs.target_tag }}"

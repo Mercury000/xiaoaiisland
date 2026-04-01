@@ -116,15 +116,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private int readConfigInt(String key, int defaultValue) {
-        return getConfigPrefs().getInt(key, ConfigDefaults.intDefault(key, defaultValue));
+        return PrefsAccess.readConfigInt(mRemotePrefs, key, defaultValue);
     }
 
     private boolean readConfigBool(String key, boolean defaultValue) {
-        return getConfigPrefs().getBoolean(key, ConfigDefaults.boolDefault(key, defaultValue));
+        return PrefsAccess.readConfigBool(mRemotePrefs, key, defaultValue);
     }
 
     private String readConfigString(String key, String defaultValue) {
-        return getConfigPrefs().getString(key, ConfigDefaults.stringDefault(key, defaultValue));
+        return PrefsAccess.readConfigString(mRemotePrefs, key, defaultValue);
     }
 
     private SharedPreferences getHolidayPrefs() {
@@ -337,24 +337,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void copyAllToTargetFiltered(SharedPreferences target, Map<String, ?> allValues, boolean configOnly) {
-        if (target == null || allValues == null) return;
-        SharedPreferences.Editor ed = target.edit();
-        for (Map.Entry<String, ?> e : allValues.entrySet()) {
-            if (configOnly && !isConfigKey(e.getKey())) continue;
-            putTyped(ed, e.getKey(), e.getValue());
-        }
-        ed.apply();
+        PrefsAccess.copyAllFiltered(target, allValues, configOnly);
     }
 
     private void copySingleKeyToTarget(SharedPreferences target, SharedPreferences source, String key) {
-        if (target == null || source == null || key == null) return;
-        SharedPreferences.Editor ed = target.edit();
-        if (!source.contains(key)) {
-            ed.remove(key);
-        } else {
-            putTyped(ed, key, source.getAll().get(key));
-        }
-        ed.apply();
+        PrefsAccess.copySingleKey(target, source, key);
     }
 
     private void initRemotePrefsBridge(XposedService service) {
@@ -532,48 +519,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void copyKeysToTarget(SharedPreferences target, SharedPreferences source, String... keys) {
-        if (target == null || source == null || keys == null || keys.length == 0) return;
-        SharedPreferences.Editor ed = target.edit();
+        if (source == null || keys == null || keys.length == 0) return;
         for (String key : keys) {
-            if (key == null) continue;
-            if (!source.contains(key)) {
-                ed.remove(key);
-                continue;
-            }
-            Object value = source.getAll().get(key);
-            putTyped(ed, key, value);
+            PrefsAccess.copySingleKey(target, source, key);
         }
-        ed.apply();
     }
 
     private void copyAllToTarget(SharedPreferences target, Map<String, ?> allValues) {
-        if (target == null || allValues == null) return;
-        SharedPreferences.Editor ed = target.edit();
-        for (Map.Entry<String, ?> e : allValues.entrySet()) {
-            putTyped(ed, e.getKey(), e.getValue());
-        }
-        ed.apply();
-    }
-
-    private void putTyped(SharedPreferences.Editor ed, String key, Object value) {
-        if (ed == null || key == null) return;
-        if (value == null) {
-            ed.remove(key);
-        } else if (value instanceof String) {
-            ed.putString(key, (String) value);
-        } else if (value instanceof Integer) {
-            ed.putInt(key, (Integer) value);
-        } else if (value instanceof Boolean) {
-            ed.putBoolean(key, (Boolean) value);
-        } else if (value instanceof Long) {
-            ed.putLong(key, (Long) value);
-        } else if (value instanceof Float) {
-            ed.putFloat(key, (Float) value);
-        } else if (value instanceof Set) {
-            @SuppressWarnings("unchecked")
-            Set<String> valueSet = (Set<String>) value;
-            ed.putStringSet(key, valueSet);
-        }
+        PrefsAccess.copyAll(target, allValues);
     }
 
     // ─────────────────────────────────────────────────────────────

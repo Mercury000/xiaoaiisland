@@ -2531,15 +2531,8 @@ public class MainHook {
     }
 
     private void copyAllPrefsFiltered(SharedPreferences target, java.util.Map<String, ?> allValues, boolean configOnly) {
-        if (target == null || allValues == null) return;
         if (!isWritablePrefs(target)) return;
-        SharedPreferences.Editor ed = target.edit();
-        for (java.util.Map.Entry<String, ?> e : allValues.entrySet()) {
-            String key = e.getKey();
-            if (configOnly && !isConfigKey(key)) continue;
-            putTyped(ed, key, e.getValue());
-        }
-        ed.apply();
+        PrefsAccess.copyAllFiltered(target, allValues, configOnly);
     }
 
     private boolean isConfigKey(String key) {
@@ -2689,27 +2682,6 @@ public class MainHook {
         }
     }
 
-    private void putTyped(SharedPreferences.Editor ed, String key, Object value) {
-        if (ed == null || key == null) return;
-        if (value == null) {
-            ed.remove(key);
-        } else if (value instanceof String) {
-            ed.putString(key, (String) value);
-        } else if (value instanceof Integer) {
-            ed.putInt(key, (Integer) value);
-        } else if (value instanceof Boolean) {
-            ed.putBoolean(key, (Boolean) value);
-        } else if (value instanceof Long) {
-            ed.putLong(key, (Long) value);
-        } else if (value instanceof Float) {
-            ed.putFloat(key, (Float) value);
-        } else if (value instanceof java.util.Set) {
-            @SuppressWarnings("unchecked")
-            java.util.Set<String> set = (java.util.Set<String>) value;
-            ed.putStringSet(key, set);
-        }
-    }
-
     private void registerRemotePrefsListener(Context ctx) {
         try {
             com.xiaoai.islandnotify.modernhook.XSharedPreferences remote =
@@ -2798,18 +2770,15 @@ public class MainHook {
     }
 
     private int readConfigInt(SharedPreferences prefs, String key, int fallback) {
-        SharedPreferences target = PrefsAccess.resolve(prefs);
-        return target.getInt(key, ConfigDefaults.intDefault(key, fallback));
+        return PrefsAccess.readConfigInt(prefs, key, fallback);
     }
 
     private boolean readConfigBool(SharedPreferences prefs, String key, boolean fallback) {
-        SharedPreferences target = PrefsAccess.resolve(prefs);
-        return target.getBoolean(key, ConfigDefaults.boolDefault(key, fallback));
+        return PrefsAccess.readConfigBool(prefs, key, fallback);
     }
 
     private String readConfigString(SharedPreferences prefs, String key, String fallback) {
-        SharedPreferences target = PrefsAccess.resolve(prefs);
-        return safeStr(target.getString(key, ConfigDefaults.stringDefault(key, fallback)));
+        return PrefsAccess.readConfigString(prefs, key, fallback);
     }
 
     /**

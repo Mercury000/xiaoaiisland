@@ -48,6 +48,69 @@ final class PrefsAccess {
         return resolve(prefs).edit();
     }
 
+    static int readConfigInt(SharedPreferences prefs, String key, int fallback) {
+        SharedPreferences target = resolve(prefs);
+        return target.getInt(key, ConfigDefaults.intDefault(key, fallback));
+    }
+
+    static boolean readConfigBool(SharedPreferences prefs, String key, boolean fallback) {
+        SharedPreferences target = resolve(prefs);
+        return target.getBoolean(key, ConfigDefaults.boolDefault(key, fallback));
+    }
+
+    static String readConfigString(SharedPreferences prefs, String key, String fallback) {
+        SharedPreferences target = resolve(prefs);
+        String value = target.getString(key, ConfigDefaults.stringDefault(key, fallback));
+        return value == null ? "" : value;
+    }
+
+    static void copyAll(SharedPreferences target, Map<String, ?> allValues) {
+        copyAllFiltered(target, allValues, false);
+    }
+
+    static void copyAllFiltered(SharedPreferences target, Map<String, ?> allValues, boolean configOnly) {
+        if (allValues == null) return;
+        SharedPreferences.Editor ed = edit(target);
+        for (Map.Entry<String, ?> e : allValues.entrySet()) {
+            String key = e.getKey();
+            if (configOnly && !ConfigDefaults.isConfigKey(key)) continue;
+            putTyped(ed, key, e.getValue());
+        }
+        ed.apply();
+    }
+
+    static void copySingleKey(SharedPreferences target, SharedPreferences source, String key) {
+        if (source == null || key == null) return;
+        SharedPreferences.Editor ed = edit(target);
+        if (!source.contains(key)) {
+            ed.remove(key);
+        } else {
+            putTyped(ed, key, source.getAll().get(key));
+        }
+        ed.apply();
+    }
+
+    static void putTyped(SharedPreferences.Editor ed, String key, Object value) {
+        if (ed == null || key == null) return;
+        if (value == null) {
+            ed.remove(key);
+        } else if (value instanceof String) {
+            ed.putString(key, (String) value);
+        } else if (value instanceof Integer) {
+            ed.putInt(key, (Integer) value);
+        } else if (value instanceof Boolean) {
+            ed.putBoolean(key, (Boolean) value);
+        } else if (value instanceof Long) {
+            ed.putLong(key, (Long) value);
+        } else if (value instanceof Float) {
+            ed.putFloat(key, (Float) value);
+        } else if (value instanceof Set) {
+            @SuppressWarnings("unchecked")
+            Set<String> set = (Set<String>) value;
+            ed.putStringSet(key, set);
+        }
+    }
+
     static void clearIfNotEmpty(SharedPreferences prefs) {
         SharedPreferences target = resolve(prefs);
         Map<String, ?> all = target.getAll();

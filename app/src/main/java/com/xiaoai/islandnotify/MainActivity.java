@@ -1224,52 +1224,36 @@ public class MainActivity extends AppCompatActivity {
         TextView       tvMuteHint    = findViewById(R.id.tv_mute_hint);
 
         // 加载已保存状态
-        swRepost.setChecked(readConfigBool(KEY_REPOST_ENABLED, ConfigDefaults.REPOST_ENABLED));
+        CardUiController.bindSwitch(
+                swRepost,
+                readConfigBool(KEY_REPOST_ENABLED, ConfigDefaults.REPOST_ENABLED),
+                checked -> editConfigPrefs().putBoolean(KEY_REPOST_ENABLED, checked).apply());
 
-        swMute.setChecked(readConfigBool("mute_enabled", ConfigDefaults.SWITCH_DISABLED));
-        llMute.setVisibility(swMute.isChecked() ? View.VISIBLE : View.GONE);
         etMuteBefore.setText(String.valueOf(readConfigInt("mute_mins_before", ConfigDefaults.MINUTES_OFFSET)));
-
-        swUnmute.setChecked(readConfigBool("unmute_enabled", ConfigDefaults.SWITCH_DISABLED));
-        llUnmute.setVisibility(swUnmute.isChecked() ? View.VISIBLE : View.GONE);
         etUnmuteAfter.setText(String.valueOf(readConfigInt("unmute_mins_after", ConfigDefaults.MINUTES_OFFSET)));
-
-        swDnd.setChecked(readConfigBool("dnd_enabled", ConfigDefaults.SWITCH_DISABLED));
-        llDnd.setVisibility(swDnd.isChecked() ? View.VISIBLE : View.GONE);
         etDndBefore.setText(String.valueOf(readConfigInt("dnd_mins_before", ConfigDefaults.MINUTES_OFFSET)));
-
-        swUnDnd.setChecked(readConfigBool("undnd_enabled", ConfigDefaults.SWITCH_DISABLED));
-        llUnDnd.setVisibility(swUnDnd.isChecked() ? View.VISIBLE : View.GONE);
         etUnDndAfter.setText(String.valueOf(readConfigInt("undnd_mins_after", ConfigDefaults.MINUTES_OFFSET)));
 
-        // 全局补发开关
-        swRepost.setOnCheckedChangeListener((btn, checked) -> {
-            editConfigPrefs().putBoolean(KEY_REPOST_ENABLED, checked).apply();
-        });
-
-        // 静音开关
-        swMute.setOnCheckedChangeListener((btn, checked) -> {
-            llMute.setVisibility(checked ? View.VISIBLE : View.GONE);
-            editConfigPrefs().putBoolean("mute_enabled", checked).apply();
-        });
-
-        // 取消静音开关
-        swUnmute.setOnCheckedChangeListener((btn, checked) -> {
-            llUnmute.setVisibility(checked ? View.VISIBLE : View.GONE);
-            editConfigPrefs().putBoolean("unmute_enabled", checked).apply();
-        });
-
-        // 勿扰开关
-        swDnd.setOnCheckedChangeListener((btn, checked) -> {
-            llDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
-            editConfigPrefs().putBoolean("dnd_enabled", checked).apply();
-        });
-
-        // 取消勿扰开关
-        swUnDnd.setOnCheckedChangeListener((btn, checked) -> {
-            llUnDnd.setVisibility(checked ? View.VISIBLE : View.GONE);
-            editConfigPrefs().putBoolean("undnd_enabled", checked).apply();
-        });
+        CardUiController.bindSwitchContent(
+                swMute,
+                llMute,
+                readConfigBool("mute_enabled", ConfigDefaults.SWITCH_DISABLED),
+                checked -> editConfigPrefs().putBoolean("mute_enabled", checked).apply());
+        CardUiController.bindSwitchContent(
+                swUnmute,
+                llUnmute,
+                readConfigBool("unmute_enabled", ConfigDefaults.SWITCH_DISABLED),
+                checked -> editConfigPrefs().putBoolean("unmute_enabled", checked).apply());
+        CardUiController.bindSwitchContent(
+                swDnd,
+                llDnd,
+                readConfigBool("dnd_enabled", ConfigDefaults.SWITCH_DISABLED),
+                checked -> editConfigPrefs().putBoolean("dnd_enabled", checked).apply());
+        CardUiController.bindSwitchContent(
+                swUnDnd,
+                llUnDnd,
+                readConfigBool("undnd_enabled", ConfigDefaults.SWITCH_DISABLED),
+                checked -> editConfigPrefs().putBoolean("undnd_enabled", checked).apply());
 
         com.google.android.material.button.MaterialButtonToggleGroup toggleMode = findViewById(R.id.toggle_island_button_mode);
         int savedMode = readConfigInt("island_button_mode", ConfigDefaults.ISLAND_BUTTON_MODE); // 0=Mute, 1=DND, 2=Both
@@ -1301,8 +1285,7 @@ public class MainActivity extends AppCompatActivity {
               .apply();
 
 
-            tvMuteHint.setText("设置已保存并重新调度");
-            tvMuteHint.setVisibility(View.VISIBLE);
+            CardUiController.showHint(tvMuteHint, "设置已保存并重新调度");
         });
     }
 
@@ -1331,25 +1314,22 @@ public class MainActivity extends AppCompatActivity {
         loadRuleRows(llAfternoonRules, readConfigString(
                 "wakeup_afternoon_rules_json", ConfigDefaults.WAKEUP_AFTERNOON_RULES_JSON));
 
-        swMorning.setChecked(readConfigBool("wakeup_morning_enabled", ConfigDefaults.SWITCH_DISABLED));
-        llMorning.setVisibility(swMorning.isChecked() ? View.VISIBLE : View.GONE);
         etLastSec.setText(String.valueOf(readConfigInt(
                 "wakeup_morning_last_sec", ConfigDefaults.WAKEUP_MORNING_LAST_SEC)));
 
-        swAfternoon.setChecked(readConfigBool("wakeup_afternoon_enabled", ConfigDefaults.SWITCH_DISABLED));
-        llAfternoon.setVisibility(swAfternoon.isChecked() ? View.VISIBLE : View.GONE);
         etFirstSec.setText(String.valueOf(readConfigInt(
                 "wakeup_afternoon_first_sec", ConfigDefaults.WAKEUP_AFTERNOON_FIRST_SEC)));
 
-        swMorning.setOnCheckedChangeListener((btn, checked) -> {
-            llMorning.setVisibility(checked ? View.VISIBLE : View.GONE);
-            editConfigPrefs().putBoolean("wakeup_morning_enabled", checked).apply();
-        });
-
-        swAfternoon.setOnCheckedChangeListener((btn, checked) -> {
-            llAfternoon.setVisibility(checked ? View.VISIBLE : View.GONE);
-            editConfigPrefs().putBoolean("wakeup_afternoon_enabled", checked).apply();
-        });
+        CardUiController.bindSwitchContent(
+                swMorning,
+                llMorning,
+                readConfigBool("wakeup_morning_enabled", ConfigDefaults.SWITCH_DISABLED),
+                checked -> editConfigPrefs().putBoolean("wakeup_morning_enabled", checked).apply());
+        CardUiController.bindSwitchContent(
+                swAfternoon,
+                llAfternoon,
+                readConfigBool("wakeup_afternoon_enabled", ConfigDefaults.SWITCH_DISABLED),
+                checked -> editConfigPrefs().putBoolean("wakeup_afternoon_enabled", checked).apply());
 
         findViewById(R.id.btn_add_morning_rule).setOnClickListener(v -> addRuleRow(llMorningRules, 1, 7, 0));
         findViewById(R.id.btn_add_afternoon_rule).setOnClickListener(v -> addRuleRow(llAfternoonRules, 5, 12, 0));
@@ -1371,8 +1351,7 @@ public class MainActivity extends AppCompatActivity {
               .apply();
 
 
-            tvHint.setText("设置已保存并重新调度叫醒闹钟");
-            tvHint.setVisibility(View.VISIBLE);
+            CardUiController.showHint(tvHint, "设置已保存并重新调度叫醒闹钟");
         });
     }
 

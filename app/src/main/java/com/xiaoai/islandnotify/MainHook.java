@@ -949,18 +949,12 @@ public class MainHook {
             for (int i = 0; i < courses.length(); i++) {
                 JSONObject course = courses.getJSONObject(i);
                 if (course.getInt("day") != todayDay) continue;
+                if (!isCourseInCurrentWeek(course, currentWeek)) continue;
 
-                boolean inWeek = false;
-                for (String w : course.getString("weeks").split(",")) {
-                    try { if (Integer.parseInt(w.trim()) == currentWeek) { inWeek = true; break; } }
-                    catch (NumberFormatException ignored) {}
-                }
-                if (!inWeek) continue;
-
-                String[] secs = course.getString("sections").split(",");
-                if (secs.length == 0) continue;
-                int firstSec = Integer.parseInt(secs[0].trim());
-                int lastSec  = Integer.parseInt(secs[secs.length - 1].trim());
+                int[] sectionBounds = parseCourseSectionBounds(course);
+                if (sectionBounds == null) continue;
+                int firstSec = sectionBounds[0];
+                int lastSec  = sectionBounds[1];
 
                 String startTime = getSectionTime(sectionTimes, firstSec, true);
                 String endTime   = getSectionTime(sectionTimes, lastSec,  false);
@@ -986,9 +980,10 @@ public class MainHook {
                 int  idx      = (int) slot[2];
 
                 JSONObject course = courses.getJSONObject(idx);
-                String[] secs     = course.getString("sections").split(",");
-                int firstSec      = Integer.parseInt(secs[0].trim());
-                int lastSec       = Integer.parseInt(secs[secs.length - 1].trim());
+                int[] sectionBounds = parseCourseSectionBounds(course);
+                if (sectionBounds == null) continue;
+                int firstSec      = sectionBounds[0];
+                int lastSec       = sectionBounds[1];
                 String startTime  = getSectionTime(sectionTimes, firstSec, true);
                 String endTime    = getSectionTime(sectionTimes, lastSec,  false);
                 String courseName = course.getString("name");
@@ -1082,6 +1077,33 @@ public class MainHook {
             return stable.hashCode();
         } catch (Throwable e) {
             return beanJson.hashCode();
+        }
+    }
+
+    private boolean isCourseInCurrentWeek(JSONObject course, int currentWeek) {
+        if (course == null) return false;
+        String weeksCsv = safeStr(course.optString("weeks", ""));
+        if (weeksCsv.isEmpty()) return false;
+        for (String week : weeksCsv.split(",")) {
+            try {
+                if (Integer.parseInt(week.trim()) == currentWeek) return true;
+            } catch (NumberFormatException ignored) {}
+        }
+        return false;
+    }
+
+    private int[] parseCourseSectionBounds(JSONObject course) {
+        if (course == null) return null;
+        String sectionsCsv = safeStr(course.optString("sections", ""));
+        if (sectionsCsv.isEmpty()) return null;
+        String[] sections = sectionsCsv.split(",");
+        if (sections.length == 0) return null;
+        try {
+            int first = Integer.parseInt(sections[0].trim());
+            int last = Integer.parseInt(sections[sections.length - 1].trim());
+            return new int[]{first, last};
+        } catch (NumberFormatException ignored) {
+            return null;
         }
     }
 
@@ -1431,16 +1453,11 @@ public class MainHook {
             for (int i = 0; i < courses.length(); i++) {
                 JSONObject course = courses.getJSONObject(i);
                 if (course.getInt("day") != todayDay) continue;
-                boolean inWeek = false;
-                for (String w : course.getString("weeks").split(",")) {
-                    try { if (Integer.parseInt(w.trim()) == currentWeek) { inWeek = true; break; } }
-                    catch (NumberFormatException ignored) {}
-                }
-                if (!inWeek) continue;
-                String[] secs = course.getString("sections").split(",");
-                if (secs.length == 0) continue;
-                String startTime = getSectionTime(sectionTimes, Integer.parseInt(secs[0].trim()), true);
-                String endTime   = getSectionTime(sectionTimes, Integer.parseInt(secs[secs.length-1].trim()), false);
+                if (!isCourseInCurrentWeek(course, currentWeek)) continue;
+                int[] sectionBounds = parseCourseSectionBounds(course);
+                if (sectionBounds == null) continue;
+                String startTime = getSectionTime(sectionTimes, sectionBounds[0], true);
+                String endTime   = getSectionTime(sectionTimes, sectionBounds[1], false);
                 if (startTime.isEmpty() || endTime.isEmpty()) continue;
                 long startMs = computeClassStartMs(startTime);
                 long endMs   = computeClassStartMs(endTime);

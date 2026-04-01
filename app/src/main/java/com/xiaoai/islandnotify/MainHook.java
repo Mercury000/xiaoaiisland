@@ -261,7 +261,9 @@ public class MainHook {
                 BroadcastReceiver receiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
-                        if (ACTION_ISLAND_UPDATE.equals(intent.getAction())) {
+                        String action = intent == null ? null : intent.getAction();
+                        if (dispatchSimpleAction(context, intent, action)) return;
+                        if (ACTION_ISLAND_UPDATE.equals(action)) {
                             String courseName = safeStr(intent.getStringExtra("course_name"));
                             String startTime  = safeStr(intent.getStringExtra("start_time"));
                             String endTime    = safeStr(intent.getStringExtra("end_time"));
@@ -297,7 +299,7 @@ public class MainHook {
                             }
                             SharedPreferences prefs = getConfigPrefs(context);
                             sendIslandUpdate(info, state, context, channelId, src, nm, tag, id, prefs);
-                        } else if (ACTION_TEST_NOTIFY.equals(intent.getAction())) {
+                        } else if (ACTION_TEST_NOTIFY.equals(action)) {
                             // 由模块 APP 触发，在目标进程内构造并发送测试通知
                             String tCourseName = intent.getStringExtra("course_name");
                             String tStartTime  = intent.getStringExtra("start_time");
@@ -426,7 +428,7 @@ public class MainHook {
                                     }
                                 }
                             }
-                        } else if (ACTION_COURSE_REMINDER.equals(intent.getAction())) {
+                        } else if (ACTION_COURSE_REMINDER.equals(action)) {
                             // AlarmManager 触发课前提醒 → 在 voiceassist 进程构造通知
                             String crName  = safeStr(intent.getStringExtra("course_name"));
                             String crStart = safeStr(intent.getStringExtra("start_time"));
@@ -652,6 +654,60 @@ public class MainHook {
      * PendingIntent.getService 在进程死亡后能强制拉起进程，
      * 解决 getBroadcast + 动态注册接收器在进程死后无人接收的问题。
      */
+    private boolean dispatchSimpleAction(Context context, Intent intent, String action) {
+        if (action == null) return true;
+        if (ACTION_DO_MUTE.equals(action)) {
+            applyMuteState(context, true, intent.getStringExtra("course_name"));
+            return true;
+        }
+        if (ACTION_DO_UNMUTE.equals(action)) {
+            applyMuteState(context, false, intent.getStringExtra("course_name"));
+            return true;
+        }
+        if (ACTION_DO_DND_ON.equals(action)) {
+            applyDndState(context, true, intent.getStringExtra("course_name"));
+            return true;
+        }
+        if (ACTION_DO_DND_OFF.equals(action)) {
+            applyDndState(context, false, intent.getStringExtra("course_name"));
+            return true;
+        }
+        if (ACTION_MANUAL_MUTE.equals(action)) {
+            String courseName = intent.getStringExtra("course_name");
+            if (sIslandButtonMode == 0 || sIslandButtonMode == 2) applyMuteState(context, true, courseName);
+            if (sIslandButtonMode == 1 || sIslandButtonMode == 2) applyDndState(context, true, courseName);
+            return true;
+        }
+        if (ACTION_MANUAL_UNMUTE.equals(action)) {
+            String courseName = intent.getStringExtra("course_name");
+            if (sIslandButtonMode == 0 || sIslandButtonMode == 2) applyMuteState(context, false, courseName);
+            if (sIslandButtonMode == 1 || sIslandButtonMode == 2) applyDndState(context, false, courseName);
+            return true;
+        }
+        if (ACTION_RESCHEDULE_DAILY.equals(action)) {
+            XposedBridge.log(TAG + ": [璺ㄦ棩閲嶈皟] 瑙﹀彂锛屽悓姝ラ厤缃苟鎵ц涓诲姩閲嶈皟搴?");
+            SharedPreferences prefs = getConfigPrefs(context);
+            refreshRuntimeSwitchesFromPrefs(prefs);
+            markDailyRescheduleRun(context);
+            safeReschedule(context, "island_reschedule_daily", true);
+            return true;
+        }
+        if (ACTION_NOTIF_CANCEL.equals(action)) {
+            int cancelId = intent.getIntExtra("notif_id", -1);
+            String cancelTag = intent.getStringExtra("notif_tag");
+            String phase = safeStr(intent.getStringExtra("phase"));
+            if (cancelId == -1) return true;
+            android.app.NotificationManager nm =
+                    context.getSystemService(android.app.NotificationManager.class);
+            if (cancelTag != null) nm.cancel(cancelTag, cancelId);
+            else                   nm.cancel(cancelId);
+            mNotifCourseOwner.remove(cancelId);
+            XposedBridge.log(TAG + ": 閫氱煡瀹氭椂鍙栨秷 [" + phase + "] id=" + cancelId);
+            return true;
+        }
+        return false;
+    }
+
     private Intent createServiceIntent(String action) {
         return AlarmScheduler.buildServiceIntent(TARGET_PACKAGE, UPLOAD_STATE_SERVICE, action);
     }

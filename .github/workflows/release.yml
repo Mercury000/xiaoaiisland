@@ -126,24 +126,6 @@ jobs:
           print(f"using metadata: {target}")
           PY
 
-      - name: Commit version.properties back to repo
-        if: github.ref_type == 'branch'
-        shell: bash
-        run: |
-          if [ ! -f version.properties ]; then
-            echo "version.properties not found, skip commit"
-            exit 0
-          fi
-          if git diff --quiet -- version.properties; then
-            echo "version.properties unchanged"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.properties
-          git commit -m "ci: update version.properties [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
       - name: Auto create tag
         id: autotag
         shell: bash

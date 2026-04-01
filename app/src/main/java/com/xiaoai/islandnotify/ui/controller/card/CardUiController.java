@@ -1,8 +1,13 @@
 package com.xiaoai.islandnotify;
 
+import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
 import android.view.View;
 import android.widget.TextView;
 
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.color.MaterialColors;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 
 final class CardUiController {
@@ -35,6 +40,17 @@ final class CardUiController {
         if (hintView == null) return;
         hintView.setText(message == null ? "" : message);
         hintView.setVisibility(View.VISIBLE);
+    }
+
+    static void applyDirtyButtonTint(Context context, MaterialButton button, boolean dirty) {
+        if (context == null || button == null) return;
+        int color = dirty
+                ? Color.parseColor("#FF9800")
+                : MaterialColors.getColor(
+                        context,
+                        com.google.android.material.R.attr.colorPrimary,
+                        Color.parseColor("#6200EE"));
+        button.setBackgroundTintList(ColorStateList.valueOf(color));
     }
 
     private static void setVisible(View view, boolean visible) {

@@ -8,7 +8,6 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.util.Log;
 import android.content.res.ColorStateList;
-import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -26,7 +25,6 @@ import androidx.appcompat.widget.Toolbar;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.color.DynamicColors;
-import com.google.android.material.color.MaterialColors;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputLayout;
 import com.google.android.material.tabs.TabLayout;
@@ -860,19 +858,13 @@ public class MainActivity extends AppCompatActivity {
         boolean d = statusDirty || expandedDirty;
         customDirty = d;
         if (btnSaveCustom != null) {
-            int statusColor = statusDirty ? Color.parseColor("#FF9800")
-                    : MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, Color.parseColor("#6200EE"));
-            btnSaveCustom.setBackgroundTintList(ColorStateList.valueOf(statusColor));
+            CardUiController.applyDirtyButtonTint(this, btnSaveCustom, statusDirty);
         }
         if (btnSaveExpanded != null) {
-            int expandedColor = expandedDirty ? Color.parseColor("#FF9800")
-                    : MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, Color.parseColor("#6200EE"));
-            btnSaveExpanded.setBackgroundTintList(ColorStateList.valueOf(expandedColor));
+            CardUiController.applyDirtyButtonTint(this, btnSaveExpanded, expandedDirty);
         }
-        int color = d ? Color.parseColor("#FF9800")
-                : MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, Color.parseColor("#6200EE"));
         if (btnSaveCustom != null && btnSaveExpanded == null) {
-            btnSaveCustom.setBackgroundTintList(ColorStateList.valueOf(color));
+            CardUiController.applyDirtyButtonTint(this, btnSaveCustom, d);
         }
     }
 
@@ -880,9 +872,7 @@ public class MainActivity extends AppCompatActivity {
         boolean d = isTimeoutDirty();
         timeoutDirty = d;
         if (btnSaveTimeout == null) return;
-        int color = d ? Color.parseColor("#FF9800")
-                : MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, Color.parseColor("#6200EE"));
-        btnSaveTimeout.setBackgroundTintList(ColorStateList.valueOf(color));
+        CardUiController.applyDirtyButtonTint(this, btnSaveTimeout, d);
     }
 
     // ─────────────────────────────────────────────────────────────

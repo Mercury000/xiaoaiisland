@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: write
-  workflows: write
 
 jobs:
   build:
@@ -146,9 +145,15 @@ jobs:
       - name: Auto create tag
         id: autotag
         shell: bash
+        env:
+          PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          FALLBACK_TOKEN: ${{ github.token }}
         run: |
+          TOKEN="${PUSH_TOKEN:-$FALLBACK_TOKEN}"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
           git fetch --tags
 
           DAY="$(TZ=Asia/Shanghai date +%Y%m%d)"

@@ -613,27 +613,11 @@ public class MainActivity extends AppCompatActivity {
         btnSaveCustom = findViewById(R.id.btn_save_custom);
         btnSaveExpanded = findViewById(R.id.btn_save_expanded);
         for (int i = 0; i < 3; i++) {
-            ((EditText) findViewById(IDS_A[i])).addTextChangedListener(new android.text.TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-                @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
-                @Override public void afterTextChanged(android.text.Editable s) {}
-            });
-            ((EditText) findViewById(IDS_B[i])).addTextChangedListener(new android.text.TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-                @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
-                @Override public void afterTextChanged(android.text.Editable s) {}
-            });
-            ((EditText) findViewById(IDS_TICKER[i])).addTextChangedListener(new android.text.TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-                @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
-                @Override public void afterTextChanged(android.text.Editable s) {}
-            });
+            bindCustomDirtyWatcher((EditText) findViewById(IDS_A[i]));
+            bindCustomDirtyWatcher((EditText) findViewById(IDS_B[i]));
+            bindCustomDirtyWatcher((EditText) findViewById(IDS_TICKER[i]));
             for (int k = 0; k < ConfigDefaults.EXPANDED_TPL_KEYS.length; k++) {
-                ((EditText) findViewById(CUSTOM_IDS_EXPANDED_V2[k][i])).addTextChangedListener(new android.text.TextWatcher() {
-                    @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-                    @Override public void onTextChanged(CharSequence s, int st, int b, int c) { updateCustomDirtyIndicator(); }
-                    @Override public void afterTextChanged(android.text.Editable s) {}
-                });
+                bindCustomDirtyWatcher((EditText) findViewById(CUSTOM_IDS_EXPANDED_V2[k][i]));
             }
         }
         swIconA.setOnCheckedChangeListener((b, checked) -> updateCustomDirtyIndicator());
@@ -710,6 +694,17 @@ public class MainActivity extends AppCompatActivity {
 
         mCustomCardBound = true;
 
+    }
+
+    private void bindCustomDirtyWatcher(EditText editText) {
+        if (editText == null) return;
+        editText.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
+                updateCustomDirtyIndicator();
+            }
+            @Override public void afterTextChanged(android.text.Editable s) {}
+        });
     }
 
     private int alignExpandedTimerDirectionWithStatusBarFromUi() {

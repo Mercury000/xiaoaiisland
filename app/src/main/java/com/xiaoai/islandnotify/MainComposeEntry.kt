@@ -50,7 +50,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import dev.lackluster.hyperx.compose.base.Card
@@ -329,7 +331,14 @@ private fun PreferenceSwitchRow(
 
 @Composable
 private fun EditValueDialog(spec: EditDialogSpec, onDismiss: () -> Unit) {
-    var input by remember(spec) { mutableStateOf(spec.initialValue) }
+    var input by remember(spec) {
+        mutableStateOf(
+            TextFieldValue(
+                text = spec.initialValue,
+                selection = TextRange(spec.initialValue.length),
+            ),
+        )
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember(spec) { FocusRequester() }
     WindowDialog(
@@ -338,14 +347,26 @@ private fun EditValueDialog(spec: EditDialogSpec, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
     ) {
         LaunchedEffect(spec.title, spec.initialValue) {
+            input = TextFieldValue(
+                text = spec.initialValue,
+                selection = TextRange(spec.initialValue.length),
+            )
             delay(100)
             focusRequester.requestFocus()
             keyboard?.show()
         }
-        OutlinedTextField(
+        top.yukonga.miuix.kmp.basic.TextField(
             value = input,
             onValueChange = {
-                input = if (spec.numberOnly) it.filter(Char::isDigit) else it
+                if (spec.numberOnly) {
+                    val filtered = it.text.filter(Char::isDigit)
+                    input = TextFieldValue(
+                        text = filtered,
+                        selection = TextRange(filtered.length),
+                    )
+                } else {
+                    input = it
+                }
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -367,7 +388,7 @@ private fun EditValueDialog(spec: EditDialogSpec, onDismiss: () -> Unit) {
             TextButton(
                 onClick = {
                     keyboard?.hide()
-                    spec.onConfirm(input.trim())
+                    spec.onConfirm(input.text.trim())
                     onDismiss()
                 },
                 modifier = Modifier.weight(1f),

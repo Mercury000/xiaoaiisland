@@ -653,9 +653,7 @@ public class MainHook {
      * 解决 getBroadcast + 动态注册接收器在进程死后无人接收的问题。
      */
     private Intent createServiceIntent(String action) {
-        Intent intent = new Intent(action);
-        intent.setClassName(TARGET_PACKAGE, UPLOAD_STATE_SERVICE);
-        return intent;
+        return AlarmScheduler.buildServiceIntent(TARGET_PACKAGE, UPLOAD_STATE_SERVICE, action);
     }
 
     /** 判断给定 action 是否为闹钟触发的 action（需通过 Service 拉起进程） */
@@ -1049,8 +1047,8 @@ public class MainHook {
      * @param isConsecutive 是否为连续课程（课间 < 提醒分钟数，触发时间为上节下课时刻）
      */
     private void scheduleCourseReminderAlarm(Context ctx, CourseInfo info,
-                                              long triggerMs, int alarmId,
-                                              boolean isConsecutive) {
+                                             long triggerMs, int alarmId,
+                                             boolean isConsecutive) {
         try {
             Intent intent = createServiceIntent(ACTION_COURSE_REMINDER);
             intent.putExtra("course_name",  info.courseName);
@@ -1061,13 +1059,14 @@ public class MainHook {
             intent.putExtra("teacher", info.teacher);
             intent.putExtra("notif_id",     alarmId);
             intent.putExtra("consecutive",  isConsecutive);
-            PendingIntent pi = PendingIntent.getService(ctx, alarmId, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, alarmId | 0x50000000,
-                    new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            ctx.getSystemService(AlarmManager.class)
-               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                    ctx, intent, alarmId,
+                    ACTION_COURSE_REMINDER, TARGET_PACKAGE, alarmId | 0x50000000,
+                    true, triggerMs);
+            if (!scheduled) {
+                XposedBridge.log(TAG + ": scheduleCourseReminderAlarm 跳过：AlarmManager 不可用");
+                return;
+            }
             synchronized (mScheduledAlarmIds) {
                 mScheduledAlarmIds.add(alarmId);
                 saveScheduledIds(ctx, KEY_SCHEDULED_ALARM_IDS, mScheduledAlarmIds);
@@ -1089,22 +1088,12 @@ public class MainHook {
         java.util.Set<Integer> idsToCancel = loadScheduledIds(ctx, KEY_SCHEDULED_ALARM_IDS);
         if (idsToCancel.isEmpty()) return;
         try {
-            AlarmManager am = ctx.getSystemService(AlarmManager.class);
             for (int id : idsToCancel) {
                 Intent dummy = createServiceIntent(ACTION_COURSE_REMINDER);
-                PendingIntent pi = PendingIntent.getService(ctx, id, dummy,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                if (pi != null) {
-                    am.cancel(pi);
-                    pi.cancel();
-                }
-                PendingIntent showPi = PendingIntent.getBroadcast(ctx, id | 0x50000000,
-                        new Intent(ACTION_COURSE_REMINDER).setPackage(TARGET_PACKAGE),
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                if (showPi != null) {
-                    am.cancel(showPi);
-                    showPi.cancel();
-                }
+                AlarmScheduler.cancelAlarmClock(
+                        ctx, dummy, id,
+                        ACTION_COURSE_REMINDER, TARGET_PACKAGE, id | 0x50000000,
+                        true);
             }
             XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个课前提醒闹钟");
         } catch (Exception e) {
@@ -1157,29 +1146,14 @@ public class MainHook {
         java.util.Set<Integer> idsToCancel = loadScheduledIds(ctx, KEY_SCHEDULED_MUTE_IDS);
         if (idsToCancel.isEmpty()) return;
         try {
-            AlarmManager am = ctx.getSystemService(AlarmManager.class);
             for (int id : idsToCancel) {
                 for (String action : new String[]{ACTION_DO_MUTE, ACTION_DO_UNMUTE, ACTION_DO_DND_ON, ACTION_DO_DND_OFF}) {
-                    int aid = id & 0x00FFFFFF;
-                    int reqCode;
-                    if      (action.equals(ACTION_DO_MUTE))    reqCode = aid | 0x01000000;
-                    else if (action.equals(ACTION_DO_UNMUTE))  reqCode = aid | 0x02000000;
-                    else if (action.equals(ACTION_DO_DND_ON))  reqCode = aid | 0x03000000;
-                    else                                        reqCode = aid | 0x04000000;
+                    int reqCode = AlarmScheduler.reqCodeForMuteAction(id, action);
                     Intent dummy = createServiceIntent(action);
-                    PendingIntent pi = PendingIntent.getService(ctx, reqCode, dummy,
-                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                    if (pi != null) {
-                        am.cancel(pi);
-                        pi.cancel();
-                    }
-                    PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
-                            new Intent(action).setPackage(TARGET_PACKAGE),
-                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                    if (showPi != null) {
-                        am.cancel(showPi);
-                        showPi.cancel();
-                    }
+                    AlarmScheduler.cancelAlarmClock(
+                            ctx, dummy, reqCode,
+                            action, TARGET_PACKAGE, reqCode | 0x40000000,
+                            true);
                 }
             }
             XposedBridge.log(TAG + ": 已取消 " + idsToCancel.size() + " 个静音闹钟");
@@ -1196,18 +1170,17 @@ public class MainHook {
      * reqCode = (alarmId & 0x00FFFFFF) | 0x01000000，与课前提醒不重叠。 */
     private void scheduleMuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
-            int reqCode = (alarmId & 0x00FFFFFF) | 0x01000000;
+            int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_MUTE);
             Intent intent = createServiceIntent(ACTION_DO_MUTE);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            // 用一个不起眼的 show-intent：点击状态栏闹钟图标时什么都不做
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
-                    new Intent(ACTION_DO_MUTE).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            AlarmManager.AlarmClockInfo clockInfo =
-                    new AlarmManager.AlarmClockInfo(triggerMs, showPi);
-            ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
+            boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                    ctx, intent, reqCode,
+                    ACTION_DO_MUTE, TARGET_PACKAGE, reqCode | 0x40000000,
+                    true, triggerMs);
+            if (!scheduled) {
+                XposedBridge.log(TAG + ": scheduleMuteAlarm 跳过：AlarmManager 不可用");
+                return;
+            }
             synchronized (mScheduledMuteIds) {
                 mScheduledMuteIds.add(alarmId);
                 saveScheduledIds(ctx, KEY_SCHEDULED_MUTE_IDS, mScheduledMuteIds);
@@ -1235,13 +1208,14 @@ public class MainHook {
             cal.set(java.util.Calendar.MILLISECOND, 0);
             long triggerMs = cal.getTimeInMillis();
             Intent intent = createServiceIntent(ACTION_RESCHEDULE_DAILY);
-            PendingIntent pi = PendingIntent.getService(ctx, 0x99000001, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, 0x99000002,
-                    new Intent(ACTION_RESCHEDULE_DAILY).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_IMMUTABLE);
-            ctx.getSystemService(AlarmManager.class)
-               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                    ctx, intent, 0x99000001,
+                    ACTION_RESCHEDULE_DAILY, TARGET_PACKAGE, 0x99000002,
+                    false, triggerMs);
+            if (!scheduled) {
+                XposedBridge.log(TAG + ": scheduleMidnightReschedule 跳过：AlarmManager 不可用");
+                return;
+            }
             String fmt = new java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
                     .format(new java.util.Date(triggerMs));
             XposedBridge.log(TAG + ": 跨日重调闹钟已设(AlarmClock) → " + fmt);
@@ -1253,17 +1227,17 @@ public class MainHook {
     /** 设置下课取消静音闹钟。reqCode = (alarmId & 0x00FFFFFF) | 0x02000000。 */
     private void scheduleUnmuteAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
-            int reqCode = (alarmId & 0x00FFFFFF) | 0x02000000;
+            int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_UNMUTE);
             Intent intent = createServiceIntent(ACTION_DO_UNMUTE);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
-                    new Intent(ACTION_DO_UNMUTE).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            AlarmManager.AlarmClockInfo clockInfo =
-                    new AlarmManager.AlarmClockInfo(triggerMs, showPi);
-            ctx.getSystemService(AlarmManager.class).setAlarmClock(clockInfo, pi);
+            boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                    ctx, intent, reqCode,
+                    ACTION_DO_UNMUTE, TARGET_PACKAGE, reqCode | 0x40000000,
+                    true, triggerMs);
+            if (!scheduled) {
+                XposedBridge.log(TAG + ": scheduleUnmuteAlarm 跳过：AlarmManager 不可用");
+                return;
+            }
             synchronized (mScheduledMuteIds) {
                 mScheduledMuteIds.add(alarmId);
                 saveScheduledIds(ctx, KEY_SCHEDULED_MUTE_IDS, mScheduledMuteIds);
@@ -1278,16 +1252,17 @@ public class MainHook {
     /** 设置上课开启勿扰闹钟。reqCode = (alarmId & 0x00FFFFFF) | 0x03000000。 */
     private void scheduleDndOnAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
-            int reqCode = (alarmId & 0x00FFFFFF) | 0x03000000;
+            int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_DND_ON);
             Intent intent = createServiceIntent(ACTION_DO_DND_ON);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
-                    new Intent(ACTION_DO_DND_ON).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            ctx.getSystemService(AlarmManager.class)
-               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                    ctx, intent, reqCode,
+                    ACTION_DO_DND_ON, TARGET_PACKAGE, reqCode | 0x40000000,
+                    true, triggerMs);
+            if (!scheduled) {
+                XposedBridge.log(TAG + ": scheduleDndOnAlarm 跳过：AlarmManager 不可用");
+                return;
+            }
             synchronized (mScheduledMuteIds) {
                 mScheduledMuteIds.add(alarmId);
                 saveScheduledIds(ctx, KEY_SCHEDULED_MUTE_IDS, mScheduledMuteIds);
@@ -1302,16 +1277,17 @@ public class MainHook {
     /** 设置下课关闭勿扰闹钟。reqCode = (alarmId & 0x00FFFFFF) | 0x04000000。 */
     private void scheduleDndOffAlarm(Context ctx, String courseName, long triggerMs, int alarmId) {
         try {
-            int reqCode = (alarmId & 0x00FFFFFF) | 0x04000000;
+            int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_DND_OFF);
             Intent intent = createServiceIntent(ACTION_DO_DND_OFF);
             intent.putExtra("course_name", courseName);
-            PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x40000000,
-                    new Intent(ACTION_DO_DND_OFF).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            ctx.getSystemService(AlarmManager.class)
-               .setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                    ctx, intent, reqCode,
+                    ACTION_DO_DND_OFF, TARGET_PACKAGE, reqCode | 0x40000000,
+                    true, triggerMs);
+            if (!scheduled) {
+                XposedBridge.log(TAG + ": scheduleDndOffAlarm 跳过：AlarmManager 不可用");
+                return;
+            }
             synchronized (mScheduledMuteIds) {
                 mScheduledMuteIds.add(alarmId);
                 saveScheduledIds(ctx, KEY_SCHEDULED_MUTE_IDS, mScheduledMuteIds);
@@ -1873,13 +1849,14 @@ public class MainHook {
                 intent.putExtra("notif_tag",   tag);
                 intent.putExtra("notif_id",    id);
                 int reqCode = id * 10 + state;
-                PendingIntent pi = PendingIntent.getService(ctx, reqCode, intent,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x60000000,
-                        new Intent(ACTION_ISLAND_UPDATE).setPackage(TARGET_PACKAGE),
-                        PendingIntent.FLAG_IMMUTABLE);
-                AlarmManager am = ctx.getSystemService(AlarmManager.class);
-                am.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+                boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                        ctx, intent, reqCode,
+                        ACTION_ISLAND_UPDATE, TARGET_PACKAGE, reqCode | 0x60000000,
+                        false, triggerMs);
+                if (!scheduled) {
+                    XposedBridge.log(TAG + ": scheduleIslandAlarm 跳过：AlarmManager 不可用");
+                    return;
+                }
                 XposedBridge.log(TAG + ": AlarmManager(AlarmClock) 已设定 state=" + state
                         + " in " + (delayMs / 1000) + "s");
             } catch (Exception e) {
@@ -1917,7 +1894,6 @@ public class MainHook {
         if (ctx == null) return;
         final String[] phases = {"pre", "active", "post"};
         final long[]   baseMs = {notifPostedMs, startMs, endMs};
-        AlarmManager am = ctx.getSystemService(AlarmManager.class);
         for (int i = 0; i < 3; i++) {
             int val = readConfigInt(prefs, "to_notif_val_" + phases[i], ConfigDefaults.TIMEOUT_VALUE);
             String unit = readConfigString(prefs, "to_notif_unit_" + phases[i], ConfigDefaults.TIMEOUT_UNIT);
@@ -1931,12 +1907,11 @@ public class MainHook {
             ci.putExtra("notif_id",  id);
             ci.putExtra("notif_tag", tag);
             ci.putExtra("phase",     phases[i]);
-            PendingIntent pi = PendingIntent.getService(ctx, reqCode, ci,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            PendingIntent showPi = PendingIntent.getBroadcast(ctx, reqCode | 0x60000000,
-                    new Intent(ACTION_NOTIF_CANCEL).setPackage(TARGET_PACKAGE),
-                    PendingIntent.FLAG_IMMUTABLE);
-            am.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerMs, showPi), pi);
+            boolean scheduled = AlarmScheduler.scheduleAlarmClock(
+                    ctx, ci, reqCode,
+                    ACTION_NOTIF_CANCEL, TARGET_PACKAGE, reqCode | 0x60000000,
+                    false, triggerMs);
+            if (!scheduled) continue;
             XposedBridge.log(TAG + ": 通知取消 AlarmClock [" + phases[i] + "] in "
                     + (triggerMs - System.currentTimeMillis()) / 1000 + "s");
         }

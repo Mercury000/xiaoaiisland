@@ -91,7 +91,8 @@ jobs:
           fi
 
           if [ -n "${INPUT_RELEASE_BODY}" ]; then
-            TARGET_BODY="${INPUT_RELEASE_BODY}"
+            TARGET_BODY="${INPUT_RELEASE_BODY//\\r\\n/$'\n'}"
+            TARGET_BODY="${TARGET_BODY//\\n/$'\n'}"
           else
             TARGET_BODY="${SRC_BODY}"
           fi

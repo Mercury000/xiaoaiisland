@@ -17,7 +17,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -25,11 +24,9 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
-import androidx.core.widget.ImageViewCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
-import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.color.DynamicColors;
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.switchmaterial.SwitchMaterial;
@@ -535,34 +532,7 @@ public class MainActivity extends AppCompatActivity {
      * 根据模块是否激活，设置状态卡片的颜色、图标和文字。
      */
     private void updateModuleStatus() {
-        boolean active = mFrameworkActive;
-
-        MaterialCardView card = findViewById(R.id.card_status);
-        ImageView icon = findViewById(R.id.iv_status);
-        TextView title = findViewById(R.id.tv_status_title);
-        TextView desc = findViewById(R.id.tv_status_desc);
-
-        if (active) {
-            int bg      = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimaryContainer,   Color.LTGRAY);
-            int onColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnPrimaryContainer, Color.WHITE);
-            card.setCardBackgroundColor(bg);
-            icon.setImageResource(R.drawable.ic_module_active);
-            ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(onColor));
-            title.setText("模块已激活");
-            title.setTextColor(onColor);
-            desc.setText(mFrameworkDesc.isEmpty() ? "LSPosed Service 已连接" : mFrameworkDesc);
-            desc.setTextColor(onColor);
-        } else {
-            int bg      = MaterialColors.getColor(this, com.google.android.material.R.attr.colorErrorContainer,   Color.LTGRAY);
-            int onColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnErrorContainer, Color.BLACK);
-            card.setCardBackgroundColor(bg);
-            icon.setImageResource(R.drawable.ic_module_inactive);
-            ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(onColor));
-            title.setText("模块未激活");
-            title.setTextColor(onColor);
-            desc.setText("LSPosed Service 未连接，请检查模块启用与框架状态");
-            desc.setTextColor(onColor);
-        }
+        StatusCardController.render(this, mFrameworkActive, mFrameworkDesc);
     }
 
     /** SharedPreferences 名称（与 MainHook 保持一致） */

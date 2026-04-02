@@ -62,6 +62,7 @@ import dev.lackluster.hyperx.compose.base.Card
 import dev.lackluster.hyperx.compose.base.CardDefaults
 import dev.lackluster.hyperx.compose.base.AlertDialog as HyperAlertDialog
 import dev.lackluster.hyperx.compose.base.AlertDialogMode
+import dev.lackluster.hyperx.compose.component.Hint
 import dev.lackluster.hyperx.compose.preference.DropDownEntry
 import dev.lackluster.hyperx.compose.preference.DropDownMode
 import dev.lackluster.hyperx.compose.preference.DropDownPreference
@@ -692,77 +693,83 @@ private fun StatusCustomPage(
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         item {
-            PreferenceGroup(first = true) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                ) {
-                    Text("状态栏岛自定义", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    MutedText("可用变量：{课名} {开始} {结束} {教室} {节次} {教师}")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    MutedText("可用变量补充：{倒计时} {正计时}。状态栏岛仅岛B支持计时变量，计时变量需放在开头，可在后面拼接文本；上课前不支持{正计时}，下课后不支持{倒计时}。")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    MutedText("保存时会做同阶段计时冲突校验：保存状态栏岛时会将展开态主要小文本1/2对齐到状态栏岛B；保存展开态时会将状态栏岛B对齐到展开态。同阶段展开态与状态栏岛B只能保留一种计时类型（正计时或倒计时）。")
-                }
-            }
+            Hint(
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 6.dp),
+                text = "可用变量：{课名} {开始} {结束} {教室} {节次} {教师} {倒计时} {正计时}",
+            )
+        }
+        item {
+            DismissibleHint(
+                activity = activity,
+                key = "hint_status_custom_timer_rule",
+                text = "状态栏岛仅岛B支持计时变量，计时变量需放在开头，可在后面拼接文本；上课前不支持{正计时}，下课后不支持{倒计时}。",
+            )
+        }
+        item {
+            DismissibleHint(
+                activity = activity,
+                key = "hint_status_custom_conflict",
+                text = "保存时会做同阶段计时冲突校验：保存状态栏岛时会将展开态主要小文本1/2对齐到状态栏岛B；保存展开态时会将状态栏岛B对齐到展开态。同阶段展开态与状态栏岛B只能保留一种计时类型（正计时或倒计时）。",
+            )
         }
         items(stageLabels.indices.toList()) { i ->
             val stage = state.stageStates[i]
             val label = stageLabels[i]
-            PreferenceGroup {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
+            Column(modifier = Modifier.fillMaxWidth()) {
+                PreferenceGroup(
+                    title = label,
+                    first = i == 0,
                 ) {
-                    Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextPreference(
-                        title = "岛A（左侧文字）",
-                        value = stage.tplA.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$label - 岛A（左侧文字）",
-                                initialValue = stage.tplA,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(tplA = it)
-                                    persistStatusConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "岛B（右侧文字）",
-                        value = stage.tplB.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$label - 岛B（右侧文字）",
-                                initialValue = stage.tplB,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(tplB = it)
-                                    persistStatusConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "息屏显示",
-                        value = stage.tplTicker.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$label - 息屏显示",
-                                initialValue = stage.tplTicker,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(tplTicker = it)
-                                    persistStatusConfig()
-                                },
-                            )
-                        },
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                    ) {
+                        TextPreference(
+                            title = "岛A（左侧文字）",
+                            value = stage.tplA.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$label - 岛A（左侧文字）",
+                                    initialValue = stage.tplA,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(tplA = it)
+                                        persistStatusConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "岛B（右侧文字）",
+                            value = stage.tplB.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$label - 岛B（右侧文字）",
+                                    initialValue = stage.tplB,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(tplB = it)
+                                        persistStatusConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "息屏显示",
+                            value = stage.tplTicker.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$label - 息屏显示",
+                                    initialValue = stage.tplTicker,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(tplTicker = it)
+                                        persistStatusConfig()
+                                    },
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -798,7 +805,7 @@ private fun ExpandedCustomPage(
     modifier: Modifier = Modifier,
 ) {
     var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
-    val sectionTitles = remember { listOf("展开态-课前", "展开态-上课中", "展开态-下课后") }
+    val sectionTitles = remember { listOf("上课前", "上课中", "下课后") }
 
     fun persistExpandedConfig() {
         alignStatusTimerWithExpanded(state.stageStates)
@@ -823,139 +830,144 @@ private fun ExpandedCustomPage(
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         item {
-            PreferenceGroup(first = true) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                ) {
-                    Text("岛展开态自定义", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    MutedText("可用变量：{课名} {开始} {结束} {教室} {节次} {教师} {倒计时} {正计时}；上课前不支持{正计时}，下课后不支持{倒计时}。计时变量仅主要小文本1/2支持，且不可与其他字符串拼接。")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    MutedText("保存时会做同阶段计时冲突校验：保存状态栏岛时会将展开态主要小文本1/2对齐到状态栏岛B；保存展开态时会将状态栏岛B对齐到展开态。同阶段展开态与状态栏岛B只能保留一种计时类型（正计时或倒计时）。")
-                }
-            }
+            Hint(
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 6.dp),
+                text = "可用变量：{课名} {开始} {结束} {教室} {节次} {教师} {倒计时} {正计时}",
+            )
+        }
+        item {
+            DismissibleHint(
+                activity = activity,
+                key = "hint_expanded_custom_timer_rule",
+                text = "上课前不支持{正计时}，下课后不支持{倒计时}。计时变量仅主要小文本1/2支持，且不可与其他字符串拼接。",
+            )
+        }
+        item {
+            DismissibleHint(
+                activity = activity,
+                key = "hint_expanded_custom_conflict",
+                text = "保存时会做同阶段计时冲突校验：保存状态栏岛时会将展开态主要小文本1/2对齐到状态栏岛B；保存展开态时会将状态栏岛B对齐到展开态。同阶段展开态与状态栏岛B只能保留一种计时类型（正计时或倒计时）。",
+            )
         }
         items(sectionTitles.indices.toList()) { i ->
             val stage = state.stageStates[i]
             val title = sectionTitles[i]
-            PreferenceGroup(last = i == sectionTitles.lastIndex) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
+            Column(modifier = Modifier.fillMaxWidth()) {
+                PreferenceGroup(
+                    title = title,
+                    first = i == 0,
+                    last = i == sectionTitles.lastIndex,
                 ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextPreference(
-                        title = "主要标题",
-                        value = stage.baseTitle.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$title - 主要标题",
-                                initialValue = stage.baseTitle,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(baseTitle = it)
-                                    persistExpandedConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "次要文本1",
-                        value = stage.baseContent.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$title - 次要文本1",
-                                initialValue = stage.baseContent,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(baseContent = it)
-                                    persistExpandedConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "次要文本2",
-                        value = stage.baseSubcontent.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$title - 次要文本2",
-                                initialValue = stage.baseSubcontent,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(baseSubcontent = it)
-                                    persistExpandedConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "前置文本1",
-                        value = stage.hintContent.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$title - 前置文本1",
-                                initialValue = stage.hintContent,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(hintContent = it)
-                                    persistExpandedConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "前置文本2",
-                        value = stage.hintSubcontent.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$title - 前置文本2",
-                                initialValue = stage.hintSubcontent,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(hintSubcontent = it)
-                                    persistExpandedConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "主要小文本1",
-                        value = stage.hintTitle.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$title - 主要小文本1",
-                                initialValue = stage.hintTitle,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(hintTitle = it)
-                                    persistExpandedConfig()
-                                },
-                            )
-                        },
-                    )
-                    HorizontalDivider()
-                    TextPreference(
-                        title = "主要小文本2",
-                        value = stage.hintSubtitle.ifBlank { "未设置" },
-                        onClick = {
-                            editDialog = EditDialogSpec(
-                                title = "$title - 主要小文本2",
-                                initialValue = stage.hintSubtitle,
-                                onConfirm = {
-                                    state.stageStates[i] = state.stageStates[i].copy(hintSubtitle = it)
-                                    persistExpandedConfig()
-                                },
-                            )
-                        },
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                    ) {
+                        TextPreference(
+                            title = "主要标题",
+                            value = stage.baseTitle.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$title - 主要标题",
+                                    initialValue = stage.baseTitle,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(baseTitle = it)
+                                        persistExpandedConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "次要文本1",
+                            value = stage.baseContent.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$title - 次要文本1",
+                                    initialValue = stage.baseContent,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(baseContent = it)
+                                        persistExpandedConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "次要文本2",
+                            value = stage.baseSubcontent.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$title - 次要文本2",
+                                    initialValue = stage.baseSubcontent,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(baseSubcontent = it)
+                                        persistExpandedConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "前置文本1",
+                            value = stage.hintContent.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$title - 前置文本1",
+                                    initialValue = stage.hintContent,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(hintContent = it)
+                                        persistExpandedConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "前置文本2",
+                            value = stage.hintSubcontent.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$title - 前置文本2",
+                                    initialValue = stage.hintSubcontent,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(hintSubcontent = it)
+                                        persistExpandedConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "主要小文本1",
+                            value = stage.hintTitle.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$title - 主要小文本1",
+                                    initialValue = stage.hintTitle,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(hintTitle = it)
+                                        persistExpandedConfig()
+                                    },
+                                )
+                            },
+                        )
+                        HorizontalDivider()
+                        TextPreference(
+                            title = "主要小文本2",
+                            value = stage.hintSubtitle.ifBlank { "未设置" },
+                            onClick = {
+                                editDialog = EditDialogSpec(
+                                    title = "$title - 主要小文本2",
+                                    initialValue = stage.hintSubtitle,
+                                    onConfirm = {
+                                        state.stageStates[i] = state.stageStates[i].copy(hintSubtitle = it)
+                                        persistExpandedConfig()
+                                    },
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -1019,24 +1031,17 @@ private fun StatusCardView(active: Boolean, frameworkDesc: String) {
 @Composable
 private fun TestNotifyCard(activity: MainActivity, state: SettingsComposeState) {
     var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
+    DismissibleHint(
+        activity = activity,
+        key = "hint_test_notify",
+        text = "发送一条模拟课程提醒，验证超级岛效果是否正常。如果未发送，请强制停止作用域和模块重试。存在测试通知不发出的情况，但不影响实际通知。",
+    )
     PreferenceGroup(first = true, last = true) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(20.dp),
         ) {
-            Text(
-                text = "测试通知",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceContainer,
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "发送一条模拟课程提醒，验证超级岛效果是否正常。如果未发送，请强制停止作用域和模块重试。存在测试通知不发出的情况，但不影响实际通知。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-            )
-            Spacer(modifier = Modifier.height(14.dp))
             TextPreference(
                 title = "课程名称",
                 value = state.courseName.ifBlank { "未设置" },
@@ -1088,6 +1093,27 @@ private fun MutedText(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
     )
+}
+
+@Composable
+private fun DismissibleHint(
+    activity: MainActivity,
+    key: String,
+    text: String,
+) {
+    var dismissed by remember(key) {
+        mutableStateOf(PrefsAccess.readConfigBool(activity.uiConfigPrefs(), key, false))
+    }
+    if (!dismissed) {
+        Hint(
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 6.dp),
+            text = text,
+            closeable = true,
+        ) {
+            dismissed = true
+            activity.uiEditConfigPrefs().putBoolean(key, true).apply()
+        }
+    }
 }
 
 @Composable
@@ -1183,19 +1209,18 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
         state.timeoutState = saved
     }
 
-    PreferenceGroup(first = true) {
-        Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-            Text("消失时间", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(4.dp))
-            MutedText("通知消失时岛随之消失；岛消失不影响通知。默认 = 使用系统值（岛 3600 秒，通知 720 分钟）")
-        }
-    }
+    DismissibleHint(
+        activity = activity,
+        key = "hint_timeout",
+        text = "通知消失时岛随之消失；岛消失不影响通知。默认 = 使用系统值（岛 3600 秒，通知 720 分钟）",
+    )
 
     stageLabels.forEachIndexed { idx, label ->
-        PreferenceGroup {
+        PreferenceGroup(
+            title = "岛消失 · $label",
+            first = idx == 0,
+        ) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Text("岛消失 · $label", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(8.dp))
                 TextPreference(
                     title = "时长",
                     value = if (islandDefaults[idx]) "默认" else islandInputs[idx].ifBlank { "默认" },
@@ -1242,10 +1267,11 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
         }
     }
 
-    PreferenceGroup(last = true) {
+    PreferenceGroup(
+        title = "通知消失",
+        last = true,
+    ) {
         Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-            Text("通知消失", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "设置时间到达后，将取消通知，后续将不再更新状态（上课/下课）。",
                 style = MaterialTheme.typography.bodySmall,
@@ -1324,11 +1350,22 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
 @Composable
 private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
     var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
+    DismissibleHint(
+        activity = activity,
+        key = "hint_reminder",
+        text = "自定义设置通知发送时机",
+    )
     PreferenceGroup(first = true, last = true) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-            Text("课前提醒", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(10.dp))
-            Text("自定义设置通知发送时机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SwitchPreference(
+                title = "启用补发机制（全局）",
+                summary = "关闭后：通知补发、课中即时静音/勿扰均停用，仅保留未来闹钟调度。如果出现手动关闭静音勿扰后仍被开启，请停用此功能。",
+                value = state.repostEnabled,
+                onCheckedChange = {
+                    state.repostEnabled = it
+                    activity.uiEditConfigPrefs().putBoolean("repost_enabled", it).apply()
+                },
+            )
             Spacer(modifier = Modifier.height(8.dp))
             TextPreference(
                 title = "提前提醒（分钟）",
@@ -1372,7 +1409,6 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
         state.dndMinsBefore = dndBefore.toString()
         state.undndMinsAfter = undndAfter.toString()
         activity.uiEditConfigPrefs()
-            .putBoolean("repost_enabled", state.repostEnabled)
             .putBoolean("mute_enabled", state.muteEnabled)
             .putBoolean("unmute_enabled", state.unmuteEnabled)
             .putBoolean("dnd_enabled", state.dndEnabled)
@@ -1384,21 +1420,8 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
             .putInt("island_button_mode", state.islandButtonMode.coerceIn(0, 2))
             .apply()
     }
-    PreferenceGroup(first = true, last = true) {
+    PreferenceGroup(first = true, last = false) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-            Text("上课免打扰", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(10.dp))
-            SwitchPreference(
-                title = "启用补发机制（全局）",
-                summary = "关闭后：通知补发、课中即时静音/勿扰均停用，仅保留未来闹钟调度。如果出现手动关闭静音勿扰后仍被开启，请停用此功能。",
-                value = state.repostEnabled,
-                onCheckedChange = {
-                    state.repostEnabled = it
-                    persistMuteConfigNow()
-                },
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
             SwitchPreference(
                 title = "上课自动静音",
                 summary = "课程开始前指定时间将手机调为静音",
@@ -1468,17 +1491,19 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
                     persistMuteConfigNow()
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(modifier = Modifier.height(12.dp))
-            Text("超级岛按钮功能", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-            Text(
-                "设置上课岛上显示的按钮执行的操作（不受自动静音开关限制）",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+    DismissibleHint(
+        activity = activity,
+        key = "hint_island_button_mode",
+        text = "设置上课岛上显示的按钮执行的操作（不受自动静音开关限制）",
+    )
+    PreferenceGroup(
+        title = "超级岛按钮功能",
+        first = false,
+        last = true,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
             DropDownPreference(
                 title = "按钮模式",
                 entries = buttonModeEntries,
@@ -1530,13 +1555,14 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
             .putString("wakeup_afternoon_rules_json", toWakeRulesJson(state.wakeupAfternoonRules))
             .apply()
     }
-    PreferenceGroup(first = true, last = true) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-            Text("自动叫醒", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text("根据课表在系统时钟创建叫醒闹钟", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(12.dp))
 
+    DismissibleHint(
+        activity = activity,
+        key = "hint_wakeup",
+        text = "根据课表在系统时钟创建叫醒闹钟",
+    )
+    PreferenceGroup(first = true, last = false) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
             SwitchPreference(
                 title = "上午自动叫醒",
                 summary = "当今日有上午课程时创建叫醒闹钟",
@@ -1547,12 +1573,13 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
                 },
             )
             if (state.wakeupMorningEnabled) {
-                MinuteEditor("上午最大节次（≤此节为上午）", state.wakeupMorningLastSec) {
-                    state.wakeupMorningLastSec = it
-                    persistWakeupConfigNow()
-                }
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("叫醒规则：上午第一节是第X节时，定对应时间的闹钟", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "上午规则",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
                 WakeRuleList(
                     rules = state.wakeupMorningRules,
                     onAdd = {
@@ -1577,12 +1604,13 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
                 },
             )
             if (state.wakeupAfternoonEnabled) {
-                MinuteEditor("下午起始节次（≥此节为下午）", state.wakeupAfternoonFirstSec) {
-                    state.wakeupAfternoonFirstSec = it
-                    persistWakeupConfigNow()
-                }
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("叫醒规则：下午第一节是第X节时，定对应时间的闹钟", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "下午规则",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
                 WakeRuleList(
                     rules = state.wakeupAfternoonRules,
                     onAdd = {
@@ -1591,6 +1619,24 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
                     },
                     onChanged = { persistWakeupConfigNow() },
                 )
+            }
+        }
+    }
+
+    PreferenceGroup(
+        title = "节次划分",
+        first = false,
+        last = true,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+            Text("用于区分上午/下午课程边界", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            MinuteEditor("上午最大节次（≤此节为上午）", state.wakeupMorningLastSec) {
+                state.wakeupMorningLastSec = it
+                persistWakeupConfigNow()
+            }
+            MinuteEditor("下午起始节次（≥此节为下午）", state.wakeupAfternoonFirstSec) {
+                state.wakeupAfternoonFirstSec = it
+                persistWakeupConfigNow()
             }
         }
     }
@@ -1603,6 +1649,7 @@ private fun WakeRuleList(
     onChanged: () -> Unit,
 ) {
     var editingIndex by remember { mutableIntStateOf(-1) }
+    var pendingDeleteIndex by remember { mutableIntStateOf(-1) }
     Column {
         rules.forEachIndexed { index, rule ->
             val hour = rule.hour.toIntOrNull()?.coerceIn(0, 23) ?: 0
@@ -1611,13 +1658,6 @@ private fun WakeRuleList(
                 title = "规则 ${index + 1}",
                 value = "第${rule.sec.ifBlank { "1" }}节 -> $hour:${String.format(Locale.getDefault(), "%02d", minute)}",
                 onClick = { editingIndex = index },
-            )
-            TextPreference(
-                title = "删除规则 ${index + 1}",
-                onClick = {
-                    rules.removeAt(index)
-                    onChanged()
-                },
             )
             if (index != rules.lastIndex) {
                 HorizontalDivider()
@@ -1667,6 +1707,10 @@ private fun WakeRuleList(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = { editingIndex = -1 }, modifier = Modifier.weight(1f)) { Text("取消") }
                 Button(
+                    onClick = { pendingDeleteIndex = editingIndex },
+                    modifier = Modifier.weight(1f),
+                ) { Text("删除") }
+                Button(
                     onClick = {
                         if (editingIndex in rules.indices) {
                             rules[editingIndex] = rules[editingIndex].copy(
@@ -1686,6 +1730,28 @@ private fun WakeRuleList(
                 ) { Text("确定") }
             }
         }
+    }
+
+    if (pendingDeleteIndex in rules.indices) {
+        HyperAlertDialog(
+            visible = true,
+            title = "删除规则",
+            message = "确定删除规则 ${pendingDeleteIndex + 1} 吗？",
+            mode = AlertDialogMode.NegativeAndPositive,
+            negativeText = "取消",
+            positiveText = "删除",
+            onDismissRequest = { pendingDeleteIndex = -1 },
+            onNegativeButton = { pendingDeleteIndex = -1 },
+            onPositiveButton = {
+                val idx = pendingDeleteIndex
+                pendingDeleteIndex = -1
+                if (idx in rules.indices) {
+                    rules.removeAt(idx)
+                    onChanged()
+                }
+                editingIndex = -1
+            },
+        )
     }
 }
 
@@ -1846,20 +1912,13 @@ private fun HolidayTab(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        DismissibleHint(
+            activity = activity,
+            key = "hint_holiday_overview",
+            text = "节假日当天不发课前提醒；调休工作日按指定周次/星期发提醒。",
+        )
         PreferenceGroup(first = true) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Text(
-                    text = "假期 / 调休管理",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceContainer,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "节假日当天不发课前提醒；调休工作日按指定周次/星期发提醒。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                )
-                Spacer(modifier = Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("年份", color = MaterialTheme.colorScheme.onSurfaceContainer)
                     Spacer(modifier = Modifier.width(8.dp))
@@ -1905,10 +1964,10 @@ private fun HolidayTab(
             }
         }
 
-        PreferenceGroup {
+        PreferenceGroup(title = "节假日") {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("节假日", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.weight(1f))
                     Button(onClick = {
                         holidayEditEntry = null
                         holidayDraft = HolidayDraft(date = "${state.year}-01-01")
@@ -1948,10 +2007,13 @@ private fun HolidayTab(
             }
         }
 
-        PreferenceGroup(last = true) {
+        PreferenceGroup(
+            title = "调休工作日",
+            last = true,
+        ) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("调休工作日", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.weight(1f))
                     Button(onClick = {
                         workswapEditEntry = null
                         workswapDraft = WorkSwapDraft(date = "${state.year}-01-01")
@@ -2580,8 +2642,6 @@ private fun AboutTab(
         }
         PreferenceGroup(last = true) {
             Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-                Text("关于", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(8.dp))
                 TextPreference(
                     title = "版本",
                     value = state.version,

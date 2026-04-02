@@ -1,17 +1,7 @@
 ﻿package com.xiaoai.islandnotify
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.appcompat.app.AppCompatActivity
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.ContentTransform
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -112,7 +102,7 @@ object MainComposeEntry {
             }
             MiuixTheme(
                 controller = themeController,
-                smoothRounding = true,
+                smoothRounding = false,
             ) {
                 MainComposeApp(activity)
             }
@@ -201,17 +191,16 @@ private data class EditDialogSpec(
     val onConfirm: (String) -> Unit,
 )
 
-private enum class HomeRoute {
-    HOME,
-    TEST_NOTIFY,
-    STATUS_CUSTOM,
-    EXPANDED_CUSTOM,
-    TIMEOUT,
-    REMINDER,
-    MUTE,
-    WAKEUP,
-    HOLIDAY,
-    ABOUT,
+private sealed interface AppRoute : androidx.navigation3.runtime.NavKey {
+    data object TestNotify : AppRoute
+    data object StatusCustom : AppRoute
+    data object ExpandedCustom : AppRoute
+    data object Timeout : AppRoute
+    data object Reminder : AppRoute
+    data object Mute : AppRoute
+    data object Wakeup : AppRoute
+    data object Holiday : AppRoute
+    data object About : AppRoute
 }
 
 @Composable
@@ -242,11 +231,6 @@ private fun EditValueDialog(spec: EditDialogSpec, onDismiss: () -> Unit) {
 @Composable
 private fun MainComposeApp(activity: MainActivity) {
     val refreshTick by ComposeRefreshBus.tick.collectAsStateCompat()
-    val routeStack = remember { mutableStateListOf(HomeRoute.HOME) }
-    val route = routeStack.last()
-    var routeDirection by remember { mutableIntStateOf(1) }
-    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-
     val settingsState = remember { SettingsComposeState() }
     val holidayState = remember { HolidayComposeState() }
     val aboutState = remember { AboutComposeState() }
@@ -257,43 +241,142 @@ private fun MainComposeApp(activity: MainActivity) {
         aboutState.loadFrom(activity)
     }
 
-    fun pushRoute(next: HomeRoute) {
-        routeDirection = 1
-        routeStack += next
-    }
+    dev.lackluster.hyperx.compose.base.HyperXApp(
+        mainPageContent = { navigator, _, _ ->
+            RouteScaffold(
+                title = "课程表超级岛",
+                canBack = false,
+                onBack = {},
+            ) { pageModifier ->
+                HomeEntryPage(
+                    modifier = pageModifier,
+                    state = settingsState,
+                    onOpen = { route -> navigator.push(route) },
+                    onResetConfirmed = {
+                        val count = activity.uiResetAllConfigToDefaults()
+                        Toast.makeText(activity, "已恢复默认配置：$count 项", Toast.LENGTH_SHORT).show()
+                        activity.requestComposeRefresh()
+                    },
+                )
+            }
+        },
+        otherPageEntryProvider = { key, navigator, _, _ ->
+            androidx.navigation3.runtime.NavEntry(key) {
+                when (key) {
+                    is AppRoute.TestNotify -> RouteScaffold(
+                        title = "测试通知",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        SingleCardPage(modifier = pageModifier) {
+                            TestNotifyCard(activity = activity, state = settingsState)
+                        }
+                    }
+                    is AppRoute.StatusCustom -> RouteScaffold(
+                        title = "状态栏岛自定义",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        StatusCustomPage(
+                            activity = activity,
+                            state = settingsState,
+                            modifier = pageModifier,
+                        )
+                    }
+                    is AppRoute.ExpandedCustom -> RouteScaffold(
+                        title = "展开态自定义",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        ExpandedCustomPage(
+                            activity = activity,
+                            state = settingsState,
+                            modifier = pageModifier,
+                        )
+                    }
+                    is AppRoute.Timeout -> RouteScaffold(
+                        title = "消失时间",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        SingleCardPage(modifier = pageModifier) {
+                            TimeoutCard(activity = activity, state = settingsState)
+                        }
+                    }
+                    is AppRoute.Reminder -> RouteScaffold(
+                        title = "课前提醒",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        SingleCardPage(modifier = pageModifier) {
+                            ReminderCard(activity = activity, state = settingsState)
+                        }
+                    }
+                    is AppRoute.Mute -> RouteScaffold(
+                        title = "上课免打扰",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        SingleCardPage(modifier = pageModifier) {
+                            MuteCard(activity = activity, state = settingsState)
+                        }
+                    }
+                    is AppRoute.Wakeup -> RouteScaffold(
+                        title = "自动叫醒",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        SingleCardPage(modifier = pageModifier) {
+                            WakeupCard(activity = activity, state = settingsState)
+                        }
+                    }
+                    is AppRoute.Holiday -> RouteScaffold(
+                        title = "假期/调休",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        HolidayTab(
+                            activity = activity,
+                            state = holidayState,
+                            modifier = pageModifier,
+                        )
+                    }
+                    is AppRoute.About -> RouteScaffold(
+                        title = "关于",
+                        canBack = true,
+                        onBack = { navigator.pop() },
+                    ) { pageModifier ->
+                        AboutTab(
+                            activity = activity,
+                            state = aboutState,
+                            modifier = pageModifier,
+                        )
+                    }
+                    else -> {}
+                }
+            }
+        },
+    )
+}
 
-    fun popRoute() {
-        if (routeStack.size > 1) {
-            routeDirection = -1
-            routeStack.removeAt(routeStack.lastIndex)
-        }
-    }
-
-    BackHandler(enabled = routeStack.size > 1) {
-        popRoute()
-    }
-
+@Composable
+private fun RouteScaffold(
+    title: String,
+    canBack: Boolean,
+    onBack: () -> Unit,
+    content: @Composable (Modifier) -> Unit,
+) {
+    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
         topBar = {
             TopAppBar(
                 color = Color.Transparent,
-                title = when (route) {
-                    HomeRoute.HOME -> "课程表超级岛"
-                    HomeRoute.TEST_NOTIFY -> "测试通知"
-                    HomeRoute.STATUS_CUSTOM -> "状态栏岛自定义"
-                    HomeRoute.EXPANDED_CUSTOM -> "展开态自定义"
-                    HomeRoute.TIMEOUT -> "消失时间"
-                    HomeRoute.REMINDER -> "课前提醒"
-                    HomeRoute.MUTE -> "上课免打扰"
-                    HomeRoute.WAKEUP -> "自动叫醒"
-                    HomeRoute.HOLIDAY -> "假期/调休"
-                    HomeRoute.ABOUT -> "关于"
-                },
+                title = title,
                 navigationIcon = {
-                    if (routeStack.size > 1) {
+                    if (canBack) {
                         top.yukonga.miuix.kmp.basic.IconButton(
                             modifier = Modifier.size(40.dp),
-                            onClick = { popRoute() },
+                            onClick = onBack,
                         ) {
                             top.yukonga.miuix.kmp.basic.Icon(
                                 modifier = Modifier.size(24.dp),
@@ -311,107 +394,12 @@ private fun MainComposeApp(activity: MainActivity) {
         },
         contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Vertical),
     ) { innerPadding ->
-        Box(
-            modifier = Modifier
+        content(
+            Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-        ) {
-            AnimatedContent(
-                targetState = route,
-                transitionSpec = {
-                    val enterOffset: (Int) -> Int
-                    val exitOffset: (Int) -> Int
-                    if (routeDirection >= 0) {
-                        enterOffset = { it }
-                        exitOffset = { -it / 4 }
-                    } else {
-                        enterOffset = { -it / 3 }
-                        exitOffset = { it }
-                    }
-                    ContentTransform(
-                        slideInHorizontally(
-                            initialOffsetX = enterOffset,
-                            animationSpec = tween(durationMillis = 300, easing = FastOutLinearInEasing),
-                        ) + fadeIn(animationSpec = tween(220)),
-                        slideOutHorizontally(
-                            targetOffsetX = exitOffset,
-                            animationSpec = tween(durationMillis = 300, easing = FastOutLinearInEasing),
-                        ) + fadeOut(animationSpec = tween(180)),
-                        targetContentZIndex = if (routeDirection >= 0) 1f else 0f,
-                    )
-                },
-                modifier = Modifier.fillMaxSize(),
-                label = "main_route_transition",
-            ) { currentRoute ->
-                when (currentRoute) {
-                    HomeRoute.HOME -> HomeEntryPage(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                        state = settingsState,
-                        onOpen = { next -> pushRoute(next) },
-                        onResetConfirmed = {
-                            val count = activity.uiResetAllConfigToDefaults()
-                            Toast.makeText(activity, "已恢复默认配置：$count 项", Toast.LENGTH_SHORT).show()
-                            activity.requestComposeRefresh()
-                        },
-                    )
-                    HomeRoute.TEST_NOTIFY -> SingleCardPage(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    ) { TestNotifyCard(activity = activity, state = settingsState) }
-                    HomeRoute.STATUS_CUSTOM -> StatusCustomPage(
-                        activity = activity,
-                        state = settingsState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    )
-                    HomeRoute.EXPANDED_CUSTOM -> ExpandedCustomPage(
-                        activity = activity,
-                        state = settingsState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    )
-                    HomeRoute.TIMEOUT -> SingleCardPage(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    ) { TimeoutCard(activity = activity, state = settingsState) }
-                    HomeRoute.REMINDER -> SingleCardPage(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    ) { ReminderCard(activity = activity, state = settingsState) }
-                    HomeRoute.MUTE -> SingleCardPage(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    ) { MuteCard(activity = activity, state = settingsState) }
-                    HomeRoute.WAKEUP -> SingleCardPage(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    ) { WakeupCard(activity = activity, state = settingsState) }
-                    HomeRoute.HOLIDAY -> HolidayTab(
-                        activity = activity,
-                        state = holidayState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    )
-                    HomeRoute.ABOUT -> AboutTab(
-                        activity = activity,
-                        state = aboutState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    )
-                }
-            }
-        }
+                .padding(innerPadding)
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
+        )
     }
 }
 
@@ -576,7 +564,7 @@ private fun SingleCardPage(
 private fun HomeEntryPage(
     modifier: Modifier = Modifier,
     state: SettingsComposeState,
-    onOpen: (HomeRoute) -> Unit,
+    onOpen: (AppRoute) -> Unit,
     onResetConfirmed: () -> Unit,
 ) {
     var showResetDialog by remember { mutableStateOf(false) }
@@ -596,7 +584,7 @@ private fun HomeEntryPage(
                 TextPreference(
                     title = "测试通知",
                     summary = "发送模拟课程提醒，快速确认超级岛显示效果",
-                ) { onOpen(HomeRoute.TEST_NOTIFY) }
+                ) { onOpen(AppRoute.TestNotify) }
             }
         }
         item {
@@ -604,27 +592,27 @@ private fun HomeEntryPage(
                 TextPreference(
                     title = "状态栏岛自定义",
                     summary = "按上课前/中/后三个阶段分别配置岛A/岛B与息屏展示",
-                ) { onOpen(HomeRoute.STATUS_CUSTOM) }
+                ) { onOpen(AppRoute.StatusCustom) }
                 TextPreference(
                     title = "展开态自定义",
                     summary = "按上课前/中/后三个阶段配置展开态全部文本模板",
-                ) { onOpen(HomeRoute.EXPANDED_CUSTOM) }
+                ) { onOpen(AppRoute.ExpandedCustom) }
                 TextPreference(
                     title = "消失时间",
                     summary = "分别管理岛消息与通知消息的消失时间和阶段触发",
-                ) { onOpen(HomeRoute.TIMEOUT) }
+                ) { onOpen(AppRoute.Timeout) }
                 TextPreference(
                     title = "课前提醒",
                     summary = "配置提前提醒分钟数与重发策略",
-                ) { onOpen(HomeRoute.REMINDER) }
+                ) { onOpen(AppRoute.Reminder) }
                 TextPreference(
                     title = "上课免打扰",
                     summary = "课程前后自动静音、恢复与勿扰切换",
-                ) { onOpen(HomeRoute.MUTE) }
+                ) { onOpen(AppRoute.Mute) }
                 TextPreference(
                     title = "自动叫醒",
                     summary = "课前自动唤醒屏幕，支持上午/下午规则",
-                ) { onOpen(HomeRoute.WAKEUP) }
+                ) { onOpen(AppRoute.Wakeup) }
             }
         }
         item {
@@ -637,11 +625,11 @@ private fun HomeEntryPage(
                 TextPreference(
                     title = "假期/调休",
                     summary = "管理节假日、补课与周次跟随规则",
-                ) { onOpen(HomeRoute.HOLIDAY) }
+                ) { onOpen(AppRoute.Holiday) }
                 TextPreference(
                     title = "关于",
                     summary = "查看版本、项目地址与作者信息",
-                ) { onOpen(HomeRoute.ABOUT) }
+                ) { onOpen(AppRoute.About) }
             }
         }
         item { Spacer(modifier = Modifier.height(24.dp)) }
@@ -1682,6 +1670,7 @@ private fun WakeRuleList(
                     onValueChange = { sec = it.filter(Char::isDigit) },
                     label = "第X节",
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
@@ -1691,6 +1680,7 @@ private fun WakeRuleList(
                     onValueChange = { hour = it.filter(Char::isDigit) },
                     label = "时",
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
@@ -1700,6 +1690,7 @@ private fun WakeRuleList(
                     onValueChange = { minute = it.filter(Char::isDigit) },
                     label = "分",
                     modifier = Modifier.fillMaxWidth(),
+                    textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )

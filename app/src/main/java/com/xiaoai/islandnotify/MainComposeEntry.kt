@@ -662,7 +662,7 @@ private fun HomeEntryPage(
         visible = showResetDialog,
         title = "恢复默认",
         message = "将清空所有配置（本地 + LSPosed RemotePrefs）并恢复默认值，是否继续？",
-        cancelable = false,
+        cancelable = true,
         mode = AlertDialogMode.NegativeAndPositive,
         negativeText = "取消",
         positiveText = "恢复",

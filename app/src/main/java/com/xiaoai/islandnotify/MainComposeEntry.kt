@@ -635,7 +635,7 @@ private fun HomeEntryPage(
             PreferenceGroup(first = true) {
                 TextPreference(
                     title = "测试通知",
-                    summary = "发送模拟课程提醒，快速确认超级岛显示效果",
+                    summary = "发送一条测试通知以测试显示效果",
                 ) { onOpen(AppRoute.TestNotify) }
             }
         }
@@ -643,7 +643,7 @@ private fun HomeEntryPage(
             PreferenceGroup {
                 TextPreference(
                     title = "状态栏岛自定义",
-                    summary = "按上课前/中/后三个阶段分别配置岛A/岛B与息屏展示",
+                    summary = "按上课前/中/后三个阶段配置状态栏岛与息屏展示",
                 ) { onOpen(AppRoute.StatusCustom) }
                 TextPreference(
                     title = "展开态自定义",
@@ -655,15 +655,15 @@ private fun HomeEntryPage(
                 ) { onOpen(AppRoute.Timeout) }
                 TextPreference(
                     title = "课前提醒",
-                    summary = "配置提前提醒分钟数与重发策略",
+                    summary = "配置提前提醒分钟数与补发策略",
                 ) { onOpen(AppRoute.Reminder) }
                 TextPreference(
                     title = "上课免打扰",
-                    summary = "课程前后自动静音、恢复与勿扰切换",
+                    summary = "自动化静音或勿扰",
                 ) { onOpen(AppRoute.Mute) }
                 TextPreference(
                     title = "自动叫醒",
-                    summary = "课前自动唤醒屏幕，支持上午/下午规则",
+                    summary = "根据上午下午首节课程自动设定一定时间的闹钟",
                 ) { onOpen(AppRoute.Wakeup) }
             }
         }
@@ -671,16 +671,16 @@ private fun HomeEntryPage(
             PreferenceGroup(last = true) {
                 TextPreference(
                     title = "全局恢复默认",
-                    summary = "一键恢复模块默认配置（本地 + RemotePrefs）",
+                    summary = "恢复模块默认配置",
                     onClick = { showResetDialog = true },
                 )
                 TextPreference(
                     title = "假期/调休",
-                    summary = "管理节假日、补课与周次跟随规则",
+                    summary = "管理节假日与调休",
                 ) { onOpen(AppRoute.Holiday) }
                 TextPreference(
                     title = "关于",
-                    summary = "查看版本、项目地址与作者信息",
+                    summary = "查看版本、作者信息及模块本体设置",
                 ) { onOpen(AppRoute.About) }
             }
         }
@@ -690,11 +690,11 @@ private fun HomeEntryPage(
     HyperAlertDialog(
         visible = showResetDialog,
         title = "恢复默认",
-        message = "将清空所有配置（本地 + LSPosed RemotePrefs）并恢复默认值，是否继续？",
+        message = "将清空所有配置并恢复默认值，是否继续？",
         cancelable = true,
         mode = AlertDialogMode.NegativeAndPositive,
         negativeText = "取消",
-        positiveText = "恢复",
+        positiveText = "清空",
         onDismissRequest = { showResetDialog = false },
         onNegativeButton = { showResetDialog = false },
         onPositiveButton = {
@@ -1077,7 +1077,7 @@ private fun TestNotifyCard(activity: MainActivity, state: SettingsComposeState) 
     DismissibleHint(
         activity = activity,
         key = "hint_test_notify",
-        text = "发送一条模拟课程提醒，验证超级岛效果是否正常。如果未发送，请强制停止作用域和模块重试。存在测试通知不发出的情况，但不影响实际通知。",
+        text = "发送一条模拟课程提醒，验证超级岛效果是否正常。如果未发送，请强制停止作用域和模块重试。如果测试通知正常但实际提醒失效，请在桌面或负一屏添加小爱课程表小组件。",
     )
     PreferenceGroup(first = true, last = true) {
         Column(
@@ -1114,7 +1114,7 @@ private fun TestNotifyCard(activity: MainActivity, state: SettingsComposeState) 
                     activity.uiSendTestBroadcastToTarget(60_000L, state.courseName, state.classroom)
                     Toast.makeText(
                         activity,
-                        "已发送测试通知（倒计时），请下拉通知栏查看超级岛效果",
+                        "已发送测试通知，请查看超级岛效果",
                         Toast.LENGTH_SHORT,
                     ).show()
                 },
@@ -1356,8 +1356,8 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
     PreferenceGroup(first = true, last = true) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
             SwitchPreference(
-                title = "启用补发机制（全局）",
-                summary = "关闭后：通知补发、课中即时静音/勿扰均停用，仅保留未来闹钟调度。如果出现手动关闭静音勿扰后仍被开启，请停用此功能。",
+                title = "补发机制（全局）",
+                summary = "是否在错过提醒时间时补发，由于通知已稳定，不建议启用。",
                 value = state.repostEnabled,
                 onCheckedChange = {
                     state.repostEnabled = it
@@ -1366,7 +1366,7 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
             )
             Spacer(modifier = Modifier.height(8.dp))
             TextPreference(
-                title = "提前提醒（分钟）",
+                title = "提前提醒",
                 value = "${state.reminderMinutes.ifBlank { "15" }} 分钟",
                 onClick = {
                     showReminderPicker = true
@@ -1376,7 +1376,7 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
     }
     if (showReminderPicker) {
         MiuixMinutePickerDialog(
-            title = "提前提醒（分钟）",
+            title = "提前提醒",
             initialValue = state.reminderMinutes.toIntOrNull() ?: 15,
             minValue = 0,
             maxValue = MAX_MINUTE_VALUE,
@@ -1394,8 +1394,8 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
 private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
     val buttonModeEntries = remember {
         listOf(
-            DropDownEntry(title = "仅静音"),
-            DropDownEntry(title = "仅勿扰"),
+            DropDownEntry(title = "静音"),
+            DropDownEntry(title = "勿扰"),
             DropDownEntry(title = "两者"),
         )
     }
@@ -1461,7 +1461,7 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
 
             SwitchPreference(
                 title = "上课自动开启勿扰",
-                summary = "课程开始前指定时间开启勿扰（DND）模式",
+                summary = "课程开始前指定时间开启勿扰模式",
                 value = state.dndEnabled,
                 onCheckedChange = {
                     state.dndEnabled = it
@@ -1496,7 +1496,7 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
     DismissibleHint(
         activity = activity,
         key = "hint_island_button_mode",
-        text = "设置上课岛上显示的按钮执行的操作（不受自动静音开关限制）",
+        text = "设置上课岛上显示的按钮执行的操作",
     )
     PreferenceGroup(
         title = "超级岛按钮功能",
@@ -1631,7 +1631,7 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
             SwitchPreference(
                 title = "上午自动叫醒",
-                summary = "当今日有上午课程时创建叫醒闹钟",
+                summary = "根据上午第一次课的节次指定闹钟设置",
                 value = state.wakeupMorningEnabled,
                 onCheckedChange = {
                     state.wakeupMorningEnabled = it
@@ -1661,7 +1661,7 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
 
             SwitchPreference(
                 title = "下午自动叫醒",
-                summary = "当今日有下午课程时创建叫醒闹钟",
+                summary = "根据下午第一次课的节次指定闹钟设置",
                 value = state.wakeupAfternoonEnabled,
                 onCheckedChange = {
                     state.wakeupAfternoonEnabled = it
@@ -2068,7 +2068,7 @@ private fun HolidayTab(
         DismissibleHint(
             activity = activity,
             key = "hint_holiday_overview",
-            text = "节假日当天不发课前提醒；调休工作日按指定周次/星期发提醒。",
+            text = "节假日当天不发课前提醒；调休工作日按指定周次及星期发提醒。",
         )
         PreferenceGroup(first = true) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {

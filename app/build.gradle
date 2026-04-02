@@ -24,8 +24,24 @@ def generateVersion(buildType) {
     def prefix = buildType == 'release' ? 'RELEASE_' : 'DEBUG_'
     def lastBuildDate = versionProps[prefix + 'LAST_BUILD_DATE'] ?: ''
     def lastBuildCount = (versionProps[prefix + 'BUILD_COUNT'] ?: '0').toInteger()
+    Integer forcedReleaseSeq = null
+    if (buildType == 'release') {
+        def seqRaw = project.findProperty('ciReleaseSeq') ?: System.getenv('CI_RELEASE_SEQ')
+        if (seqRaw != null && seqRaw.toString().trim()) {
+            try {
+                forcedReleaseSeq = seqRaw.toString().trim().toInteger()
+            } catch (Throwable ignored) {
+                throw new GradleException("ciReleaseSeq invalid: ${seqRaw}")
+            }
+            if (forcedReleaseSeq < 1 || forcedReleaseSeq > 99) {
+                throw new GradleException("ciReleaseSeq out of range 1..99: ${forcedReleaseSeq}")
+            }
+        }
+    }
     
-    if (lastBuildDate == today) {
+    if (forcedReleaseSeq != null) {
+        lastBuildCount = forcedReleaseSeq
+    } else if (lastBuildDate == today) {
         // 同一天构建，序号+1
         lastBuildCount++
     } else {
@@ -269,3 +285,4 @@ afterEvaluate {
         println "Disabled task: ${it.name}"
     }
 }
+

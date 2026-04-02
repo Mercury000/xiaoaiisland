@@ -193,6 +193,8 @@ private data class EditDialogSpec(
     val onConfirm: (String) -> Unit,
 )
 
+private const val MAX_MINUTE_VALUE = 9999
+
 private sealed interface AppRoute : androidx.navigation3.runtime.NavKey {
     data object TestNotify : AppRoute
     data object StatusCustom : AppRoute
@@ -1316,7 +1318,7 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
 
 @Composable
 private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
-    var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
+    var showReminderPicker by remember { mutableStateOf(false) }
     DismissibleHint(
         activity = activity,
         key = "hint_reminder",
@@ -1336,24 +1338,26 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
             Spacer(modifier = Modifier.height(8.dp))
             TextPreference(
                 title = "提前提醒（分钟）",
-                value = state.reminderMinutes.ifBlank { "15" },
+                value = "${state.reminderMinutes.ifBlank { "15" }} 分钟",
                 onClick = {
-                    editDialog = EditDialogSpec(
-                        title = "提前提醒（分钟）",
-                        initialValue = state.reminderMinutes,
-                        numberOnly = true,
-                        onConfirm = {
-                            val minutes = it.toIntOrNull()?.coerceIn(1, 120) ?: 15
-                            state.reminderMinutes = minutes.toString()
-                            activity.uiEditConfigPrefs().putInt("reminder_minutes_before", minutes).apply()
-                        },
-                    )
+                    showReminderPicker = true
                 },
             )
         }
     }
-    editDialog?.let { spec ->
-        EditValueDialog(spec = spec, onDismiss = { editDialog = null })
+    if (showReminderPicker) {
+        MiuixMinutePickerDialog(
+            title = "提前提醒（分钟）",
+            initialValue = state.reminderMinutes.toIntOrNull() ?: 15,
+            minValue = 0,
+            maxValue = MAX_MINUTE_VALUE,
+            onDismiss = { showReminderPicker = false },
+            onConfirm = {
+                state.reminderMinutes = it.toString()
+                activity.uiEditConfigPrefs().putInt("reminder_minutes_before", it).apply()
+                showReminderPicker = false
+            },
+        )
     }
 }
 
@@ -1367,10 +1371,10 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
         )
     }
     fun persistMuteConfigNow() {
-        val muteBefore = clamp0to60(state.muteMinsBefore)
-        val unmuteAfter = clamp0to60(state.unmuteMinsAfter)
-        val dndBefore = clamp0to60(state.dndMinsBefore)
-        val undndAfter = clamp0to60(state.undndMinsAfter)
+        val muteBefore = clampMinuteValue(state.muteMinsBefore)
+        val unmuteAfter = clampMinuteValue(state.unmuteMinsAfter)
+        val dndBefore = clampMinuteValue(state.dndMinsBefore)
+        val undndAfter = clampMinuteValue(state.undndMinsAfter)
         state.muteMinsBefore = muteBefore.toString()
         state.unmuteMinsAfter = unmuteAfter.toString()
         state.dndMinsBefore = dndBefore.toString()
@@ -1486,23 +1490,35 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
 }
 
 @Composable
-private fun MinuteEditor(label: String, value: String, onValue: (String) -> Unit) {
-    var editDialog by remember(label) { mutableStateOf<EditDialogSpec?>(null) }
+private fun MinuteEditor(
+    label: String,
+    value: String,
+    minValue: Int = 0,
+    maxValue: Int = MAX_MINUTE_VALUE,
+    onValue: (String) -> Unit,
+) {
+    var showMinutePicker by remember(label) { mutableStateOf(false) }
+    val safeMin = minValue.coerceAtLeast(0)
+    val safeMax = maxOf(safeMin, maxValue)
+    val current = (value.toIntOrNull() ?: safeMin).coerceIn(safeMin, safeMax)
     Spacer(modifier = Modifier.height(8.dp))
     TextPreference(
         title = label,
-        value = value.ifBlank { "0" },
-        onClick = {
-            editDialog = EditDialogSpec(
-                title = label,
-                initialValue = value,
-                numberOnly = true,
-                onConfirm = { onValue(it.filter(Char::isDigit)) },
-            )
-        },
+        value = "$current 分钟",
+        onClick = { showMinutePicker = true },
     )
-    editDialog?.let { spec ->
-        EditValueDialog(spec = spec, onDismiss = { editDialog = null })
+    if (showMinutePicker) {
+        MiuixMinutePickerDialog(
+            title = label,
+            initialValue = current,
+            minValue = safeMin,
+            maxValue = safeMax,
+            onDismiss = { showMinutePicker = false },
+            onConfirm = {
+                onValue(it.toString())
+                showMinutePicker = false
+            },
+        )
     }
 }
 
@@ -1841,7 +1857,7 @@ private fun WakeRuleList(
     }
 }
 
-private fun clamp0to60(value: String): Int = value.toIntOrNull()?.coerceIn(0, 60) ?: 0
+private fun clampMinuteValue(value: String): Int = value.toIntOrNull()?.coerceIn(0, MAX_MINUTE_VALUE) ?: 0
 
 private fun normalizeTimeoutUnit(unit: String): String = when (unit) {
     "s" -> "s"
@@ -2784,6 +2800,54 @@ private fun MiuixDurationPickerDialog(
                 minHeight = 50.dp,
                 colors = ButtonDefaults.textButtonColorsPrimary(),
                 onClick = { onConfirm(value, unitEntries[unitIndex].second) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MiuixMinutePickerDialog(
+    title: String,
+    initialValue: Int,
+    minValue: Int = 0,
+    maxValue: Int = 60,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit,
+) {
+    val lower = minValue.coerceAtLeast(0)
+    val upper = maxOf(lower, maxValue)
+    var minute by remember(initialValue, lower, upper) { mutableIntStateOf(initialValue.coerceIn(lower, upper)) }
+    val pickerColors = NumberPickerDefaults.colors(
+        selectedTextColor = MiuixTheme.colorScheme.primary,
+        unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
+    )
+    SuperDialog(
+        show = true,
+        title = title,
+        onDismissRequest = onDismiss,
+    ) {
+        NumberPicker(
+            value = minute,
+            onValueChange = { minute = it.coerceIn(lower, upper) },
+            range = lower..upper,
+            label = { "$it 分钟" },
+            modifier = Modifier.fillMaxWidth(),
+            colors = pickerColors,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextButton(
+                modifier = Modifier.weight(1f),
+                text = "取消",
+                minHeight = 50.dp,
+                onClick = onDismiss,
+            )
+            TextButton(
+                modifier = Modifier.weight(1f),
+                text = "确定",
+                minHeight = 50.dp,
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                onClick = { onConfirm(minute) },
             )
         }
     }

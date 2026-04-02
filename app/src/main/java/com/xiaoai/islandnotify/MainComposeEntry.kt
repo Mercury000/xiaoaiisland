@@ -74,11 +74,14 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.NumberPicker
+import top.yukonga.miuix.kmp.basic.NumberPickerDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.extra.SuperDialog
@@ -536,7 +539,6 @@ private class SettingsComposeState {
 
 private class HolidayComposeState {
     var year by mutableIntStateOf(Calendar.getInstance().get(Calendar.YEAR))
-    var fetchHint by mutableStateOf("")
     val holidayEntries = mutableStateListOf<HolidayManager.HolidayEntry>()
     val workswapEntries = mutableStateListOf<HolidayManager.HolidayEntry>()
 
@@ -1672,8 +1674,13 @@ private fun WakeRuleList(
     }
     if (editingIndex in rules.indices) {
         var sec by remember(editingIndex) { mutableStateOf(rules[editingIndex].sec) }
-        var hour by remember(editingIndex) { mutableStateOf(rules[editingIndex].hour) }
-        var minute by remember(editingIndex) { mutableStateOf(rules[editingIndex].minute) }
+        var hour by remember(editingIndex) {
+            mutableIntStateOf((rules[editingIndex].hour.toIntOrNull() ?: 0).coerceIn(0, 23))
+        }
+        var minute by remember(editingIndex) {
+            mutableIntStateOf((rules[editingIndex].minute.toIntOrNull() ?: 0).coerceIn(0, 59))
+        }
+        var showTimePicker by remember(editingIndex) { mutableStateOf(false) }
         SuperDialog(
             show = true,
             title = "编辑规则",
@@ -1690,52 +1697,67 @@ private fun WakeRuleList(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                top.yukonga.miuix.kmp.basic.TextField(
-                    value = hour,
-                    onValueChange = { hour = it.filter(Char::isDigit) },
-                    label = "时",
+                SelectorEntryButton(
+                    text = "时间: ${String.format(Locale.getDefault(), "%02d", hour)}:${String.format(Locale.getDefault(), "%02d", minute)}",
+                    onClick = { showTimePicker = true },
                     modifier = Modifier.fillMaxWidth(),
-                    textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                top.yukonga.miuix.kmp.basic.TextField(
-                    value = minute,
-                    onValueChange = { minute = it.filter(Char::isDigit) },
-                    label = "分",
-                    modifier = Modifier.fillMaxWidth(),
-                    textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { editingIndex = -1 }, modifier = Modifier.weight(1f)) { Text("取消") }
-                Button(
-                    onClick = { pendingDeleteIndex = editingIndex },
+                TextButton(
                     modifier = Modifier.weight(1f),
-                ) { Text("删除") }
-                Button(
+                    text = "取消",
+                    minHeight = 50.dp,
+                    onClick = { editingIndex = -1 },
+                )
+                TextButton(
+                    modifier = Modifier.weight(1f),
+                    text = "删除",
+                    minHeight = 50.dp,
+                    colors = ButtonDefaults.textButtonColors(
+                        color = Color(0xFFD32F2F),
+                        disabledColor = Color(0x59D32F2F),
+                        textColor = Color.White,
+                        disabledTextColor = Color(0xB3FFFFFF),
+                    ),
+                    onClick = { pendingDeleteIndex = editingIndex },
+                )
+                TextButton(
+                    modifier = Modifier.weight(1f),
+                    text = "确定",
+                    minHeight = 50.dp,
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
                     onClick = {
                         if (editingIndex in rules.indices) {
                             rules[editingIndex] = rules[editingIndex].copy(
                                 sec = (sec.toIntOrNull() ?: 1).coerceAtLeast(1).toString(),
-                                hour = (hour.toIntOrNull() ?: 0).coerceIn(0, 23).toString(),
+                                hour = hour.toString(),
                                 minute = String.format(
                                     Locale.getDefault(),
                                     "%02d",
-                                    (minute.toIntOrNull() ?: 0).coerceIn(0, 59),
+                                    minute,
                                 ),
                             )
                             onChanged()
                         }
                         editingIndex = -1
                     },
-                    modifier = Modifier.weight(1f),
-                ) { Text("确定") }
+                )
             }
+        }
+        if (showTimePicker) {
+            MiuixTimePickerDialog(
+                title = "选择时间",
+                initialHour = hour,
+                initialMinute = minute,
+                onDismiss = { showTimePicker = false },
+                onConfirm = { h, m ->
+                    hour = h
+                    minute = m
+                    showTimePicker = false
+                },
+            )
         }
     }
 
@@ -1934,15 +1956,15 @@ private fun HolidayTab(
                     Button(
                         onClick = {
                             scope.launch {
-                                state.fetchHint = "正在获取…"
+                                Toast.makeText(activity, "正在获取...", Toast.LENGTH_SHORT).show()
                                 val result = withContext(Dispatchers.IO) { fetchHolidayEntries(state.year) }
                                 result.error?.let {
-                                    state.fetchHint = "获取失败：$it"
+                                    Toast.makeText(activity, "获取失败：$it", Toast.LENGTH_SHORT).show()
                                     return@launch
                                 }
                                 val entries = result.entries
                                 if (entries.isEmpty()) {
-                                    state.fetchHint = "${state.year}年暂无数据"
+                                    Toast.makeText(activity, "${state.year}年暂无数据", Toast.LENGTH_SHORT).show()
                                     return@launch
                                 }
                                 HolidayManager.mergeAndSave(activity, state.year, entries)
@@ -1952,21 +1974,17 @@ private fun HolidayTab(
                                     activity.uiRescheduleIfCoversToday(e.date, endDate)
                                 }
                                 state.loadFrom(activity)
-                                state.fetchHint = "获取完成：节假日 ${result.holidayDays} 天，调休 ${result.workswapDays} 天"
+                                Toast.makeText(
+                                    activity,
+                                    "获取完成：节假日 ${result.holidayDays} 天，调休 ${result.workswapDays} 天",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         },
                         modifier = Modifier.weight(1f),
                     ) { Text("网络获取") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(onClick = { showClearYearDialog = true }) { Text("清除本年") }
-                }
-                if (state.fetchHint.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = state.fetchHint,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
         }
@@ -2114,6 +2132,11 @@ private fun HolidayTab(
                 val targetEnd = if (target.endDate.isNullOrBlank()) target.date else target.endDate
                 activity.uiRescheduleIfCoversToday(target.date, targetEnd)
                 state.loadFrom(activity)
+                Toast.makeText(
+                    activity,
+                    "已删除节假日：${target.name}（${formatDateRange(target.date, target.endDate)}）",
+                    Toast.LENGTH_SHORT
+                ).show()
                 pendingDeleteHoliday = null
             },
         )
@@ -2138,6 +2161,11 @@ private fun HolidayTab(
                 activity.uiSyncHolidayToHook(state.year)
                 activity.uiRescheduleIfCoversToday(target.date, null)
                 state.loadFrom(activity)
+                Toast.makeText(
+                    activity,
+                    "已删除调休工作日：${target.name}（${formatShortDate(target.date)}）",
+                    Toast.LENGTH_SHORT
+                ).show()
                 pendingDeleteWorkswap = null
             },
         )
@@ -2150,6 +2178,7 @@ private fun HolidayTab(
             draft = draft,
             onDismiss = { holidayDraft = null },
             onSave = { save ->
+                val isEdit = holidayEditEntry != null
                 val name = save.name.trim().ifBlank { "节假日" }
                 val all = HolidayManager.loadEntries(activity, state.year).toMutableList()
                 holidayEditEntry?.let { old ->
@@ -2177,6 +2206,11 @@ private fun HolidayTab(
                 }
                 state.loadFrom(activity)
                 holidayDraft = null
+                Toast.makeText(
+                    activity,
+                    if (isEdit) "已更新节假日" else "已新增节假日",
+                    Toast.LENGTH_SHORT
+                ).show()
             },
         )
     }
@@ -2189,6 +2223,7 @@ private fun HolidayTab(
             maxWeek = maxWeek,
             onDismiss = { workswapDraft = null },
             onSave = { save ->
+                val isEdit = workswapEditEntry != null
                 val name = save.name.trim().ifBlank { "调休工作日" }
                 val all = HolidayManager.loadEntries(activity, state.year).toMutableList()
                 workswapEditEntry?.let { old ->
@@ -2211,6 +2246,11 @@ private fun HolidayTab(
                 workswapEditEntry?.let { old -> activity.uiRescheduleIfCoversToday(old.date, null) }
                 state.loadFrom(activity)
                 workswapDraft = null
+                Toast.makeText(
+                    activity,
+                    if (isEdit) "已更新调休工作日" else "已新增调休工作日",
+                    Toast.LENGTH_SHORT
+                ).show()
             },
         )
     }
@@ -2333,6 +2373,10 @@ private fun YearPickerDialog(
     onConfirm: (Int) -> Unit,
 ) {
     var year by remember(currentYear) { mutableIntStateOf(currentYear.coerceIn(2020, 2099)) }
+    val pickerColors = NumberPickerDefaults.colors(
+        selectedTextColor = MiuixTheme.colorScheme.primary,
+        unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
+    )
     SuperDialog(
         show = true,
         title = "选择年份",
@@ -2344,6 +2388,7 @@ private fun YearPickerDialog(
             range = 2020..2099,
             label = { it.toString() },
             modifier = Modifier.fillMaxWidth(),
+            colors = pickerColors,
         )
         Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2392,6 +2437,10 @@ private fun MiuixDatePickerDialog(
     var month by remember(initialDate) { mutableIntStateOf(parsed.second.coerceIn(1, 12)) }
     var day by remember(initialDate) { mutableIntStateOf(parsed.third) }
     val maxDay = remember(year, month) { daysInMonth(year, month) }
+    val pickerColors = NumberPickerDefaults.colors(
+        selectedTextColor = MiuixTheme.colorScheme.primary,
+        unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
+    )
     if (day > maxDay) day = maxDay
 
     SuperDialog(
@@ -2410,6 +2459,7 @@ private fun MiuixDatePickerDialog(
                 range = 2020..2099,
                 label = { it.toString() },
                 modifier = Modifier.weight(1f),
+                colors = pickerColors,
             )
             NumberPicker(
                 value = month,
@@ -2417,6 +2467,7 @@ private fun MiuixDatePickerDialog(
                 range = 1..12,
                 label = { "%02d".format(it) },
                 modifier = Modifier.weight(1f),
+                colors = pickerColors,
             )
             NumberPicker(
                 value = day.coerceIn(1, maxDay),
@@ -2424,6 +2475,7 @@ private fun MiuixDatePickerDialog(
                 range = 1..maxDay,
                 label = { "%02d".format(it) },
                 modifier = Modifier.weight(1f),
+                colors = pickerColors,
             )
         }
         Spacer(modifier = Modifier.height(12.dp))
@@ -2438,6 +2490,55 @@ private fun MiuixDatePickerDialog(
 }
 
 @Composable
+private fun MiuixTimePickerDialog(
+    title: String,
+    initialHour: Int,
+    initialMinute: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int, Int) -> Unit,
+) {
+    var hour by remember(initialHour) { mutableIntStateOf(initialHour.coerceIn(0, 23)) }
+    var minute by remember(initialMinute) { mutableIntStateOf(initialMinute.coerceIn(0, 59)) }
+    val pickerColors = NumberPickerDefaults.colors(
+        selectedTextColor = MiuixTheme.colorScheme.primary,
+        unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
+    )
+    SuperDialog(
+        show = true,
+        title = title,
+        onDismissRequest = onDismiss,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            NumberPicker(
+                value = hour,
+                onValueChange = { hour = it },
+                range = 0..23,
+                label = { "%02d".format(it) },
+                modifier = Modifier.weight(1f),
+                colors = pickerColors,
+            )
+            NumberPicker(
+                value = minute,
+                onValueChange = { minute = it },
+                range = 0..59,
+                label = { "%02d".format(it) },
+                modifier = Modifier.weight(1f),
+                colors = pickerColors,
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
+            Button(onClick = { onConfirm(hour, minute) }, modifier = Modifier.weight(1f)) { Text("确定") }
+        }
+    }
+}
+
+@Composable
 private fun HolidayEditDialog(
     activity: MainActivity,
     title: String,
@@ -2446,7 +2547,6 @@ private fun HolidayEditDialog(
     onSave: (HolidayDraft) -> Unit,
 ) {
     var form by remember(draft) { mutableStateOf(draft.copy()) }
-    var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
     SuperDialog(
@@ -2455,38 +2555,44 @@ private fun HolidayEditDialog(
         onDismissRequest = onDismiss,
     ) {
         Column {
-            Button(onClick = {
-                showStartPicker = true
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("开始日期: ${form.date}")
-            }
+            SelectorEntryButton(
+                text = "开始日期: ${form.date}",
+                onClick = { showStartPicker = true },
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = {
-                showEndPicker = true
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("结束日期: ${if (form.endDate.isBlank()) "仅当天" else form.endDate}")
-            }
+            SelectorEntryButton(
+                text = "结束日期: ${if (form.endDate.isBlank()) "仅当天" else form.endDate}",
+                onClick = { showEndPicker = true },
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(modifier = Modifier.height(12.dp))
-            TextPreference(
-                title = "名称（如：春节、放假）",
-                value = form.name.ifBlank { "未设置" },
-                onClick = {
-                    editDialog = EditDialogSpec(
-                        title = "名称（如：春节、放假）",
-                        initialValue = form.name,
-                        onConfirm = { form = form.copy(name = it) },
-                    )
-                },
+            top.yukonga.miuix.kmp.basic.TextField(
+                value = form.name,
+                onValueChange = { form = form.copy(name = it) },
+                label = "名称（如：春节、放假）",
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
+                singleLine = true,
             )
         }
         Spacer(modifier = Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
-            Button(onClick = { onSave(form) }, modifier = Modifier.weight(1f)) { Text("确定") }
+        Row(horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(
+                modifier = Modifier.weight(1f),
+                text = "取消",
+                minHeight = 50.dp,
+                onClick = onDismiss,
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            TextButton(
+                modifier = Modifier.weight(1f),
+                text = "确定",
+                minHeight = 50.dp,
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                onClick = { onSave(form) },
+            )
         }
-    }
-    editDialog?.let { spec ->
-        EditValueDialog(spec = spec, onDismiss = { editDialog = null })
     }
     if (showStartPicker) {
         MiuixDatePickerDialog(
@@ -2522,7 +2628,6 @@ private fun WorkswapEditDialog(
     onSave: (WorkSwapDraft) -> Unit,
 ) {
     var form by remember(draft) { mutableStateOf(draft.copy()) }
-    var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
     val weekEntries = remember(maxWeek) {
         (1..maxWeek.coerceAtLeast(1)).map { week ->
@@ -2546,22 +2651,19 @@ private fun WorkswapEditDialog(
         onDismissRequest = onDismiss,
     ) {
         Column {
-            Button(onClick = {
-                showDatePicker = true
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("选择日期: ${form.date}")
-            }
+            SelectorEntryButton(
+                text = "选择日期: ${form.date}",
+                onClick = { showDatePicker = true },
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(modifier = Modifier.height(12.dp))
-            TextPreference(
-                title = "名称（如：补周一课）",
-                value = form.name.ifBlank { "未设置" },
-                onClick = {
-                    editDialog = EditDialogSpec(
-                        title = "名称（如：补周一课）",
-                        initialValue = form.name,
-                        onConfirm = { form = form.copy(name = it) },
-                    )
-                },
+            top.yukonga.miuix.kmp.basic.TextField(
+                value = form.name,
+                onValueChange = { form = form.copy(name = it) },
+                label = "名称（如：补周一课）",
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
+                singleLine = true,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text("当天按以下周次/星期的课表上课：", style = MaterialTheme.typography.bodySmall)
@@ -2587,13 +2689,22 @@ private fun WorkswapEditDialog(
             )
         }
         Spacer(modifier = Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
-            Button(onClick = { onSave(form) }, modifier = Modifier.weight(1f)) { Text("确定") }
+        Row(horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(
+                modifier = Modifier.weight(1f),
+                text = "取消",
+                minHeight = 50.dp,
+                onClick = onDismiss,
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            TextButton(
+                modifier = Modifier.weight(1f),
+                text = "确定",
+                minHeight = 50.dp,
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                onClick = { onSave(form) },
+            )
         }
-    }
-    editDialog?.let { spec ->
-        EditValueDialog(spec = spec, onDismiss = { editDialog = null })
     }
     if (showDatePicker) {
         MiuixDatePickerDialog(
@@ -2605,6 +2716,23 @@ private fun WorkswapEditDialog(
                 showDatePicker = false
             },
         )
+    }
+}
+
+@Composable
+private fun SelectorEntryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Button(onClick = onClick, modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text, style = MiuixTheme.textStyles.main)
+        }
     }
 }
 

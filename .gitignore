@@ -47,4 +47,8 @@ version.properties
 # Local temp / cache
 .tmp_xiaomihelper/
 .tmp_miuix_aar/
+.tmp_miuix_aar2/
+.tmp_miuix_src/
+.tmp_*/
+build/tmp/ref/
 .kotlin/

@@ -2095,7 +2095,7 @@ private fun HolidayTab(
         HyperAlertDialog(
             visible = true,
             title = "删除节假日",
-            message = "确定删除“${target.name}”（${formatShortDate(target.date)}）吗？",
+            message = "确定删除“${target.name}”（${formatDateRange(target.date, target.endDate)}）吗？",
             mode = AlertDialogMode.NegativeAndPositive,
             negativeText = "取消",
             positiveText = "删除",
@@ -2111,7 +2111,8 @@ private fun HolidayTab(
                 }
                 HolidayManager.saveEntries(activity, state.year, all)
                 activity.uiSyncHolidayToHook(state.year)
-                activity.uiRescheduleIfCoversToday(target.date, target.endDate)
+                val targetEnd = if (target.endDate.isNullOrBlank()) target.date else target.endDate
+                activity.uiRescheduleIfCoversToday(target.date, targetEnd)
                 state.loadFrom(activity)
                 pendingDeleteHoliday = null
             },
@@ -2264,11 +2265,7 @@ private fun HolidayRow(
 ) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
-            val dateLabel = if (!entry.endDate.isNullOrBlank() && entry.endDate != entry.date) {
-                "${formatShortDate(entry.date)}–${formatShortDate(entry.endDate)}"
-            } else {
-                formatShortDate(entry.date)
-            }
+            val dateLabel = formatDateRange(entry.date, entry.endDate)
             Text("$dateLabel  ${entry.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
             Text(
                 if (entry.isCustom) "自定义节假日" else "API 节假日",
@@ -2290,11 +2287,7 @@ private fun WorkswapRow(
 ) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
-            val dateLabel = if (!entry.endDate.isNullOrBlank()) {
-                "${formatShortDate(entry.date)}–${formatShortDate(entry.endDate)}"
-            } else {
-                formatShortDate(entry.date)
-            }
+            val dateLabel = formatDateRange(entry.date, entry.endDate)
             Text("$dateLabel  ${entry.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
             Text("替换为: ${entry.followDesc()}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF6750A4))
             Text(
@@ -2624,6 +2617,14 @@ private fun formatShortDate(isoDate: String?): String {
     } catch (_: Exception) {
         isoDate
     }
+}
+
+private fun formatDateRange(startDate: String?, endDate: String?): String {
+    val start = startDate?.trim().orEmpty()
+    val end = endDate?.trim().orEmpty()
+    if (start.isBlank()) return ""
+    if (end.isBlank() || end == start) return formatShortDate(start)
+    return "${formatShortDate(start)}–${formatShortDate(end)}"
 }
 
 @Composable

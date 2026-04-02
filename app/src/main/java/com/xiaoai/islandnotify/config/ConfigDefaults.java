@@ -64,15 +64,6 @@ final class ConfigDefaults {
             "次要文本1",
             "次要文本2"
     };
-    static final int[][] EXPANDED_TPL_EDIT_IDS = {
-            {R.id.et_tpl_base_title_pre, R.id.et_tpl_base_title_active, R.id.et_tpl_base_title_post},
-            {R.id.et_tpl_hint_title_pre, R.id.et_tpl_hint_title_active, R.id.et_tpl_hint_title_post},
-            {R.id.et_tpl_hint_subtitle_pre, R.id.et_tpl_hint_subtitle_active, R.id.et_tpl_hint_subtitle_post},
-            {R.id.et_tpl_hint_content_pre, R.id.et_tpl_hint_content_active, R.id.et_tpl_hint_content_post},
-            {R.id.et_tpl_hint_subcontent_pre, R.id.et_tpl_hint_subcontent_active, R.id.et_tpl_hint_subcontent_post},
-            {R.id.et_tpl_base_content_pre, R.id.et_tpl_base_content_active, R.id.et_tpl_base_content_post},
-            {R.id.et_tpl_base_subcontent_pre, R.id.et_tpl_base_subcontent_active, R.id.et_tpl_base_subcontent_post}
-    };
     static final String[][] DEFAULT_EXPANDED_TPLS_V2 = {
             {"{\u8bfe\u540d}", "{\u5012\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u5373\u5c06\u4e0a\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb} | {\u7ed3\u675f}", ""},
             {"{\u8bfe\u540d}", "{\u5012\u8ba1\u65f6}", "{\u6559\u5ba4}", "\u8ddd\u79bb\u4e0b\u8bfe", "\u5730\u70b9", "{\u5f00\u59cb} | {\u7ed3\u675f}", ""},

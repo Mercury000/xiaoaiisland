@@ -3,7 +3,6 @@
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1543,19 +1542,19 @@ private fun SectionEditor(
 @Composable
 private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
     val morningBoundary = (state.wakeupMorningLastSec.toIntOrNull() ?: 4).coerceAtLeast(1)
-    val afternoonBoundary = (state.wakeupAfternoonFirstSec.toIntOrNull() ?: (morningBoundary + 1))
-        .coerceAtLeast(morningBoundary + 1)
+    val afternoonBoundary = (state.wakeupAfternoonFirstSec.toIntOrNull() ?: 5).coerceAtLeast(1)
     val morningRuleMax = morningBoundary
     val knownMaxSec = maxOf(
+        morningBoundary,
         afternoonBoundary,
         state.wakeupMorningRules.maxOfOrNull { (it.sec.toIntOrNull() ?: 1).coerceAtLeast(1) } ?: 1,
         state.wakeupAfternoonRules.maxOfOrNull { (it.sec.toIntOrNull() ?: afternoonBoundary).coerceAtLeast(afternoonBoundary) } ?: afternoonBoundary,
     )
+    val sectionBoundaryMax = maxOf(30, knownMaxSec)
 
     fun persistWakeupConfigNow() {
         val morningLast = (state.wakeupMorningLastSec.toIntOrNull() ?: 4).coerceAtLeast(1)
-        val afternoonFirst = (state.wakeupAfternoonFirstSec.toIntOrNull() ?: (morningLast + 1))
-            .coerceAtLeast(morningLast + 1)
+        val afternoonFirst = (state.wakeupAfternoonFirstSec.toIntOrNull() ?: 5).coerceAtLeast(1)
         state.wakeupMorningRules.replaceAll { rule ->
             rule.copy(
                 sec = (rule.sec.toIntOrNull() ?: 1).coerceIn(1, morningLast).toString(),
@@ -1654,7 +1653,7 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
                 label = "上午最大节次（≤此节为上午）",
                 value = state.wakeupMorningLastSec,
                 minSec = 1,
-                maxSec = maxOf(1, afternoonBoundary - 1),
+                maxSec = sectionBoundaryMax,
             ) {
                 state.wakeupMorningLastSec = it
                 persistWakeupConfigNow()
@@ -1662,8 +1661,8 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
             SectionEditor(
                 label = "下午起始节次（≥此节为下午）",
                 value = state.wakeupAfternoonFirstSec,
-                minSec = (state.wakeupMorningLastSec.toIntOrNull() ?: 4).coerceAtLeast(1) + 1,
-                maxSec = maxOf(30, knownMaxSec),
+                minSec = 1,
+                maxSec = sectionBoundaryMax,
             ) {
                 state.wakeupAfternoonFirstSec = it
                 persistWakeupConfigNow()
@@ -2068,7 +2067,7 @@ private fun HolidayTab(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
-                    state.holidayEntries.forEach { entry ->
+                    state.holidayEntries.forEachIndexed { index, entry ->
                         HolidayRow(
                             entry = entry,
                             onEdit = {
@@ -2083,6 +2082,11 @@ private fun HolidayTab(
                                 pendingDeleteHoliday = entry
                             },
                         )
+                        if (index != state.holidayEntries.lastIndex) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            HorizontalDivider()
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -2110,7 +2114,7 @@ private fun HolidayTab(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                     )
                 } else {
-                    state.workswapEntries.forEach { entry ->
+                    state.workswapEntries.forEachIndexed { index, entry ->
                         WorkswapRow(
                             entry = entry,
                             onEdit = {
@@ -2126,6 +2130,11 @@ private fun HolidayTab(
                                 pendingDeleteWorkswap = entry
                             },
                         )
+                        if (index != state.workswapEntries.lastIndex) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            HorizontalDivider()
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -2372,19 +2381,40 @@ private fun HolidayRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    val dateLabel = formatDateRange(entry.date, entry.endDate)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(modifier = Modifier.weight(1f)) {
-            val dateLabel = formatDateRange(entry.date, entry.endDate)
-            Text("$dateLabel  ${entry.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "$dateLabel  ${entry.name}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+            )
             Text(
                 if (entry.isCustom) "自定义节假日" else "API 节假日",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (entry.isCustom) Color(0xFF7965AF) else Color(0xFF389E0D),
             )
         }
-        Button(onClick = onEdit) { Text("编辑") }
-        Spacer(modifier = Modifier.width(4.dp))
-        Button(onClick = onDelete) { Text("删除", color = Color(0xFFBA1A1A)) }
+        TextButton(
+            text = "编辑",
+            minHeight = 44.dp,
+            onClick = onEdit,
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        TextButton(
+            text = "删除",
+            minHeight = 44.dp,
+            colors = ButtonDefaults.textButtonColors(
+                color = Color(0xFFD32F2F),
+                disabledColor = Color(0x59D32F2F),
+                textColor = Color.White,
+                disabledTextColor = Color(0xB3FFFFFF),
+            ),
+            onClick = onDelete,
+        )
     }
 }
 
@@ -2394,20 +2424,45 @@ private fun WorkswapRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    val dateLabel = formatDateRange(entry.date, entry.endDate)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(modifier = Modifier.weight(1f)) {
-            val dateLabel = formatDateRange(entry.date, entry.endDate)
-            Text("$dateLabel  ${entry.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-            Text("替换为: ${entry.followDesc()}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF6750A4))
+            Text(
+                "$dateLabel  ${entry.name}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "替换为: ${entry.followDesc()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF6750A4),
+            )
             Text(
                 if (entry.isCustom) "自定义调休" else "API 调休",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (entry.isCustom) Color(0xFF7965AF) else Color(0xFF389E0D),
             )
         }
-        Button(onClick = onEdit) { Text("编辑") }
-        Spacer(modifier = Modifier.width(4.dp))
-        Button(onClick = onDelete) { Text("删除", color = Color(0xFFBA1A1A)) }
+        TextButton(
+            text = "编辑",
+            minHeight = 44.dp,
+            onClick = onEdit,
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        TextButton(
+            text = "删除",
+            minHeight = 44.dp,
+            colors = ButtonDefaults.textButtonColors(
+                color = Color(0xFFD32F2F),
+                disabledColor = Color(0x59D32F2F),
+                textColor = Color.White,
+                disabledTextColor = Color(0xB3FFFFFF),
+            ),
+            onClick = onDelete,
+        )
     }
 }
 
@@ -2417,22 +2472,11 @@ private fun AddEntryRow(
     summary: String,
     onClick: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-            )
-        }
-    }
+    TextPreference(
+        title = title,
+        summary = summary,
+        onClick = onClick,
+    )
 }
 
 @Composable
@@ -2932,14 +2976,11 @@ private fun SelectorEntryButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Button(onClick = onClick, modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text, style = MiuixTheme.textStyles.main)
-        }
+    Column(modifier = modifier) {
+        TextPreference(
+            title = text,
+            onClick = onClick,
+        )
     }
 }
 

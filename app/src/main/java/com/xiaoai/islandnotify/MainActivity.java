@@ -34,6 +34,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
     private static final String ALIAS = "com.xiaoai.islandnotify.MainActivityAlias";
+    private static final String HINT_KEY_PREFIX = "hint_";
 
     private static final String[] CUSTOM_SUFFIXES = ConfigDefaults.STAGE_SUFFIXES;
 
@@ -150,6 +151,26 @@ public class MainActivity extends AppCompatActivity {
                 .apply();
     }
 
+    boolean uiIsHintDismissed(String key) {
+        SharedPreferences ui = getSharedPreferences(PREFS_UI_NAME, Context.MODE_PRIVATE);
+        if (ui.contains(key)) {
+            return ui.getBoolean(key, false);
+        }
+        // One-time compatibility fallback from old config(remote) storage.
+        boolean legacy = PrefsAccess.readConfigBool(mRemotePrefs, key, false);
+        if (legacy) {
+            ui.edit().putBoolean(key, true).apply();
+        }
+        return legacy;
+    }
+
+    void uiSetHintDismissed(String key, boolean dismissed) {
+        getSharedPreferences(PREFS_UI_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(key, dismissed)
+                .apply();
+    }
+
     String uiReadAppVersionName() {
         try {
             return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
@@ -232,6 +253,7 @@ public class MainActivity extends AppCompatActivity {
             SharedPreferences local = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             migrateLocalToRemoteIfNeeded(remote, local, true);
             migrateLegacyConfigOnce(remote);
+            migrateHintFlagsToUiAndPurgeRemote(remote);
             clearLocalPrefs(PREFS_NAME);
 
             SharedPreferences remoteHoliday = service.getRemotePreferences(HolidayManager.PREFS_HOLIDAY);
@@ -244,6 +266,34 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(this::refreshAfterConfigSynced);
         } catch (Throwable t) {
             Log.w("IslandNotify", "initRemotePrefsBridgeRemoteOnly failed: " + t.getMessage());
+        }
+    }
+
+    private void migrateHintFlagsToUiAndPurgeRemote(SharedPreferences remote) {
+        if (remote == null) return;
+        try {
+            Map<String, ?> all = remote.getAll();
+            if (all == null || all.isEmpty()) return;
+            SharedPreferences ui = getSharedPreferences(PREFS_UI_NAME, Context.MODE_PRIVATE);
+            SharedPreferences.Editor remoteEd = remote.edit();
+            SharedPreferences.Editor uiEd = ui.edit();
+            boolean remoteChanged = false;
+            boolean uiChanged = false;
+            for (Map.Entry<String, ?> entry : all.entrySet()) {
+                String key = entry.getKey();
+                if (key == null || !key.startsWith(HINT_KEY_PREFIX)) continue;
+                Object value = entry.getValue();
+                if (!ui.contains(key) && value instanceof Boolean && (Boolean) value) {
+                    uiEd.putBoolean(key, true);
+                    uiChanged = true;
+                }
+                remoteEd.remove(key);
+                remoteChanged = true;
+            }
+            if (uiChanged) uiEd.apply();
+            if (remoteChanged) remoteEd.apply();
+        } catch (Throwable t) {
+            Log.w("IslandNotify", "migrateHintFlagsToUiAndPurgeRemote failed: " + t.getMessage());
         }
     }
 

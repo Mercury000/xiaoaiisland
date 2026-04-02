@@ -3,6 +3,7 @@
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1144,7 +1145,7 @@ private fun DismissibleHint(
     text: String,
 ) {
     var dismissed by remember(key) {
-        mutableStateOf(PrefsAccess.readConfigBool(activity.uiConfigPrefs(), key, false))
+        mutableStateOf(activity.uiIsHintDismissed(key))
     }
     if (!dismissed) {
         Hint(
@@ -1153,7 +1154,7 @@ private fun DismissibleHint(
             closeable = true,
         ) {
             dismissed = true
-            activity.uiEditConfigPrefs().putBoolean(key, true).apply()
+            activity.uiSetHintDismissed(key, true)
         }
     }
 }
@@ -1263,17 +1264,16 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
         }
     }
 
+    DismissibleHint(
+        activity = activity,
+        key = "hint_timeout_notify_expire",
+        text = "设置时间到达后，将取消通知，后续将不再更新状态（上课/下课）。",
+    )
     PreferenceGroup(
         title = "通知消失",
         last = true,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-            Text(
-                text = "设置时间到达后，将取消通知，后续将不再更新状态（上课/下课）。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            )
-            Spacer(modifier = Modifier.height(8.dp))
             SwitchPreference(
                 title = "默认",
                 value = notifGlobalDefault,
@@ -1291,7 +1291,7 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                     title = "触发阶段",
                     entries = stageEntries,
                     value = notifStage,
-                    mode = DropDownMode.Dialog,
+                    mode = DropDownMode.Popup,
                     onSelectedIndexChange = { newIndex ->
                         notifStage = newIndex.coerceIn(0, stageLabels.lastIndex)
                         if (notifVals[notifStage] <= 0) {
@@ -1508,7 +1508,7 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
                 title = "按钮模式",
                 entries = buttonModeEntries,
                 value = state.islandButtonMode.coerceIn(0, 2),
-                mode = DropDownMode.Dialog,
+                mode = DropDownMode.Popup,
                 onSelectedIndexChange = {
                     state.islandButtonMode = it
                     persistMuteConfigNow()
@@ -1687,13 +1687,17 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
         }
     }
 
+    DismissibleHint(
+        activity = activity,
+        key = "hint_wakeup_section_boundary",
+        text = "用于区分上午/下午课程边界",
+    )
     PreferenceGroup(
         title = "节次划分",
         first = false,
         last = true,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-            Text("用于区分上午/下午课程边界", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             SectionEditor(
                 label = "上午最大节次（≤此节为上午）",
                 value = state.wakeupMorningLastSec,
@@ -2524,11 +2528,31 @@ private fun AddEntryRow(
     summary: String,
     onClick: () -> Unit,
 ) {
-    TextPreference(
-        title = title,
-        summary = summary,
-        onClick = onClick,
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            if (summary.isNotBlank()) {
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    if (summary.isNotBlank()) {
+        Spacer(modifier = Modifier.height(2.dp))
+    }
 }
 
 @Composable
@@ -3023,7 +3047,7 @@ private fun WorkswapEditDialog(
                 title = "周次",
                 entries = weekEntries,
                 value = form.followWeek.coerceIn(1, maxWeek.coerceAtLeast(1)) - 1,
-                mode = DropDownMode.Dialog,
+                mode = DropDownMode.Popup,
                 onSelectedIndexChange = {
                     form = form.copy(followWeek = it + 1)
                 },
@@ -3033,7 +3057,7 @@ private fun WorkswapEditDialog(
                 title = "星期",
                 entries = weekdayEntries,
                 value = form.followWeekday.coerceIn(1, 7) - 1,
-                mode = DropDownMode.Dialog,
+                mode = DropDownMode.Popup,
                 onSelectedIndexChange = {
                     form = form.copy(followWeekday = it + 1)
                 },

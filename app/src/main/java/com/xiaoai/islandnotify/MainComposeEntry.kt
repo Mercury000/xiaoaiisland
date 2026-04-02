@@ -1949,7 +1949,7 @@ private fun HolidayTab(
                             }
                         },
                         modifier = Modifier.weight(1f),
-                    ) { Text("从网络获取") }
+                    ) { Text("网络获取") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(onClick = { showClearYearDialog = true }) { Text("清除本年") }
                 }
@@ -1964,21 +1964,9 @@ private fun HolidayTab(
             }
         }
 
+        MutedText("节假日当天不发送任何课前提醒")
         PreferenceGroup(title = "节假日") {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(modifier = Modifier.weight(1f))
-                    Button(onClick = {
-                        holidayEditEntry = null
-                        holidayDraft = HolidayDraft(date = "${state.year}-01-01")
-                    }) {
-                        Text("＋ 新增")
-                    }
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-                MutedText("节假日当天不发送任何课前提醒")
-                Spacer(modifier = Modifier.height(10.dp))
-
                 if (state.holidayEntries.isEmpty()) {
                     Text(
                         text = "暂无节假日数据",
@@ -2004,25 +1992,25 @@ private fun HolidayTab(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                TextPreference(
+                    title = "＋ 新增节假日",
+                    summary = "添加节假日日期或区间",
+                    onClick = {
+                        holidayEditEntry = null
+                        holidayDraft = HolidayDraft(date = "${state.year}-01-01")
+                    },
+                )
             }
         }
 
+        MutedText("调休上班日（原本应休，补课/补班），按指定周次的课程表发送提醒。点击编辑可配置按哪周哪天上课。")
         PreferenceGroup(
             title = "调休工作日",
             last = true,
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(modifier = Modifier.weight(1f))
-                    Button(onClick = {
-                        workswapEditEntry = null
-                        workswapDraft = WorkSwapDraft(date = "${state.year}-01-01")
-                    }) { Text("＋ 新增") }
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-                MutedText("调休上班日（原本应休，补课/补班），按指定周次的课程表发送提醒。点击编辑可配置按哪周哪天上课。")
-                Spacer(modifier = Modifier.height(10.dp))
-
                 if (state.workswapEntries.isEmpty()) {
                     Text(
                         text = "暂无调休工作日数据",
@@ -2048,6 +2036,16 @@ private fun HolidayTab(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                TextPreference(
+                    title = "＋ 新增调休工作日",
+                    summary = "添加调休上班日与跟随周次",
+                    onClick = {
+                        workswapEditEntry = null
+                        workswapDraft = WorkSwapDraft(date = "${state.year}-01-01")
+                    },
+                )
             }
         }
         Spacer(modifier = Modifier.height(24.dp))
@@ -2504,6 +2502,11 @@ private fun WorkswapEditDialog(
     var form by remember(draft) { mutableStateOf(draft.copy()) }
     var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
+    val weekEntries = remember(maxWeek) {
+        (1..maxWeek.coerceAtLeast(1)).map { week ->
+            DropDownEntry(title = "第 $week 周")
+        }
+    }
     val weekdayEntries = remember {
         listOf(
             DropDownEntry(title = "周一"),
@@ -2541,18 +2544,13 @@ private fun WorkswapEditDialog(
             Spacer(modifier = Modifier.height(8.dp))
             Text("当天按以下周次/星期的课表上课：", style = MaterialTheme.typography.bodySmall)
             Spacer(modifier = Modifier.height(6.dp))
-            TextPreference(
+            DropDownPreference(
                 title = "周次",
-                value = "第 ${form.followWeek} 周",
-                onClick = {
-                    editDialog = EditDialogSpec(
-                        title = "周次（1-$maxWeek）",
-                        initialValue = form.followWeek.toString(),
-                        numberOnly = true,
-                        onConfirm = {
-                            form = form.copy(followWeek = (it.toIntOrNull() ?: 1).coerceIn(1, maxWeek))
-                        },
-                    )
+                entries = weekEntries,
+                value = form.followWeek.coerceIn(1, maxWeek.coerceAtLeast(1)) - 1,
+                mode = DropDownMode.Dialog,
+                onSelectedIndexChange = {
+                    form = form.copy(followWeek = it + 1)
                 },
             )
             HorizontalDivider()
@@ -2665,8 +2663,5 @@ private fun AboutTab(
         }
     }
 }
-
-
-
 
 

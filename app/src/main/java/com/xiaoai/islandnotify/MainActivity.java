@@ -1042,7 +1042,7 @@ public class MainActivity extends AppCompatActivity {
                     .show();
         });
 
-        // ── 从网络获取（当年 + 次年） ──────────────────────────────
+        // ── 网络获取（当年 + 次年） ──────────────────────────────
         findViewById(R.id.btn_fetch_holiday).setOnClickListener(v -> {
             tvFetchHint.setText("正在获取…");
             tvFetchHint.setVisibility(View.VISIBLE);

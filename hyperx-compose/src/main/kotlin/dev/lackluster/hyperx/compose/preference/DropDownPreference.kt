@@ -1,6 +1,7 @@
 package dev.lackluster.hyperx.compose.preference
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -12,8 +13,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import dev.lackluster.hyperx.compose.R
 import dev.lackluster.hyperx.compose.activity.SafeSP
 import dev.lackluster.hyperx.compose.base.DrawableResIcon
@@ -38,6 +41,7 @@ fun DropDownPreference(
     onSelectedIndexChange: ((Int) -> Unit)? = null,
 ) {
     val updatedOnSelectedIndexChange by rememberUpdatedState(onSelectedIndexChange)
+    val optionWindowMaxHeight = rememberOptionWindowMaxHeight()
 
     val wrappedEntries = entries.map { entry ->
         SpinnerEntry(
@@ -58,6 +62,7 @@ fun DropDownPreference(
                 selectedIndex = value,
                 title = title,
                 dialogButtonString = stringResource(R.string.button_cancel),
+                popupModifier = Modifier.heightIn(max = optionWindowMaxHeight),
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -73,6 +78,7 @@ fun DropDownPreference(
                 items = wrappedEntries,
                 selectedIndex = value,
                 title = title,
+                maxHeight = optionWindowMaxHeight,
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -109,6 +115,7 @@ fun DropDownPreference(
         )
     }
     val updatedOnSelectedIndexChange by rememberUpdatedState(onSelectedIndexChange)
+    val optionWindowMaxHeight = rememberOptionWindowMaxHeight()
 
     val wrappedEntries = entries.map { entry ->
         SpinnerEntry(
@@ -136,6 +143,7 @@ fun DropDownPreference(
                 selectedIndex = spValue,
                 title = title,
                 dialogButtonString = stringResource(R.string.button_cancel),
+                popupModifier = Modifier.heightIn(max = optionWindowMaxHeight),
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -151,6 +159,7 @@ fun DropDownPreference(
                 items = wrappedEntries,
                 selectedIndex = spValue,
                 title = title,
+                maxHeight = optionWindowMaxHeight,
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -204,3 +213,7 @@ enum class DropDownMode {
     Popup,
     Dialog,
 }
+
+@Composable
+private fun rememberOptionWindowMaxHeight() =
+    (LocalConfiguration.current.screenHeightDp.dp * 0.62f).coerceIn(280.dp, 520.dp)

@@ -285,3 +285,97 @@ afterEvaluate {
     }
 }
 
+def openSourceGeneratedDir = file("$buildDir/generated/source/opensourcerefs")
+android.sourceSets.main.java.srcDir(openSourceGeneratedDir)
+
+def openSourceFallbackUrl = { String g, String n, String v ->
+    return "https://mvnrepository.com/artifact/${g}/${n}/${v}"
+}
+
+def resolvePomMetadata = { String g, String n, String v ->
+    try {
+        def dep = dependencies.create("${g}:${n}:${v}@pom")
+        def cfg = configurations.detachedConfiguration(dep)
+        cfg.transitive = false
+        File pomFile = cfg.singleFile
+        def xml = new XmlSlurper(false, false).parse(pomFile)
+        def title = xml.name?.text()?.trim()
+        if (!title) title = "${g}:${n}"
+        def licenses = xml.licenses?.license?.collect { it.name?.text()?.trim() }?.findAll { it } ?: []
+        def license = licenses ? licenses.unique().join(" / ") : "Unknown"
+        def url = xml.url?.text()?.trim()
+        if (!url) url = xml.scm?.url?.text()?.trim()
+        if (!url) url = openSourceFallbackUrl(g, n, v)
+        return [name: title, license: license, url: url]
+    } catch (Throwable ignored) {
+        return [name: "${g}:${n}", license: "Unknown", url: openSourceFallbackUrl(g, n, v)]
+    }
+}
+
+def collectExternalDeps = { Project p, List<String> confNames, Map<String, Map<String, String>> out ->
+    confNames.each { confName ->
+        def conf = p.configurations.findByName(confName)
+        if (conf == null) return
+        conf.dependencies.each { dep ->
+            if (dep instanceof org.gradle.api.artifacts.ExternalModuleDependency
+                    && dep.group && dep.name && dep.version) {
+                def key = "${dep.group}:${dep.name}:${dep.version}"
+                out.putIfAbsent(key, [group: dep.group, name: dep.name, version: dep.version])
+            }
+        }
+    }
+}
+
+tasks.register("generateOpenSourceRefs") {
+    def outFile = file("$openSourceGeneratedDir/com/xiaoai/islandnotify/OpenSourceRefs.kt")
+    outputs.file(outFile)
+    doLast {
+        Map<String, Map<String, String>> coords = new LinkedHashMap<>()
+        collectExternalDeps(project, [
+                "compileOnly",
+                "implementation",
+                "api100Implementation",
+                "api101Implementation",
+                "debugImplementation",
+                "releaseImplementation",
+        ], coords)
+        def refs = []
+        refs.add([
+                name: "HowieHChen/hyperx-compose",
+                license: "Apache-2.0",
+                url: "https://github.com/HowieHChen/hyperx-compose",
+        ])
+        coords.values().sort { a, b ->
+            "${a.group}:${a.name}" <=> "${b.group}:${b.name}"
+        }.each { c ->
+            refs.add(resolvePomMetadata(c.group, c.name, c.version))
+        }
+        refs = refs.unique { "${it.name}|${it.license}|${it.url}" }
+
+        outFile.parentFile.mkdirs()
+        def esc = { String s -> (s ?: "").replace("\\", "\\\\").replace("\"", "\\\"") }
+        def entries = refs.collect { ref ->
+            "        OpenSourceRef(\"${esc(ref.name)}\", \"${esc(ref.license)}\", \"${esc(ref.url)}\")"
+        }.join(",\n")
+        outFile.text = """package com.xiaoai.islandnotify
+
+data class OpenSourceRef(
+    val name: String,
+    val license: String,
+    val link: String,
+)
+
+object OpenSourceRefs {
+    val list = listOf(
+${entries}
+    )
+}
+"""
+        println("Generated open source refs: ${outFile}")
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("generateOpenSourceRefs")
+}
+

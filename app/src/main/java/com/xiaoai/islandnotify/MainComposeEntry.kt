@@ -1344,7 +1344,7 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
         text = "自定义设置通知发送时机",
     )
     PreferenceGroup(first = true, last = true) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             SwitchPreference(
                 title = "补发机制（全局）",
                 summary = "是否在错过提醒时间时补发，由于通知已稳定，不建议启用。",
@@ -1411,7 +1411,7 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
             .apply()
     }
     PreferenceGroup(first = true, last = false) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             SwitchPreference(
                 title = "上课自动静音",
                 summary = "课程开始前指定时间将手机调为静音",
@@ -1493,7 +1493,7 @@ private fun MuteCard(activity: MainActivity, state: SettingsComposeState) {
         first = false,
         last = true,
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             DropDownPreference(
                 title = "按钮模式",
                 entries = buttonModeEntries,
@@ -1618,7 +1618,7 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
         text = "根据课表在系统时钟创建叫醒闹钟",
     )
     PreferenceGroup(first = true, last = false) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             SwitchPreference(
                 title = "上午自动叫醒",
                 summary = "根据上午第一次课的节次指定闹钟设置",
@@ -1687,7 +1687,7 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
         first = false,
         last = true,
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             SectionEditor(
                 label = "上午最大节次（≤此节为上午）",
                 value = state.wakeupMorningLastSec,
@@ -3166,7 +3166,7 @@ private fun AboutTab(
             }
         }
         PreferenceGroup(last = false) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 TextPreference(
                     title = "版本",
                     value = state.version,
@@ -3199,7 +3199,7 @@ private fun AboutTab(
             }
         }
         PreferenceGroup(last = true) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 OpenSourceRefs.list.forEachIndexed { index, ref ->
                     TextPreference(
                         title = ref.name,
@@ -3210,6 +3210,12 @@ private fun AboutTab(
                         HorizontalDivider()
                     }
                 }
+                HorizontalDivider()
+                TextPreference(
+                    title = "致谢 XiaomiHelper",
+                    summary = "关于页 UI 样式参考",
+                    onClick = { activity.uiOpenUrl("https://github.com/HowieHChen/XiaomiHelper") },
+                )
             }
         }
     }

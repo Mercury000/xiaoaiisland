@@ -40,6 +40,11 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Ensure Android 37 SDK platform
+        shell: bash
+        run: |
+          sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+
       - name: Resolve release sequence
         shell: bash
         run: |

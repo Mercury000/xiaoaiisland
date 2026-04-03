@@ -1,4 +1,4 @@
-package com.xiaoai.islandnotify
+﻿package com.xiaoai.islandnotify
 
 import android.widget.Toast
 import androidx.activity.compose.setContent
@@ -3213,7 +3213,7 @@ private fun AboutTab(
                 HorizontalDivider()
                 TextPreference(
                     title = "致谢 XiaomiHelper",
-                    summary = "关于页 UI 样式参考",
+                    summary = "UI 样式参考",
                     onClick = { activity.uiOpenUrl("https://github.com/HowieHChen/XiaomiHelper") },
                 )
             }

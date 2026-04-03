@@ -258,7 +258,7 @@ afterEvaluate {
 
 dependencies {
     // libxposed API 101
-    compileOnly 'io.github.libxposed:api:101.0.0'
+    compileOnly 'io.github.libxposed:api:101.0.1'
     implementation 'io.github.libxposed:service:101.0.0'
     api100Implementation 'io.github.kyuubiran.ezxhelper:xposed-api-100:3.1.1-rc1'
     implementation 'com.xzakota.hyper.notification:focus-api:1.4'

@@ -14,16 +14,18 @@ import androidx.compose.ui.unit.dp
 import dev.lackluster.hyperx.compose.R
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.extra.SuperDialog
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun LoadingDialog(
     title: String? = null,
+    renderInRootScaffold: Boolean = true,
     onDismissRequest: (() -> Unit)? = null,
 ) {
-    SuperDialog(
+    OverlayDialog(
         show = true,
+        renderInRootScaffold = renderInRootScaffold,
         onDismissRequest = { onDismissRequest?.invoke() },
         content = {
             Box(

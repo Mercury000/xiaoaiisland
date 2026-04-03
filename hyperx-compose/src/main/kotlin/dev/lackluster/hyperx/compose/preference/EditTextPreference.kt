@@ -36,8 +36,8 @@ import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.extra.SuperArrow
-import top.yukonga.miuix.kmp.extra.SuperDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -50,6 +50,7 @@ fun EditTextPreference(
     dataType: EditTextDataType,
     dialogMessage: String? = null,
     dialogPlaceholder: String? = null,
+    renderInRootScaffold: Boolean = true,
     isValueValid: ((value: Any) -> Boolean)? = null,
     valuePosition: ValuePosition = ValuePosition.VALUE_VIEW,
     enabled: Boolean = true,
@@ -74,7 +75,7 @@ fun EditTextPreference(
         }
     }
 
-    SuperArrow(
+    ArrowPreference(
         title = title,
         titleColor = titleColor,
         summary = value.toString().takeIf { valuePosition == ValuePosition.SUMMARY_VIEW && it.isNotBlank() } ?: summary,
@@ -110,6 +111,7 @@ fun EditTextPreference(
         message = dialogMessage,
         placeholder = dialogPlaceholder ?: defValue.toString(),
         value = value.toString(),
+        renderInRootScaffold = renderInRootScaffold,
         onInputConfirm = { newString ->
             doOnInputConfirm(newString)
         }
@@ -126,6 +128,7 @@ fun EditTextPreference(
     dataType: EditTextDataType,
     dialogMessage: String? = null,
     dialogPlaceholder: String? = null,
+    renderInRootScaffold: Boolean = true,
     isValueValid: ((value: Any) -> Boolean)? = null,
     valuePosition: ValuePosition = ValuePosition.VALUE_VIEW,
     enabled: Boolean = true,
@@ -166,7 +169,7 @@ fun EditTextPreference(
         }
     }
 
-    SuperArrow(
+    ArrowPreference(
         title = title,
         titleColor = titleColor,
         summary = spValue.toString().takeIf { valuePosition == ValuePosition.SUMMARY_VIEW && it.isNotBlank() } ?: summary,
@@ -202,6 +205,7 @@ fun EditTextPreference(
         message = dialogMessage,
         placeholder = dialogPlaceholder ?: defValue.toString(),
         value = spValue.toString(),
+        renderInRootScaffold = renderInRootScaffold,
         onInputConfirm = { newString ->
             doOnInputConfirm(newString)
         }
@@ -215,6 +219,7 @@ fun EditTextDialog(
     title: String?,
     message: String? = null,
     placeholder: String? = null,
+    renderInRootScaffold: Boolean = true,
     value: String = "",
     onInputConfirm: ((value: String) -> Unit)? = null
 ) {
@@ -226,10 +231,11 @@ fun EditTextDialog(
     val hapticFeedback = LocalHapticFeedback.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
-    SuperDialog(
+    OverlayDialog(
         show = visibility.value,
         title = title,
         summary = message,
+        renderInRootScaffold = renderInRootScaffold,
         onDismissRequest = {
             if (visibility.value) {
                 keyboard?.hide()
@@ -305,3 +311,4 @@ enum class ValuePosition {
     VALUE_VIEW,
     SUMMARY_VIEW,
 }
+

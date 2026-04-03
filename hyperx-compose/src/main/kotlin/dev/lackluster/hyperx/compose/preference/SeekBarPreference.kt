@@ -18,7 +18,7 @@ import top.yukonga.miuix.kmp.basic.BasicComponentColors
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.extra.SuperArrow
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -46,7 +46,7 @@ fun SeekBarPreference(
         }
     }
 
-    SuperArrow(
+    ArrowPreference(
         title = title,
         titleColor = titleColor,
         startAction = icon?.let { { DrawableResIcon(it) } },
@@ -116,7 +116,7 @@ fun SeekBarPreference(
         }
     }
 
-    SuperArrow(
+    ArrowPreference(
         title = title,
         titleColor = titleColor,
         startAction = icon?.let { { DrawableResIcon(it) } },
@@ -195,7 +195,7 @@ fun SeekBarPreference(
         }
     }
 
-    SuperArrow(
+    ArrowPreference(
         title = title,
         titleColor = titleColor,
         startAction = icon?.let { { DrawableResIcon(it) } },
@@ -276,7 +276,7 @@ fun SeekBarPreference(
         }
     }
 
-    SuperArrow(
+    ArrowPreference(
         title = title,
         titleColor = titleColor,
         startAction = icon?.let { { DrawableResIcon(it) } },
@@ -322,3 +322,4 @@ fun SeekBarPreference(
         }
     )
 }
+

@@ -12,7 +12,7 @@ import dev.lackluster.hyperx.compose.base.DrawableResIcon
 import dev.lackluster.hyperx.compose.base.ImageIcon
 import top.yukonga.miuix.kmp.basic.BasicComponentColors
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
-import top.yukonga.miuix.kmp.extra.SuperSwitch
+import top.yukonga.miuix.kmp.preference.SwitchPreference as MiuixSwitchPreference
 
 @Composable
 fun SwitchPreference(
@@ -27,7 +27,7 @@ fun SwitchPreference(
 ) {
     val updatedOnCheckedChange by rememberUpdatedState(onCheckedChange)
 
-    SuperSwitch(
+    MiuixSwitchPreference(
         checked = value,
         onCheckedChange = { newValue ->
             updatedOnCheckedChange?.invoke(newValue)
@@ -60,7 +60,7 @@ fun SwitchPreference(
     }
     val updatedOnCheckedChange by rememberUpdatedState(onCheckedChange)
 
-    SuperSwitch(
+    MiuixSwitchPreference(
         checked = spValue,
         onCheckedChange = { newValue ->
             spValue = newValue
@@ -94,7 +94,7 @@ fun SwitchPreference(
     }
     val updatedOnCheckedChange by rememberUpdatedState(onCheckedChange)
 
-    SuperSwitch(
+    MiuixSwitchPreference(
         checked = checked.value,
         onCheckedChange = { newValue ->
             checked.value = newValue
@@ -109,3 +109,4 @@ fun SwitchPreference(
         enabled = enabled,
     )
 }
+

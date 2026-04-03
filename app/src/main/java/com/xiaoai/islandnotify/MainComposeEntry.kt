@@ -1,4 +1,4 @@
-﻿package com.xiaoai.islandnotify
+package com.xiaoai.islandnotify
 
 import android.widget.Toast
 import androidx.activity.compose.setContent
@@ -87,7 +87,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
-import top.yukonga.miuix.kmp.extra.SuperDialog
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
@@ -413,7 +413,7 @@ private fun RouteScaffold(
                 },
                 scrollBehavior = scrollBehavior,
                 defaultWindowInsetsPadding = false,
-                horizontalPadding = 28.dp,
+                titlePadding = 28.dp,
             )
         },
         blurTopBar = true,
@@ -1758,7 +1758,7 @@ private fun WakeRuleList(
         }
         var showSecPicker by remember(editingIndex) { mutableStateOf(false) }
         var showTimePicker by remember(editingIndex) { mutableStateOf(false) }
-        SuperDialog(
+        OverlayDialog(
             show = true,
             title = "编辑规则",
             onDismissRequest = { editingIndex = -1 },
@@ -2556,7 +2556,7 @@ private fun YearPickerDialog(
         selectedTextColor = MiuixTheme.colorScheme.primary,
         unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
     )
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = "选择年份",
         onDismissRequest = onDismiss,
@@ -2630,7 +2630,7 @@ private fun MiuixDatePickerDialog(
     )
     if (day > maxDay) day = maxDay
 
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = title,
         onDismissRequest = onDismiss,
@@ -2698,7 +2698,7 @@ private fun MiuixTimePickerDialog(
         selectedTextColor = MiuixTheme.colorScheme.primary,
         unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
     )
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = title,
         onDismissRequest = onDismiss,
@@ -2760,7 +2760,7 @@ private fun MiuixSectionPickerDialog(
         selectedTextColor = MiuixTheme.colorScheme.primary,
         unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
     )
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = title,
         onDismissRequest = onDismiss,
@@ -2809,7 +2809,7 @@ private fun MiuixDurationPickerDialog(
         selectedTextColor = MiuixTheme.colorScheme.primary,
         unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
     )
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = title,
         onDismissRequest = onDismiss,
@@ -2871,7 +2871,7 @@ private fun MiuixMinutePickerDialog(
         selectedTextColor = MiuixTheme.colorScheme.primary,
         unselectedTextColor = MiuixTheme.colorScheme.primary.copy(alpha = 0.55f),
     )
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = title,
         onDismissRequest = onDismiss,
@@ -2914,7 +2914,7 @@ private fun HolidayEditDialog(
     var form by remember(draft) { mutableStateOf(draft.copy()) }
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = title,
         onDismissRequest = onDismiss,
@@ -3010,7 +3010,7 @@ private fun WorkswapEditDialog(
             DropDownEntry(title = "周日"),
         )
     }
-    SuperDialog(
+    OverlayDialog(
         show = true,
         title = title,
         onDismissRequest = onDismiss,
@@ -3200,3 +3200,4 @@ private fun AboutTab(
         }
     }
 }
+

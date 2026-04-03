@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.dp
 import dev.lackluster.hyperx.compose.R
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.extra.SuperDialog
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 
 @Composable
 fun AlertDialog(
@@ -22,6 +22,7 @@ fun AlertDialog(
     title: String?,
     message: String? = null,
     cancelable: Boolean = true,
+    renderInRootScaffold: Boolean = true,
     mode: AlertDialogMode = AlertDialogMode.Positive,
     negativeText: String = stringResource(R.string.button_cancel),
     positiveText: String = stringResource(R.string.button_ok),
@@ -30,10 +31,11 @@ fun AlertDialog(
     onPositiveButton: (() -> Unit)? = null,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
-    SuperDialog(
+    OverlayDialog(
         show = visible,
         title = title,
         summary = message,
+        renderInRootScaffold = renderInRootScaffold,
         onDismissRequest = {
             if (cancelable) {
                 onDismissRequest?.invoke()
@@ -78,6 +80,7 @@ fun AlertDialog(
     title: String?,
     message: String? = null,
     cancelable: Boolean = true,
+    renderInRootScaffold: Boolean = true,
     mode: AlertDialogMode = AlertDialogMode.Positive,
     negativeText: String = stringResource(R.string.button_cancel),
     positiveText: String = stringResource(R.string.button_ok),
@@ -85,10 +88,11 @@ fun AlertDialog(
     onPositiveButton: (() -> Unit)? = null,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
-    SuperDialog(
+    OverlayDialog(
         show = visibility.value,
         title = title,
         summary = message,
+        renderInRootScaffold = renderInRootScaffold,
         onDismissRequest = {
             if (cancelable) {
                 visibility.value = false

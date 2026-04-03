@@ -24,7 +24,7 @@ import dev.lackluster.hyperx.compose.base.ImageIcon
 import top.yukonga.miuix.kmp.basic.BasicComponentColors
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.SpinnerEntry
-import top.yukonga.miuix.kmp.extra.SuperSpinner
+import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 
 @Composable
 fun DropDownPreference(
@@ -34,6 +34,7 @@ fun DropDownPreference(
     entries: List<DropDownEntry>,
     value: Int = 0,
     mode: DropDownMode = DropDownMode.Popup,
+    renderInRootScaffold: Boolean = true,
     showValue: Boolean = true,
     enabled: Boolean = true,
     titleColor: BasicComponentColors = BasicComponentDefaults.titleColor(),
@@ -57,12 +58,13 @@ fun DropDownPreference(
 
     when (mode) {
         DropDownMode.Dialog -> {
-            SuperSpinner(
+            OverlaySpinnerPreference(
                 items = wrappedEntries,
                 selectedIndex = value,
                 title = title,
                 dialogButtonString = stringResource(R.string.button_cancel),
                 popupModifier = Modifier.heightIn(max = optionWindowMaxHeight),
+                renderInRootScaffold = renderInRootScaffold,
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -74,11 +76,12 @@ fun DropDownPreference(
         }
 
         else -> {
-            SuperSpinner(
+            OverlaySpinnerPreference(
                 items = wrappedEntries,
                 selectedIndex = value,
                 title = title,
                 maxHeight = optionWindowMaxHeight,
+                renderInRootScaffold = renderInRootScaffold,
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -100,6 +103,7 @@ fun DropDownPreference(
     key: String? = null,
     defValue: Int = 0,
     mode: DropDownMode = DropDownMode.Popup,
+    renderInRootScaffold: Boolean = true,
     showValue: Boolean = true,
     enabled: Boolean = true,
     titleColor: BasicComponentColors = BasicComponentDefaults.titleColor(),
@@ -138,12 +142,13 @@ fun DropDownPreference(
     @Suppress("DEPRECATION")
     when (mode) {
         DropDownMode.Dialog -> {
-            SuperSpinner(
+            OverlaySpinnerPreference(
                 items = wrappedEntries,
                 selectedIndex = spValue,
                 title = title,
                 dialogButtonString = stringResource(R.string.button_cancel),
                 popupModifier = Modifier.heightIn(max = optionWindowMaxHeight),
+                renderInRootScaffold = renderInRootScaffold,
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -155,11 +160,12 @@ fun DropDownPreference(
         }
 
         else -> {
-            SuperSpinner(
+            OverlaySpinnerPreference(
                 items = wrappedEntries,
                 selectedIndex = spValue,
                 title = title,
                 maxHeight = optionWindowMaxHeight,
+                renderInRootScaffold = renderInRootScaffold,
                 titleColor = titleColor,
                 summary = summary,
                 summaryColor = summaryColor,
@@ -217,3 +223,4 @@ enum class DropDownMode {
 @Composable
 private fun rememberOptionWindowMaxHeight() =
     (LocalConfiguration.current.screenHeightDp.dp * 0.62f).coerceIn(280.dp, 520.dp)
+

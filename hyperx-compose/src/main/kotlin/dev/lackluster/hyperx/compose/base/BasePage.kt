@@ -91,7 +91,7 @@ fun BasePage(
                 navigationIcon = { navigationIcon.invoke(navigationIconPadding) },
                 actions = { actions(this, actionsPadding) },
                 defaultWindowInsetsPadding = false,
-                horizontalPadding = 28.dp + contentPadding.calculateLeftPadding(LocalLayoutDirection.current)
+                titlePadding = 28.dp + contentPadding.calculateLeftPadding(LocalLayoutDirection.current)
             )
         },
         blurTopBar = blurEnabled.value,

@@ -429,6 +429,11 @@ private fun RouteScaffold(
     }
 }
 
+@Composable
+private fun HorizontalDivider() {
+    // Align with XiaomiHelper preference style: use dense continuous items without separators.
+}
+
 private fun withExtraPadding(
     base: PaddingValues,
     horizontal: androidx.compose.ui.unit.Dp = 0.dp,
@@ -3198,7 +3203,10 @@ private fun AboutTab(
                 )
             }
         }
-        PreferenceGroup(last = true) {
+        PreferenceGroup(
+            title = "开源引用",
+            last = true,
+        ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 OpenSourceRefs.list.forEachIndexed { index, ref ->
                     TextPreference(

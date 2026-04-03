@@ -46,7 +46,7 @@ jobs:
       - name: Ensure Android 37 SDK platform
         shell: bash
         run: |
-          yes | sdkmanager --licenses
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
 
       - name: Resolve release sequence

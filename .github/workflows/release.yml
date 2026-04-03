@@ -47,7 +47,14 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+          sdkmanager --list > /tmp/sdk-list.txt || true
+          if grep -q "platforms;android-37[[:space:]]" /tmp/sdk-list.txt; then
+            sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+          elif grep -q "platforms;android-37.0[[:space:]]" /tmp/sdk-list.txt; then
+            sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0"
+          else
+            echo "::warning::No Android 37 SDK package found in sdkmanager list; continue and let Gradle resolve if possible."
+          fi
 
       - name: Resolve release sequence
         shell: bash

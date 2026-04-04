@@ -1174,7 +1174,7 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
     var islandPickerStage by remember(state.timeoutState) { mutableIntStateOf(-1) }
     var showNotifPicker by remember(state.timeoutState) { mutableStateOf(false) }
 
-    fun persistTimeoutStateNow(toastMessage: String? = null) {
+    fun persistTimeoutStateNow() {
         repeat(stageLabels.size) { idx ->
             islandVals[idx] = if (islandDefaults[idx]) {
                 ConfigDefaults.TIMEOUT_VALUE
@@ -1209,9 +1209,6 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
         writeTimeoutState(editor, saved)
         editor.apply()
         state.timeoutState = saved
-        if (!toastMessage.isNullOrEmpty()) {
-            Toast.makeText(context, toastMessage, Toast.LENGTH_SHORT).show()
-        }
     }
 
     DismissibleHint(
@@ -1234,7 +1231,7 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                         if (!it && islandVals[idx] <= 0) {
                             islandVals[idx] = 1
                         }
-                        persistTimeoutStateNow("已保存岛消失设置")
+                        persistTimeoutStateNow()
                     },
                 )
                 if (!islandDefaults[idx]) {
@@ -1266,7 +1263,7 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                     if (!it && notifVals[notifStage] <= 0) {
                         notifVals[notifStage] = 1
                     }
-                    persistTimeoutStateNow("已保存通知消失设置")
+                    persistTimeoutStateNow()
                 },
             )
             if (!notifGlobalDefault) {
@@ -1280,7 +1277,7 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                         if (notifVals[notifStage] <= 0) {
                             notifVals[notifStage] = 1
                         }
-                        persistTimeoutStateNow("已保存通知消失触发阶段")
+                        persistTimeoutStateNow()
                     },
                 )
                 TextPreference(
@@ -1303,7 +1300,8 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                 islandVals[stage] = value
                 islandUnits[stage] = unit
                 islandDefaults[stage] = false
-                persistTimeoutStateNow("已保存岛消失时长")
+                persistTimeoutStateNow()
+                Toast.makeText(context, "已保存岛消失时长", Toast.LENGTH_SHORT).show()
                 islandPickerStage = -1
             },
         )
@@ -1318,7 +1316,8 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                 notifVals[notifStage] = value
                 notifUnits[notifStage] = unit
                 notifGlobalDefault = false
-                persistTimeoutStateNow("已保存通知消失时长")
+                persistTimeoutStateNow()
+                Toast.makeText(context, "已保存通知消失时长", Toast.LENGTH_SHORT).show()
                 showNotifPicker = false
             },
         )

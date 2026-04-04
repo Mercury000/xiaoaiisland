@@ -189,6 +189,7 @@ private data class EditDialogSpec(
 )
 
 private const val MAX_MINUTE_VALUE = 9999
+private const val RELEASES_URL = "https://github.com/Xposed-Modules-Repo/com.xiaoai.islandnotify/releases"
 
 private sealed interface AppRoute : androidx.navigation3.runtime.NavKey {
     data object TestNotify : AppRoute
@@ -3175,6 +3176,7 @@ private fun AboutTab(
                         text = state.version,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable { activity.uiOpenUrl(RELEASES_URL) },
                     )
                 }
             }
@@ -3184,6 +3186,7 @@ private fun AboutTab(
                 TextPreference(
                     title = "版本",
                     value = state.version,
+                    onClick = { activity.uiOpenUrl(RELEASES_URL) },
                 )
                 TextPreference(
                     title = "作者",

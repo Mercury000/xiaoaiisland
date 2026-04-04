@@ -1301,7 +1301,6 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                 islandUnits[stage] = unit
                 islandDefaults[stage] = false
                 persistTimeoutStateNow()
-                Toast.makeText(context, "已保存岛消失时长", Toast.LENGTH_SHORT).show()
                 islandPickerStage = -1
             },
         )
@@ -1317,7 +1316,6 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
                 notifUnits[notifStage] = unit
                 notifGlobalDefault = false
                 persistTimeoutStateNow()
-                Toast.makeText(context, "已保存通知消失时长", Toast.LENGTH_SHORT).show()
                 showNotifPicker = false
             },
         )

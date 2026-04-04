@@ -2142,7 +2142,7 @@ public class MainHook {
 
     private boolean isRescheduleRelatedKey(String key) {
         if (key == null) return false;
-        if (KEY_REMINDER_MINUTES.equals(key)
+        return KEY_REMINDER_MINUTES.equals(key)
                 || KEY_MUTE_ENABLED.equals(key)
                 || KEY_MUTE_MINS_BEFORE.equals(key)
                 || KEY_UNMUTE_ENABLED.equals(key)
@@ -2151,13 +2151,7 @@ public class MainHook {
                 || KEY_DND_MINS_BEFORE.equals(key)
                 || KEY_UNDND_ENABLED.equals(key)
                 || KEY_UNDND_MINS_AFTER.equals(key)
-                || KEY_REPOST_ENABLED.equals(key)
-                || "island_button_mode".equals(key)) {
-            return true;
-        }
-        return key.startsWith("tpl_")
-                || key.startsWith("to_island_")
-                || key.startsWith("to_notif_");
+                || KEY_REPOST_ENABLED.equals(key);
     }
 
     private boolean isWakeupRelatedKey(String key) {

@@ -101,16 +101,14 @@ public class SystemUiHook {
         if (classLoader == null) return;
         synchronized (sInstalledHookLoaders) {
             if (sInstalledHookLoaders.containsKey(classLoader)) return;
-        }
-        if (!isHookTargetReady(classLoader)) return;
-        synchronized (sInstalledHookLoaders) {
+            if (!isHookTargetReady(classLoader)) return;
             if (sInstalledHookLoaders.containsKey(classLoader)) return;
             sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
+            hookExactFirstLimitPoints(classLoader);
+            hookIslandExpandedView(classLoader);
+            hookSameWidthDigitSuffixStyle(classLoader);
+            hookSameWidthDigitContentColor(classLoader);
         }
-        hookExactFirstLimitPoints(classLoader);
-        hookIslandExpandedView(classLoader);
-        hookSameWidthDigitSuffixStyle(classLoader);
-        hookSameWidthDigitContentColor(classLoader);
     }
 
     private boolean isHookTargetReady(ClassLoader classLoader) {

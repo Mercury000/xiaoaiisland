@@ -86,10 +86,7 @@ public class SystemUiHook {
 
     public void handleLoadPackage(String packageName, ClassLoader classLoader) {
         if (!TARGET_PACKAGES.contains(packageName)) return;
-        if ("com.android.systemui".equals(packageName)) {
-            hookPluginClassLoaderBridge(classLoader);
-            return;
-        }
+        hookPluginClassLoaderBridge(classLoader);
         installHooksForClassLoader(classLoader);
     }
 

@@ -99,12 +99,35 @@ public class SystemUiHook {
 
     private void installHooksForClassLoader(ClassLoader classLoader) {
         if (classLoader == null) return;
-        if (sInstalledHookLoaders.containsKey(classLoader)) return;
-        sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
+        synchronized (sInstalledHookLoaders) {
+            if (sInstalledHookLoaders.containsKey(classLoader)) return;
+        }
+        if (!isHookTargetReady(classLoader)) return;
+        synchronized (sInstalledHookLoaders) {
+            if (sInstalledHookLoaders.containsKey(classLoader)) return;
+            sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
+        }
         hookExactFirstLimitPoints(classLoader);
         hookIslandExpandedView(classLoader);
         hookSameWidthDigitSuffixStyle(classLoader);
         hookSameWidthDigitContentColor(classLoader);
+    }
+
+    private boolean isHookTargetReady(ClassLoader classLoader) {
+        return canResolveClass(classLoader, FOCUS_CONTENT_CLASS)
+                || canResolveClass(classLoader, DEVICE_LISTENER_CLASS)
+                || canResolveClass(classLoader, MODULE_TEXT_VIEW_HOLDER_CLASS)
+                || canResolveClass(classLoader, MODULE_TINY_TEXT_VIEW_HOLDER_CLASS)
+                || canResolveClass(classLoader, ISLAND_SAME_WIDTH_DIGIT_VIEW_HOLDER_CLASS);
+    }
+
+    private boolean canResolveClass(ClassLoader classLoader, String className) {
+        try {
+            Class.forName(className, false, classLoader);
+            return true;
+        } catch (Throwable ignore) {
+            return false;
+        }
     }
 
     private void hookPluginClassLoaderBridge(ClassLoader classLoader) {

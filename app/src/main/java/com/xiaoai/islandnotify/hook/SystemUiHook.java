@@ -1153,12 +1153,13 @@ public class SystemUiHook {
     private void cacheFullTextsFromModel(Object[] args) {
         if (args == null || args.length < 2) return;
         if (!(args[0] instanceof Bundle)) return;
+        Bundle b = (Bundle) args[0];
         Object model = args[1];
         if (model == null) return;
         try {
-            String key = ((Bundle) args[0]).getString("notifyId", "");
+            String key = b.getString("notifyId", "");
             if (TextUtils.isEmpty(key)) return;
-            if (isOwnedNotificationKey(key)) sOwnedNotifyKeys.add(key);
+            if (isOwnedNotificationBundle(b)) sOwnedNotifyKeys.add(key);
             String left = readModelText(model, "getLeft");
             String right = readModelText(model, "getRight");
             if (TextUtils.isEmpty(left) && TextUtils.isEmpty(right)) return;
@@ -1176,7 +1177,7 @@ public class SystemUiHook {
             String key = b.getString("notifyId", "");
             String json = b.getString("island_param", "");
             if (TextUtils.isEmpty(key) || TextUtils.isEmpty(json)) return;
-            if (isOwnedNotificationKey(key)) sOwnedNotifyKeys.add(key);
+            if (isOwnedNotificationBundle(b)) sOwnedNotifyKeys.add(key);
 
             JSONObject root = new JSONObject(json);
             String left = "";
@@ -1206,21 +1207,82 @@ public class SystemUiHook {
         if (args == null || args.length == 0) return;
         if (!(args[0] instanceof Bundle)) return;
         try {
-            String key = ((Bundle) args[0]).getString("notifyId", "");
-            if (isOwnedNotificationKey(key)) sOwnedNotifyKeys.add(key);
+            Bundle b = (Bundle) args[0];
+            String key = b.getString("notifyId", "");
+            if (isOwnedNotificationBundle(b) && !TextUtils.isEmpty(key)) sOwnedNotifyKeys.add(key);
         } catch (Throwable ignore) {
         }
     }
 
     private boolean isOwnedDynamicIslandData(Object dataObj) {
         try {
-            Object keyObj = invokeNoArg(dataObj, "getKey");
-            if (!(keyObj instanceof String)) return false;
-            String key = (String) keyObj;
-            return isOwnedNotificationKey(key);
+            String key = extractDynamicIslandDataKey(dataObj);
+            if (TextUtils.isEmpty(key)) return false;
+            if (isOwnedNotificationKey(key)) {
+                sOwnedNotifyKeys.add(key);
+                return true;
+            }
+            for (String owned : sOwnedNotifyKeys) {
+                if (TextUtils.isEmpty(owned)) continue;
+                if (key.equals(owned)) return true;
+                if (owned.length() >= 8 && key.contains(owned)) return true;
+                if (key.length() >= 8 && owned.contains(key)) return true;
+            }
+            return false;
         } catch (Throwable ignore) {
             return false;
         }
+    }
+
+    private boolean isOwnedNotificationBundle(Bundle b) {
+        if (b == null) return false;
+        try {
+            String key = b.getString("notifyId", "");
+            if (isOwnedNotificationKey(key)) return true;
+            String pkg = b.getString("packageName", "");
+            if (TextUtils.isEmpty(pkg)) pkg = b.getString("pkg", "");
+            if (OWNER_PACKAGE.equals(pkg)) return true;
+            String json = b.getString("island_param", "");
+            if (TextUtils.isEmpty(json)) return false;
+            return json.contains(OWNER_PACKAGE)
+                    || json.contains("course_schedule")
+                    || json.contains("xiaoai_test_")
+                    || json.contains("xiaoai_course_reminder_alert");
+        } catch (Throwable ignore) {
+            return false;
+        }
+    }
+
+    private String extractDynamicIslandDataKey(Object dataObj) {
+        if (dataObj == null) return "";
+        try {
+            Object keyObj = invokeNoArg(dataObj, "getKey");
+            if (keyObj instanceof String && !TextUtils.isEmpty((String) keyObj)) {
+                return (String) keyObj;
+            }
+        } catch (Throwable ignore) {
+        }
+        try {
+            Object keyObj = invokeNoArg(dataObj, "getNotificationKey");
+            if (keyObj instanceof String && !TextUtils.isEmpty((String) keyObj)) {
+                return (String) keyObj;
+            }
+        } catch (Throwable ignore) {
+        }
+        try {
+            Object keyObj = invokeNoArg(dataObj, "getNotifyId");
+            if (keyObj instanceof String && !TextUtils.isEmpty((String) keyObj)) {
+                return (String) keyObj;
+            }
+        } catch (Throwable ignore) {
+        }
+        Object keyField = getFieldValue(dataObj, "key");
+        if (keyField instanceof String && !TextUtils.isEmpty((String) keyField)) return (String) keyField;
+        Object mKeyField = getFieldValue(dataObj, "mKey");
+        if (mKeyField instanceof String && !TextUtils.isEmpty((String) mKeyField)) return (String) mKeyField;
+        Object notifyIdField = getFieldValue(dataObj, "notifyId");
+        if (notifyIdField instanceof String && !TextUtils.isEmpty((String) notifyIdField)) return (String) notifyIdField;
+        return "";
     }
 
     private boolean isOwnedNotificationKey(String key) {

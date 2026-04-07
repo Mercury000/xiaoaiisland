@@ -27,6 +27,10 @@ public class SystemUiHook {
 
     private static final String TAG = "IslandNotifySysUI";
     private static final String OWNER_PACKAGE = "com.miui.voiceassist";
+    private static final String OWNER_BUSINESS = "course_schedule";
+    private static final String OWNER_TEST_KEYWORD = "xiaoai_test_";
+    private static final String OWNER_CHANNEL_KEYWORD = "xiaoai_course_reminder_alert";
+    private static final int MIN_KEY_LENGTH_FOR_FUZZY_MATCH = 8;
     private static final Set<String> TARGET_PACKAGES = ConcurrentHashMap.newKeySet();
     private static final Set<String> sOwnedNotifyKeys = ConcurrentHashMap.newKeySet();
 
@@ -1225,8 +1229,8 @@ public class SystemUiHook {
             for (String owned : sOwnedNotifyKeys) {
                 if (TextUtils.isEmpty(owned)) continue;
                 if (key.equals(owned)) return true;
-                if (owned.length() >= 8 && key.contains(owned)) return true;
-                if (key.length() >= 8 && owned.contains(key)) return true;
+                if (owned.length() >= MIN_KEY_LENGTH_FOR_FUZZY_MATCH && key.contains(owned)) return true;
+                if (key.length() >= MIN_KEY_LENGTH_FOR_FUZZY_MATCH && owned.contains(key)) return true;
             }
             return false;
         } catch (Throwable ignore) {
@@ -1245,9 +1249,9 @@ public class SystemUiHook {
             String json = b.getString("island_param", "");
             if (TextUtils.isEmpty(json)) return false;
             return json.contains(OWNER_PACKAGE)
-                    || json.contains("course_schedule")
-                    || json.contains("xiaoai_test_")
-                    || json.contains("xiaoai_course_reminder_alert");
+                    || json.contains(OWNER_BUSINESS)
+                    || json.contains(OWNER_TEST_KEYWORD)
+                    || json.contains(OWNER_CHANNEL_KEYWORD);
         } catch (Throwable ignore) {
             return false;
         }
@@ -1290,8 +1294,8 @@ public class SystemUiHook {
         if (sOwnedNotifyKeys.contains(key)) return true;
         return key.contains("|" + OWNER_PACKAGE + "|")
                 || key.startsWith(OWNER_PACKAGE + "|")
-                || key.contains("xiaoai_test_")
-                || key.contains("xiaoai_course_reminder_alert");
+                || key.contains(OWNER_TEST_KEYWORD)
+                || key.contains(OWNER_CHANNEL_KEYWORD);
     }
 
     private String readModelText(Object model, String sideMethod) {

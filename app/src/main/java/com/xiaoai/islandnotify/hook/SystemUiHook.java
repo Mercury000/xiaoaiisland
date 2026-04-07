@@ -31,6 +31,9 @@ public class SystemUiHook {
     private static final String OWNER_TEST_KEYWORD = "xiaoai_test_";
     private static final String OWNER_CHANNEL_KEYWORD = "xiaoai_course_reminder_alert";
     private static final int MIN_KEY_LENGTH_FOR_FUZZY_MATCH = 8;
+    private static final String[] OWNER_JSON_MARKERS = new String[]{
+            OWNER_PACKAGE, OWNER_BUSINESS, OWNER_TEST_KEYWORD, OWNER_CHANNEL_KEYWORD
+    };
     private static final Set<String> TARGET_PACKAGES = ConcurrentHashMap.newKeySet();
     private static final Set<String> sOwnedNotifyKeys = ConcurrentHashMap.newKeySet();
 
@@ -1228,9 +1231,7 @@ public class SystemUiHook {
             }
             for (String owned : sOwnedNotifyKeys) {
                 if (TextUtils.isEmpty(owned)) continue;
-                if (key.equals(owned)) return true;
-                if (owned.length() >= MIN_KEY_LENGTH_FOR_FUZZY_MATCH && key.contains(owned)) return true;
-                if (key.length() >= MIN_KEY_LENGTH_FOR_FUZZY_MATCH && owned.contains(key)) return true;
+                if (isLikelySameNotifyKey(key, owned)) return true;
             }
             return false;
         } catch (Throwable ignore) {
@@ -1248,10 +1249,7 @@ public class SystemUiHook {
             if (OWNER_PACKAGE.equals(pkg)) return true;
             String json = b.getString("island_param", "");
             if (TextUtils.isEmpty(json)) return false;
-            return json.contains(OWNER_PACKAGE)
-                    || json.contains(OWNER_BUSINESS)
-                    || json.contains(OWNER_TEST_KEYWORD)
-                    || json.contains(OWNER_CHANNEL_KEYWORD);
+            return containsAny(json, OWNER_JSON_MARKERS);
         } catch (Throwable ignore) {
             return false;
         }
@@ -1280,13 +1278,58 @@ public class SystemUiHook {
             }
         } catch (Throwable ignore) {
         }
-        Object keyField = getFieldValue(dataObj, "key");
-        if (keyField instanceof String && !TextUtils.isEmpty((String) keyField)) return (String) keyField;
-        Object mKeyField = getFieldValue(dataObj, "mKey");
-        if (mKeyField instanceof String && !TextUtils.isEmpty((String) mKeyField)) return (String) mKeyField;
-        Object notifyIdField = getFieldValue(dataObj, "notifyId");
-        if (notifyIdField instanceof String && !TextUtils.isEmpty((String) notifyIdField)) return (String) notifyIdField;
+        String keyField = readNonEmptyFieldString(dataObj, "key");
+        if (!TextUtils.isEmpty(keyField)) return keyField;
+        String mKeyField = readNonEmptyFieldString(dataObj, "mKey");
+        if (!TextUtils.isEmpty(mKeyField)) return mKeyField;
+        String notifyIdField = readNonEmptyFieldString(dataObj, "notifyId");
+        if (!TextUtils.isEmpty(notifyIdField)) return notifyIdField;
         return "";
+    }
+
+    private String readNonEmptyFieldString(Object dataObj, String fieldName) {
+        try {
+            Object field = getFieldValue(dataObj, fieldName);
+            if (field instanceof String && !TextUtils.isEmpty((String) field)) {
+                return (String) field;
+            }
+            return "";
+        } catch (Throwable ignore) {
+            return "";
+        }
+    }
+
+    private boolean isLikelySameNotifyKey(String left, String right) {
+        if (TextUtils.isEmpty(left) || TextUtils.isEmpty(right)) return false;
+        if (left.equals(right)) return true;
+        if (left.length() < MIN_KEY_LENGTH_FOR_FUZZY_MATCH && right.length() < MIN_KEY_LENGTH_FOR_FUZZY_MATCH) {
+            return false;
+        }
+        return containsWithPipeBoundary(left, right) || containsWithPipeBoundary(right, left);
+    }
+
+    private boolean containsWithPipeBoundary(String text, String token) {
+        if (TextUtils.isEmpty(text) || TextUtils.isEmpty(token)) return false;
+        int from = 0;
+        while (from <= text.length() - token.length()) {
+            int idx = text.indexOf(token, from);
+            if (idx < 0) return false;
+            int end = idx + token.length();
+            boolean leftOk = idx == 0 || text.charAt(idx - 1) == '|';
+            boolean rightOk = end == text.length() || text.charAt(end) == '|';
+            if (leftOk && rightOk) return true;
+            from = idx + 1;
+        }
+        return false;
+    }
+
+    private boolean containsAny(String source, String[] markers) {
+        if (TextUtils.isEmpty(source) || markers == null || markers.length == 0) return false;
+        for (String marker : markers) {
+            if (TextUtils.isEmpty(marker)) continue;
+            if (source.contains(marker)) return true;
+        }
+        return false;
     }
 
     private boolean isOwnedNotificationKey(String key) {

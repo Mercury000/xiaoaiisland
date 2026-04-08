@@ -88,7 +88,7 @@ jobs:
       - name: Build release APKs
         run: |
           rm -rf build/debug build/release
-          ./gradlew --no-daemon clean assembleApi100Release assembleApi101Release -PciReleaseSeq="${CI_RELEASE_SEQ}"
+          ./gradlew --no-daemon clean assembleRelease -PciReleaseSeq="${CI_RELEASE_SEQ}"
 
       - name: Build release notes
         id: notes
@@ -131,11 +131,7 @@ jobs:
 
           candidates = [
               Path("build/release/output-metadata.json"),
-              Path("build/release/api100/output-metadata.json"),
-              Path("build/release/api101/output-metadata.json"),
               Path("app/build/outputs/apk/release/output-metadata.json"),
-              Path("app/build/outputs/apk/api100/release/output-metadata.json"),
-              Path("app/build/outputs/apk/api101/release/output-metadata.json"),
           ]
           existing_candidates = [p for p in candidates if p.exists()]
           if existing_candidates:

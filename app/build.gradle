@@ -142,17 +142,6 @@ android {
         versionName vName  // 使用纯数字版本号
     }
 
-    // 签名配置
-    flavorDimensions "xposedApi"
-    productFlavors {
-        api100 {
-            dimension "xposedApi"
-        }
-        api101 {
-            dimension "xposedApi"
-        }
-    }
-
     signingConfigs {
         release {
             // 从build目录下安全读取签名配置
@@ -206,8 +195,7 @@ android {
                     variant.outputs.all {
                         def appName = "courseisland"
                         def versionName = variant.versionName
-                        def flavorName = variant.flavorName ?: "noflavor"
-                        outputFileName = "${appName}_${flavorName}_${versionName}.apk"
+                        outputFileName = "${appName}_${versionName}.apk"
                     }
                 }
             }
@@ -221,8 +209,7 @@ android {
                     variant.outputs.all {
                         def appName = "courseisland"
                         def versionName = variant.versionName
-                        def flavorName = variant.flavorName ?: "noflavor"
-                        outputFileName = "${appName}_${flavorName}_${versionName}.apk"
+                        outputFileName = "${appName}_${versionName}.apk"
                     }
                 }
             }
@@ -249,9 +236,8 @@ android {
 afterEvaluate {
     android.applicationVariants.all { variant ->
         def buildType = variant.buildType.name
-        def flavorName = variant.flavorName ?: "noflavor"
         variant.packageApplicationProvider.configure { pkg ->
-            pkg.outputDirectory.set(file("$rootDir/build/${buildType}/${flavorName}"))
+            pkg.outputDirectory.set(file("$rootDir/build/${buildType}"))
         }
     }
 }
@@ -260,7 +246,6 @@ dependencies {
     // libxposed API 101
     compileOnly 'io.github.libxposed:api:101.0.0'
     implementation 'io.github.libxposed:service:101.0.0'
-    api100Implementation 'io.github.kyuubiran.ezxhelper:xposed-api-100:3.1.1-rc1'
     implementation 'com.xzakota.hyper.notification:focus-api:1.4'
 
     // UI：Material Design 3 + AppCompat
@@ -348,8 +333,6 @@ tasks.register("generateOpenSourceRefs") {
         collectExternalDeps(project, [
                 "compileOnly",
                 "implementation",
-                "api100Implementation",
-                "api101Implementation",
                 "debugImplementation",
                 "releaseImplementation",
         ], coords)

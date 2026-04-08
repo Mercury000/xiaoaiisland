@@ -4,39 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       source_tag:
-        description: "Source release tag in this repo (e.g. 2026040101)"
-        required: true
-        type: string
-      target_repo:
-        description: "Target repository (owner/repo)"
-        required: true
-        default: "Xposed-Modules-Repo/com.xiaoai.islandnotify"
-        type: string
-      target_tag:
-        description: "Target tag (empty => sourceTag-sourceTag)"
-        required: false
-        default: ""
-        type: string
-      release_name:
-        description: "Target release title (empty => source release title)"
+        description: "源 tag（留空=自动使用最新 tag）"
         required: false
         default: ""
         type: string
       release_body:
-        description: "Target release body (empty => source release body)"
+        description: "Release 内容（留空=自动生成：本次与上次 release 之间的 commits）"
         required: false
         default: ""
         type: string
-      overwrite_existing:
-        description: "Delete existing target release/tag before recreate"
-        required: true
-        default: false
-        type: boolean
-      mark_as_prerelease:
-        description: "Force target release as prerelease"
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -46,12 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SOURCE_REPO: ${{ github.repository }}
-      SOURCE_TAG: ${{ inputs.source_tag }}
-      TARGET_REPO: ${{ inputs.target_repo }}
-      INPUT_TARGET_TAG: ${{ inputs.target_tag }}
-      INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+      TARGET_REPO: Xposed-Modules-Repo/com.xiaoai.islandnotify
+      INPUT_SOURCE_TAG: ${{ inputs.source_tag }}
       INPUT_RELEASE_BODY: ${{ inputs.release_body }}
-      INPUT_PRERELEASE: ${{ inputs.mark_as_prerelease }}
       GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
     steps:
@@ -63,53 +36,70 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve source release and target metadata
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve source/target tag and release body
         id: meta
         shell: bash
         run: |
           set -euo pipefail
 
-          SRC_JSON="$(gh api "repos/${SOURCE_REPO}/releases/tags/${SOURCE_TAG}")"
-          SRC_NAME="$(jq -r '.name // empty' <<<"$SRC_JSON")"
-          SRC_BODY="$(jq -r '.body // ""' <<<"$SRC_JSON")"
-          SRC_PRERELEASE="$(jq -r '.prerelease' <<<"$SRC_JSON")"
+          git fetch --tags --force
+          mapfile -t tags < <(git tag --sort=-creatordate)
 
-          if [ -n "${INPUT_TARGET_TAG}" ]; then
-            TARGET_TAG="${INPUT_TARGET_TAG}"
-          else
-            TARGET_TAG="${SOURCE_TAG}-${SOURCE_TAG}"
+          if [ ${#tags[@]} -eq 0 ]; then
+            echo "No tags found in source repository."
+            exit 1
           fi
 
-          if [ -n "${INPUT_RELEASE_NAME}" ]; then
-            TARGET_NAME="${INPUT_RELEASE_NAME}"
-          else
-            if [ -n "${SRC_NAME}" ]; then
-              TARGET_NAME="${SRC_NAME}"
-            else
-              TARGET_NAME="${TARGET_TAG}"
+          if [ -n "${INPUT_SOURCE_TAG}" ]; then
+            SOURCE_TAG="${INPUT_SOURCE_TAG}"
+            if ! git rev-parse "$SOURCE_TAG" >/dev/null 2>&1; then
+              echo "source_tag not found: $SOURCE_TAG"
+              exit 1
             fi
+          else
+            SOURCE_TAG="${tags[0]}"
           fi
+
+          PREV_TAG=""
+          for i in "${!tags[@]}"; do
+            if [ "${tags[$i]}" = "$SOURCE_TAG" ]; then
+              j=$((i + 1))
+              if [ $j -lt ${#tags[@]} ]; then
+                PREV_TAG="${tags[$j]}"
+              fi
+              break
+            fi
+          done
+
+          TARGET_TAG="$SOURCE_TAG"
+          TARGET_NAME="$SOURCE_TAG"
 
           if [ -n "${INPUT_RELEASE_BODY}" ]; then
-            TARGET_BODY="${INPUT_RELEASE_BODY//\\r\\n/$'\n'}"
-            TARGET_BODY="${TARGET_BODY//\\n/$'\n'}"
+            TARGET_BODY="${INPUT_RELEASE_BODY//$'\r\n'/$'\n'}"
+            TARGET_BODY="${TARGET_BODY//$'\r'/$'\n'}"
           else
-            TARGET_BODY="${SRC_BODY}"
-          fi
-
-          if [ "${INPUT_PRERELEASE}" = "true" ]; then
-            TARGET_PRERELEASE="true"
-          else
-            TARGET_PRERELEASE="${SRC_PRERELEASE}"
+            if [ -n "$PREV_TAG" ]; then
+              TARGET_BODY="$(git log --pretty='- %h %s (%an)' "${PREV_TAG}..${SOURCE_TAG}")"
+            else
+              TARGET_BODY="$(git log --pretty='- %h %s (%an)' "${SOURCE_TAG}")"
+            fi
+            if [ -z "$TARGET_BODY" ]; then
+              TARGET_BODY="- (no new commits)"
+            fi
           fi
 
           BODY_FILE="$RUNNER_TEMP/target_release_body.md"
           printf '%s\n' "$TARGET_BODY" > "$BODY_FILE"
 
           {
+            echo "source_tag=${SOURCE_TAG}"
             echo "target_tag=${TARGET_TAG}"
             echo "target_name=${TARGET_NAME}"
-            echo "target_prerelease=${TARGET_PRERELEASE}"
             echo "body_file=${BODY_FILE}"
           } >> "$GITHUB_OUTPUT"
 
@@ -119,7 +109,7 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
 
-          SRC_JSON="$(gh api "repos/${SOURCE_REPO}/releases/tags/${SOURCE_TAG}")"
+          SRC_JSON="$(gh api "repos/${SOURCE_REPO}/releases/tags/${{ steps.meta.outputs.source_tag }}")"
           jq -c '.assets[]?' <<<"$SRC_JSON" | while read -r asset; do
             name="$(jq -r '.name // empty' <<<"$asset")"
             url="$(jq -r '.url // empty' <<<"$asset")"
@@ -137,8 +127,7 @@ jobs:
             exit 1
           fi
 
-      - name: Delete existing target release (optional)
-        if: ${{ inputs.overwrite_existing }}
+      - name: Replace existing target release if exists
         shell: bash
         run: |
           set -euo pipefail
@@ -155,16 +144,10 @@ jobs:
           name='${{ steps.meta.outputs.target_name }}'
           body_file='${{ steps.meta.outputs.body_file }}'
 
-          extra=()
-          if [ '${{ steps.meta.outputs.target_prerelease }}' = 'true' ]; then
-            extra+=(--prerelease)
-          fi
-
           gh release create "$tag" \
             -R "$TARGET_REPO" \
             --title "$name" \
-            --notes-file "$body_file" \
-            "${extra[@]}"
+            --notes-file "$body_file"
 
       - name: Upload assets to target release
         shell: bash
@@ -176,4 +159,4 @@ jobs:
       - name: Summary
         shell: bash
         run: |
-          echo "Synced ${SOURCE_REPO}@${SOURCE_TAG} -> ${TARGET_REPO}@${{ steps.meta.outputs.target_tag }}"
+          echo "Synced ${SOURCE_REPO}@${{ steps.meta.outputs.source_tag }} -> ${TARGET_REPO}@${{ steps.meta.outputs.target_tag }}"

@@ -1,0 +1,52 @@
+name: CI Debug Build
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debug-build:
+    name: debug-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Ensure Android 37 SDK platform
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --list > /tmp/sdk-list.txt || true
+          if grep -q "platforms;android-37[[:space:]]" /tmp/sdk-list.txt; then
+            sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+          elif grep -q "platforms;android-37.0[[:space:]]" /tmp/sdk-list.txt; then
+            sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0"
+          else
+            echo "::warning::No Android 37 SDK package found in sdkmanager list; continue and let Gradle resolve if possible."
+          fi
+
+      - name: Build debug APK
+        run: ./gradlew --no-daemon clean assembleDebug
+

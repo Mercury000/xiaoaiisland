@@ -148,11 +148,13 @@ android {
             def signingPropsFile = rootProject.file('build/config/signing.properties')
             logger.lifecycle(">>> 查找签名配置文件: ${signingPropsFile.absolutePath}")
             logger.lifecycle(">>> 文件是否存在: ${signingPropsFile.exists()}")
-            
-            if (signingPropsFile.exists()) {
+
+            if (!isReleaseBuild) {
+                logger.lifecycle(">>> 非 Release 构建，跳过 release 签名配置检查")
+            } else if (signingPropsFile.exists()) {
                 def props = new Properties()
                 signingPropsFile.withInputStream { props.load(it) }
-                
+
                 logger.lifecycle(">>> 读取到的配置:")
                 props.each { key, value ->
                     if (key.contains('Password')) {
@@ -161,15 +163,15 @@ android {
                         logger.lifecycle(">>> ${key}: ${value}")
                     }
                 }
-                
+
                 // 安全检查必需的属性
-                if (props['storeFile'] && new File(props['storeFile']).exists() && 
-                    props['storePassword'] && props['keyAlias'] && props['keyPassword']) {
+                if (props['storeFile'] && new File(props['storeFile']).exists() &&
+                        props['storePassword'] && props['keyAlias'] && props['keyPassword']) {
                     storeFile file(props['storeFile'])
                     storePassword props['storePassword']
                     keyAlias props['keyAlias']
                     keyPassword props['keyPassword']
-                    
+
                     logger.lifecycle(">>> 签名配置加载成功")
                 } else {
                     logger.lifecycle(">>> 签名配置不完整或文件不存在")

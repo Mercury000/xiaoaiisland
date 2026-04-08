@@ -8,128 +8,193 @@
 
 | 功能 | 说明 |
 |------|------|
-| 超级岛注入 | 拦截 `com.miui.voiceassist` 发出的课程提醒通知，注入 `miui.focus.param` 参数 |
+| 超级岛注入 | 劫持 `com.miui.voiceassist` 发送课程提醒通知并注入 `miui.focus.param` 参数；支持自定义提醒时机 |
 | 三阶段状态 | **课前**（倒计时）→ **上课中**（正计时）→ **下课后**（正计时）自动切换 |
-| 自定义模板 | 每阶段的岛A（左）、岛B（右）、息屏文字均可独立配置 |
+| 自定义模板 | 每阶段的岛A（左）、岛B（右）、息屏文字、展开态岛均可独立配置 |
 | 点击跳转 | 点击超级岛可跳转到小爱同学课表页 |
-| 上课静音 | 超级岛内嵌"上课静音 / 解除静音"快捷按钮 |
-| 隐藏图标 | 可在管理界面一键隐藏桌面图标，LSPosed 设置入口保留 |
-| 可靠调度 | 使用 `AlarmManager.setExactAndAllowWhileIdle` 精确唤醒，避免 Doze 模式下状态丢失 |
+| 上课静音 | 超级岛内嵌"上课静音 / 解除静音"快捷按钮；同时支持自动化 |
+| 自动叫醒 | 根据上午/下午首节课程的节次设定指定时间闹钟 |
+| 假期/调休  | 支持从网络获取/自行添加假期或调休，假期日不提醒，调休日按指定周次星期 |
 
 ---
 
 ## 环境要求
 
-- **设备**：小米 / Redmi / POCO，运行 HyperOS / MIUI 14+（Android 12+）
-- **框架**：[LSPosed](https://github.com/LSPosed/LSPosed)（Zygisk 版）
-- **作用域**：超级小爱（`com.miui.voiceassist`）
+- **设备**：运行HyperOS3的小米/红米手机
+- **框架**：[LSPosed](https://github.com/LSPosed/LSPosed)（API101）
 
 ---
 
 ## 安装
 
-1. 在 [Releases](../../releases) 下载最新 APK 并安装
+1. 在 [Releases](https://github.com/Xposed-Modules-Repo/com.xiaoai.islandnotify/releases)下载最新 APK 并安装
 2. 打开 LSPosed 管理器 → 模块 → 找到**课程表超级岛** → 启用模块
-3. 作用域勾选 **超级小爱（com.miui.voiceassist）**
-4. 重启 `com.miui.voiceassist` 进程（或重启手机）
+3. 作用域勾选推荐作用域
+4. 重启所有作用域
 5. 打开模块主界面，确认"模块已激活"状态
 
 ---
 
-## 自定义显示模板
+## 自定义显示
+
+**可用变量：**
+
+| 变量       | 含义                                               |
+| ---------- | -------------------------------------------------- |
+| `{课名}`   | 课程名称（如"高等数学"）                           |
+| `{开始}`   | 上课时间（如"08:00"）                              |
+| `{结束}`   | 下课时间（如"09:40"）                              |
+| `{教室}`   | 上课地点（如"教科A-101"）                          |
+| `{节次}`   | 上课节次（如“1-2”）                                |
+| `{教师}`   | 教师姓名（如“张三”）                               |
+| `{倒计时}` | 按三阶段分别为距离上课倒计时/距离下课倒计时/不支持 |
+| `{正计时}` | 按三阶段分别为不支持/已经上课正计时/已经下课正计时 |
+
+**注意：同一阶段仅可存在一个计时类型**
+
+### 状态栏岛显示模板
 
 在模块主界面的"状态栏岛显示自定义"卡片中，可为三个阶段分别配置：
 
 | 阶段 | 触发时机 | 岛A默认 | 岛B默认 | 息屏默认 |
 |------|---------|---------|---------|---------|
-| 课前 | 通知发出 → 上课前 | `{开始}上课` | `{教室}` | `{开始}上课 {教室}` |
-| 上课中 | 上课时刻到达 | `{课名}` | `{教室}` | `上课中 {教室}` |
-| 下课后 | 下课时刻到达 | `{结束}下课` | `{教室}` | `下课了 {教室}` |
+| 上课前 | 通知发出 → 上课前 | `{教室}` | `{开始}上课` | `{教室}｜{开始}上课` |
+| 上课中 | 上课时刻到达 | `{课名}` | `{结束}下课` | `{课名}｜{结束}下课` |
+| 下课后 | 下课时刻到达 | `{课名}` | `已经下课` | `{课名}｜已经下课` |
 
-**可用变量：**
+### 展开态岛显示模板
 
-| 变量 | 含义 |
-|------|------|
-| `{课名}` | 课程名称（如"高等数学"） |
-| `{开始}` | 上课时间（如"08:00"） |
-| `{结束}` | 下课时间（如"09:40"） |
-| `{教室}` | 上课地点（如"教科A-101"） |
+在模块主界面的"状态栏岛显示自定义"卡片中，可为三个阶段分别配置：
+
+| 阶段   | 触发时机          | 主要标题 | 次要文本1         | 次要文本2 | 前置文本1 | 前置文本2 | 主要小文本1 | 主要小文本2 |
+| ------ | ----------------- | -------- | ----------------- | --------- | --------- | --------- | ----------- | ----------- |
+| 上课前 | 通知发出 → 上课前 | `{课名}` | `{开始} | {结束}` | 空        | `即将上课` | `地点`    | `{倒计时}`  | `{教室}`    |
+| 上课中 | 上课时刻到达      | `{课名}` | `{开始} | {结束}` | 空        | `距离下课` | `地点`    | `{倒计时}`  | `{教室}`    |
+| 下课后 | 下课时刻到达      | `{课名}` | `{开始} | {结束}` | 空        | `已经下课` | `地点`    | `{正计时}`  | `{教室}`    |
 
 ---
 
 ## 构建
 
+### 环境要求
+
+- JDK 21
+- Android SDK Platform 37
+- Android Build-Tools 37.0.0
+
 ### 依赖准备
 
-项目已迁移到 `libxposed` API 101：
+项目当前使用 `libxposed` API 101：
 
 - `compileOnly("io.github.libxposed:api:101.0.0")`
+- `implementation("io.github.libxposed:service:101.0.0")`
 
-无需再手动放置 `api-82.jar`。
+### Release 签名配置（本地）
 
-### 构建命令
+`assembleRelease` 强制要求存在：`build/config/signing.properties`
+
+示例：
+
+```properties
+storeFile=D:/keystore/release.jks
+storePassword=你的Store密码
+keyAlias=你的别名
+keyPassword=你的Key密码
+```
+
+注意：
+- `storeFile` 必须指向存在的 `.jks` 文件
+- 仅 `Release` 需要该文件，`Debug` 不需要
+- 缺失时会报：`缺少build/config/signing.properties签名配置文件`
+
+### 构建命令（Gradle）
 
 ```bash
 # Debug
 ./gradlew assembleDebug
 
-# Release（自动递增 versionCode）
+# Release
 ./gradlew assembleRelease
 ```
 
-输出 APK：`app/build/outputs/apk/release/课程表超级岛_{version}.apk`
+### 构建命令（Python 脚本）
+
+```bash
+python build/build.py
+```
+
+脚本支持 Debug / Release / clean 后构建，并在构建失败时自动尝试一次恢复重试。
+
+### 输出路径
+
+- Debug：`build/debug/courseisland_<version>_debug.apk`
+- Release：`build/release/courseisland_<version>.apk`
 
 ### 版本管理
 
-版本号由 `app/build.gradle` 自动生成，格式为 `yyyymmddxx`（年月日+当日构建序号）：
+版本号由 `app/build.gradle` 自动生成，格式为 `yyyymmddxx`（年月日 + 当日序号）：
 
-- **VERSION_CODE**：自动生成，例如 `2026022501`
-- **VERSION_NAME**：自动生成，例如 `2026022501_debug` 或 `2026022501_release`
+- `versionCode`：如 `2026040816`
+- `versionName`：
+  - Debug：`2026040816_debug`
+  - Release：`2026040816`
 
-每次执行 `assembleRelease` 或 `assembleDebug` 时，版本号会自动递增。
+### CI / 发布（GitHub Actions）
+
+- `CI Debug Build`：执行 `./gradlew --no-daemon clean assembleDebug`
+- `Release Build & Publish`：先跑 `debug-check`，通过后再执行 `assembleRelease` 并发布 release
+
+### CI Release 所需 Secrets
+
+`Release Build & Publish` 工作流会生成 `build/config/signing.properties`，依赖以下 Secrets：
+
+- `SIGNING_KEYSTORE_BASE64`：Base64 编码的 `.jks` 文件内容
+- `SIGNING_STORE_PASSWORD`
+- `SIGNING_KEY_ALIAS`
+- `SIGNING_KEY_PASSWORD`
+- `RELEASE_TOKEN`：可选；用于推送 tag（未设置时回退到 `github.token`）
 
 ---
 
 ## 项目结构
 
+```text
+xiaoailand/
+├── app/                                    # 主模块
+│   ├── build.gradle
+│   ├── proguard-rules.pro
+│   └── src/main/
+│       ├── AndroidManifest.xml
+│       ├── java/com/xiaoai/islandnotify/
+│       │   ├── ModuleEntry.java            # 模块入口（LSPosed 回调分发）
+│       │   ├── MainActivity.java           # 壳 Activity（承载 Compose）
+│       │   ├── MainComposeEntry.kt         # 主界面（配置项/UI）
+│       │   ├── hook/                       # Hook 实现（MainHook/SystemUiHook/DeskClockHook）
+│       │   ├── integration/                # 调用小爱内部接口：静音/勿扰切换与课表主动刷新
+│       │   ├── schedule/                   # 调度与超时配置
+│       │   ├── config/                     # 默认值、迁移、配置读写
+│       │   ├── holiday/                    # 节假日逻辑
+│       │   └── modernhook/                 # libxposed API 101 适配封装
+│       ├── resources/META-INF/xposed/
+│       │   ├── java_init.list
+│       │   ├── scope.list
+│       │   └── module.prop
+│       └── res/                            # drawable / values / values-night / mipmap-*
+├── hyperx-compose/                         # Compose UI 组件子模块（本地 module）
+│   └── src/main/
+│       ├── kotlin/dev/lackluster/hyperx/compose/
+│       └── res/
+├── .github/workflows/
+│   ├── ci-debug.yml
+│   ├── release.yml
+│   └── sync-release-to-xposed-repo.yml
+├── build/                                  # 本地构建脚本与产物目录
+│   └── build.py
+├── gradle/wrapper/                         # Gradle Wrapper
+├── settings.gradle
+├── build.gradle
+├── gradle.properties
+├── version.properties
+└── README.md
 ```
-app/src/main/
-├── java/com/xiaoai/islandnotify/
-│   ├── MainHook.java        # LSPosed Hook 核心：拦截通知、构建岛 JSON、调度状态切换
-│   ├── MainActivity.java    # 模块主界面：激活状态、自定义模板、隐藏图标、测试通知
-│   └── MuteReceiver.java    # 上课静音 / 解除静音广播接收器
-├── res/
-│   ├── layout/
-│   │   └── activity_main.xml          # 主界面布局
-│   ├── values/
-│   │   └── strings.xml                # 字符串资源
-│   └── xml/
-│       └── file_paths.xml             # FileProvider 配置
-└── AndroidManifest.xml
-```
 
----
-
-## 常见问题
-
-**Q：超级岛没有出现？**
-- 确认 LSPosed 作用域已勾选 `com.miui.voiceassist`
-- 确认模块主界面显示"模块已激活"
-- 检查课程提醒通知的 channelId 是否包含 `COURSE_SCHEDULER_REMINDER`（logcat 过滤 `IslandNotifyHook`）
-
-**Q：自定义模板不生效？**
-- 保存后需要等下一条真实通知触发，已发出的通知不会更新
-- 首次安装后请进入主界面点一次"保存"，确保配置广播到 voiceassist 进程
-
-**Q：状态切换不准时？**
-- 超级岛的状态通过 `AlarmManager` 精确调度。如果关闭了"允许精确闹钟"权限，可能有几分钟延迟
-
-**Q：如何隐藏桌面图标？**
-- 在模块主界面点击"隐藏桌面图标"按钮即可
-- 隐藏后仍可通过 LSPosed 管理器或系统设置的应用管理访问模块
-
----
-
-## License
-
-MIT License.

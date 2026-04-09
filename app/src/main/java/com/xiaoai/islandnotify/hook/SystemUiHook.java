@@ -152,7 +152,6 @@ public class SystemUiHook {
                             }
                             if (TextUtils.isEmpty(bigEffect)) return;
                             dataBundle.putString(EXTRA_BIG_ISLAND_EFFECT, bigEffect);
-                            XposedBridge.log(TAG + ": bridge focus extras -> bigEffect=" + bigEffect);
                         } catch (Throwable ignore) {
                         }
                     }
@@ -197,12 +196,10 @@ public class SystemUiHook {
                             if (bigView == null) return;
                             normalizeBigGlowView(bigView);
                             invokeStartGlowEffect(bigView);
-                            XposedBridge.log(TAG + ": windowView " + name + " post -> force glow by effect key");
                         } catch (Throwable ignore) {
                         }
                     }
                 });
-                XposedBridge.log(TAG + ": windowView glow hook installed -> " + name);
             }
         } catch (Throwable t) {
             swallowOptionalHookFailure(t);
@@ -241,10 +238,8 @@ public class SystemUiHook {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         param.setResult(Boolean.TRUE);
-                        XposedBridge.log(TAG + ": shader feature forced -> true");
                     }
                 });
-                XposedBridge.log(TAG + ": shader feature hook installed -> " + clsName);
                 return;
             }
         } catch (Throwable t) {

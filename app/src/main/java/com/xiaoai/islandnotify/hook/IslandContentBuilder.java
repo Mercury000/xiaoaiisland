@@ -401,7 +401,7 @@ final class IslandContentBuilder {
                 template.setIsland(islandTemplate);
             });
             if (outEffectStatusEnabled) {
-                extras.putString("miui.bigIsland.effect.src", "outer_glow");
+                extras.putString("miui.bigIsland.effect.src", "effect");
             } else {
                 extras.remove("miui.bigIsland.effect.src");
             }

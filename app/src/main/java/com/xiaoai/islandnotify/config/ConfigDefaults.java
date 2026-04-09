@@ -15,7 +15,7 @@ final class ConfigDefaults {
     static final String KEY_NOTIF_GLOBAL_DEFAULT = "to_notif_global_default";
     static final String NOTIF_TRIGGER = "pre";
     static final boolean SWITCH_DISABLED = false;
-    static final boolean REPOST_ENABLED = true;
+    static final boolean REPOST_ENABLED = false;
     static final int ISLAND_BUTTON_MODE = 0;
     static final int WAKEUP_MORNING_LAST_SEC = 4;
     static final int WAKEUP_AFTERNOON_FIRST_SEC = 5;
@@ -95,6 +95,8 @@ final class ConfigDefaults {
             case "repost_enabled": return REPOST_ENABLED;
             case KEY_NOTIF_GLOBAL_DEFAULT: return true;
             case "out_effect_enabled": return true;
+            case "out_effect_status_enabled": return false;
+            case "out_effect_expand_enabled": return true;
             case "mute_enabled":
             case "unmute_enabled":
             case "dnd_enabled":
@@ -191,6 +193,8 @@ final class ConfigDefaults {
                 || "island_button_mode".equals(key)
                 || "icon_a".equals(key)
                 || "out_effect_enabled".equals(key)
+                || "out_effect_status_enabled".equals(key)
+                || "out_effect_expand_enabled".equals(key)
                 || "wakeup_morning_enabled".equals(key)
                 || "wakeup_morning_last_sec".equals(key)
                 || "wakeup_morning_rules_json".equals(key)

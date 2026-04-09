@@ -125,7 +125,15 @@ final class IslandContentBuilder {
             int stageIndex = stageIndexByState(state);
             String stageSuffix = ConfigDefaults.stageSuffix(stageIndex);
             final boolean showIconA = PrefsAccess.readConfigBool(prefs, "icon_a", true);
-            final boolean outEffectEnabled = PrefsAccess.readConfigBool(prefs, "out_effect_enabled", true);
+            final boolean legacyOutEffectEnabled = PrefsAccess.readConfigBool(
+                    prefs, "out_effect_enabled", true);
+            final boolean legacyOutEffectExists = prefs.contains("out_effect_enabled");
+            final boolean statusEffectDefault = legacyOutEffectExists ? legacyOutEffectEnabled : false;
+            final boolean expandEffectDefault = legacyOutEffectExists ? legacyOutEffectEnabled : true;
+            final boolean outEffectExpandEnabled = PrefsAccess.readConfigBool(
+                    prefs, "out_effect_expand_enabled", expandEffectDefault);
+            final boolean outEffectStatusEnabled = PrefsAccess.readConfigBool(
+                    prefs, "out_effect_status_enabled", statusEffectDefault);
 
             String aFallback = resolveTemplate(
                     ConfigDefaults.stagedTemplateDefault("tpl_a", stageSuffix, ""),
@@ -297,7 +305,7 @@ final class IslandContentBuilder {
                 template.setUpdatable(true);
                 template.setTicker(finalTickerText);
                 template.setAodTitle(finalTickerText);
-                if (outEffectEnabled) template.setOutEffectSrc("outer_glow");
+                if (outEffectExpandEnabled) template.setOutEffectSrc("outer_glow");
                 template.setEnableFloat(isActive);
                 if (isActive) template.setIslandFirstFloat(true);
 
@@ -392,7 +400,7 @@ final class IslandContentBuilder {
                 if (finalIslandTimeoutSec > 0) islandTemplate.setIslandTimeout(finalIslandTimeoutSec);
                 template.setIsland(islandTemplate);
             });
-            if (outEffectEnabled) {
+            if (outEffectStatusEnabled) {
                 extras.putString("miui.bigIsland.effect.src", "outer_glow");
             } else {
                 extras.remove("miui.bigIsland.effect.src");

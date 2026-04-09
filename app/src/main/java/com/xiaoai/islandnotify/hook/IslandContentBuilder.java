@@ -292,7 +292,7 @@ final class IslandContentBuilder {
             tickerText = applyTimerVars(tickerText, state, startMs, endMs, now);
             final String finalTickerText = tickerText;
 
-            return FocusNotification.buildV3(template -> {
+            Bundle extras = FocusNotification.buildV3(template -> {
                 template.setBusiness("course_schedule");
                 template.setUpdatable(true);
                 template.setTicker(finalTickerText);
@@ -392,6 +392,12 @@ final class IslandContentBuilder {
                 if (finalIslandTimeoutSec > 0) islandTemplate.setIslandTimeout(finalIslandTimeoutSec);
                 template.setIsland(islandTemplate);
             });
+            if (outEffectEnabled) {
+                extras.putString("miui.bigIsland.effect.src", "outer_glow");
+            } else {
+                extras.remove("miui.bigIsland.effect.src");
+            }
+            return extras;
         } catch (Throwable ignored) {
             return new Bundle();
         }

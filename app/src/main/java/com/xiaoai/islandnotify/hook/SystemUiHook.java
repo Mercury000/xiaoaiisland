@@ -1,6 +1,8 @@
 package com.xiaoai.islandnotify;
 
 import android.os.Bundle;
+import android.app.Notification;
+import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.ViewGroup;
@@ -30,8 +32,16 @@ public class SystemUiHook {
 
     private static final String DYNAMIC_ISLAND_CONTENT_IFACE =
             "com.android.systemui.plugins.miui.dynamicisland.DynamicIslandContent";
+    private static final String DYNAMIC_ISLAND_DATA_CLASS =
+            "com.android.systemui.plugins.miui.dynamicisland.DynamicIslandData";
+    private static final String EXTRA_BIG_ISLAND_EFFECT = "miui.bigIsland.effect.src";
+    private static final String EXTRA_EXPAND_EFFECT = "miui.effect.src";
+    private static final String DYNAMIC_ISLAND_EVENT_COORDINATOR_CLASS =
+            "miui.systemui.dynamicisland.event.DynamicIslandEventCoordinator";
     private static final String FOCUS_CONTENT_CLASS =
             "com.android.systemui.plugins.miui.notification.FocusNotificationContent";
+    private static final String FOCUS_NOTIFICATION_CONTROLLER_CLASS =
+            "miui.systemui.notification.focus.FocusNotificationController";
     private static final String DEVICE_LISTENER_CLASS =
             "com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl";
     private static final String DEVICE_MODEL_CLASS =
@@ -42,6 +52,8 @@ public class SystemUiHook {
             "miui.systemui.dynamicisland.window.content.DynamicIslandBaseContentView";
     private static final String TEMPLATE_FACTORY_V3_CLASS =
             "miui.systemui.notification.focus.templateV3.TemplateFactoryV3";
+    private static final String DYNAMIC_FEATURE_CONFIG_CLASS =
+            "miui.systemui.dynamicisland.DynamicFeatureConfig";
     private static final String MODULE_TEXT_VIEW_HOLDER_CLASS =
             "miui.systemui.notification.focus.moduleV3.ModuleTextViewHolder";
     private static final String MODULE_TINY_TEXT_VIEW_HOLDER_CLASS =
@@ -66,6 +78,8 @@ public class SystemUiHook {
     private static final ThreadLocal<Boolean> sReentry = new ThreadLocal<>();
     private static final ThreadLocal<Integer> sIslandBindDepth = new ThreadLocal<>();
     private static final Set<String> sHookedIslandContentClasses = ConcurrentHashMap.newKeySet();
+    private static final Set<String> sHookedBigGlowCallbackClasses = ConcurrentHashMap.newKeySet();
+    private static final Set<String> sHookedShaderFeatureClasses = ConcurrentHashMap.newKeySet();
     private static final Map<TextView, Boolean> sAdaptiveWatchers =
             java.util.Collections.synchronizedMap(new WeakHashMap<TextView, Boolean>());
     private static final Map<Object, String> sFocusContentKeyMap =
@@ -73,8 +87,11 @@ public class SystemUiHook {
     private static final ConcurrentMap<String, CachedTexts> sFullTextByKey = new ConcurrentHashMap<>();
     private static final Map<ClassLoader, Boolean> sInstalledHookLoaders =
             java.util.Collections.synchronizedMap(new WeakHashMap<ClassLoader, Boolean>());
+    private static final Set<String> sHookedDataSetPropertiesClasses = ConcurrentHashMap.newKeySet();
     private static volatile boolean sBaseDexCtorHooked = false;
     private static volatile boolean sLoadClassHooked = false;
+    private static final ThreadLocal<Object> sBigGlowPatchedData = new ThreadLocal<>();
+    private static final ThreadLocal<Integer> sBigGlowPatchedOldProp = new ThreadLocal<>();
 
     static {
         TARGET_PACKAGES.add("com.android.systemui");
@@ -84,6 +101,7 @@ public class SystemUiHook {
     public void handleLoadPackage(String packageName, ClassLoader classLoader) {
         if (!TARGET_PACKAGES.contains(packageName)) return;
         if ("com.android.systemui".equals(packageName)) {
+            installHooksForClassLoader(classLoader);
             hookPluginClassLoaderBridge(classLoader);
             return;
         }
@@ -94,10 +112,382 @@ public class SystemUiHook {
         if (classLoader == null) return;
         if (sInstalledHookLoaders.containsKey(classLoader)) return;
         sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
+        hookDynamicIslandShaderFeature(classLoader);
+        hookDynamicIslandDataSetPropertiesForGlow(classLoader);
+        hookBigIslandGlowByCoordinatorCallback(classLoader);
+        hookBigIslandGlowByWindowController(classLoader);
+        hookFocusDynamicIslandExtrasBridge(classLoader);
         hookExactFirstLimitPoints(classLoader);
         hookIslandExpandedView(classLoader);
         hookSameWidthDigitSuffixStyle(classLoader);
         hookSameWidthDigitContentColor(classLoader);
+    }
+
+    private void hookFocusDynamicIslandExtrasBridge(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(FOCUS_NOTIFICATION_CONTROLLER_CLASS, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"setUpDynamicIslandDataBundle".equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts == null || pts.length != 1) continue;
+                if (!StatusBarNotification.class.equals(pts[0])) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            Object result = param.getResult();
+                            if (!(result instanceof Bundle)) return;
+                            Bundle dataBundle = (Bundle) result;
+                            StatusBarNotification sbn = null;
+                            if (param.args != null && param.args.length > 0
+                                    && param.args[0] instanceof StatusBarNotification) {
+                                sbn = (StatusBarNotification) param.args[0];
+                            }
+                            Bundle notifExtras = null;
+                            if (sbn != null) {
+                                Notification n = sbn.getNotification();
+                                if (n != null) notifExtras = n.extras;
+                            }
+                            String bigEffect = null;
+                            String expandEffect = dataBundle.getString(EXTRA_EXPAND_EFFECT, "");
+                            if (notifExtras != null) {
+                                bigEffect = notifExtras.getString(EXTRA_BIG_ISLAND_EFFECT, null);
+                                if (TextUtils.isEmpty(expandEffect)) {
+                                    expandEffect = notifExtras.getString(EXTRA_EXPAND_EFFECT, "");
+                                }
+                            }
+                            if (TextUtils.isEmpty(bigEffect)) {
+                                bigEffect = expandEffect;
+                            }
+                            if (TextUtils.isEmpty(bigEffect)) return;
+                            dataBundle.putString(EXTRA_BIG_ISLAND_EFFECT, bigEffect);
+                            if (TextUtils.isEmpty(dataBundle.getString(EXTRA_EXPAND_EFFECT, ""))) {
+                                dataBundle.putString(EXTRA_EXPAND_EFFECT, bigEffect);
+                            }
+                            XposedBridge.log(TAG + ": bridge focus extras -> bigEffect=" + bigEffect);
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                });
+                return;
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private Bundle extractExtrasFromDynamicIslandData(Object dataObj) {
+        try {
+            Object extrasObj = invokeNoArg(dataObj, "getExtras");
+            if (extrasObj instanceof Bundle) return (Bundle) extrasObj;
+        } catch (Throwable ignore) {
+        }
+        return null;
+    }
+
+    private void hookBigIslandGlowByWindowController(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(DYNAMIC_ISLAND_WINDOW_VIEW_CONTROLLER_CLASS, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                String name = m.getName();
+                if (!("addDynamicIslandView".equals(name) || "updateDynamicIslandView".equals(name))) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts.length < 1) continue;
+                if (!DYNAMIC_ISLAND_DATA_CLASS.equals(pts[0].getName())) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        try {
+                            Object dataObj = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+                            if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+                            Integer oldProp = readDataProperties(dataObj);
+                            if (oldProp == null || oldProp.intValue() != 0) {
+                                writeDataProperties(dataObj, Integer.valueOf(0));
+                                XposedBridge.log(TAG + ": window " + name + " pre -> force prop 0 (old=" + oldProp + ")");
+                            } else {
+                                XposedBridge.log(TAG + ": window " + name + " pre -> prop already 0");
+                            }
+                        } catch (Throwable ignore) {
+                        }
+                    }
+
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            Object dataObj = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+                            if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+                            Object bigIslandView = resolveBigIslandView(param.thisObject);
+                            if (bigIslandView == null) return;
+                            invokeStartGlowEffect(bigIslandView);
+                            XposedBridge.log(TAG + ": window " + name + " post -> startGlowEffect invoked");
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                });
+                XposedBridge.log(TAG + ": window glow hook installed -> " + name);
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private void hookBigIslandGlowByCoordinatorCallback(ClassLoader classLoader) {
+        try {
+            Class<?> coordinatorCls = Class.forName(
+                    DYNAMIC_ISLAND_EVENT_COORDINATOR_CLASS, false, classLoader);
+            hookBigGlowCallbackInvokeByClass(coordinatorCls);
+            Class<?>[] inners = coordinatorCls.getDeclaredClasses();
+            if (inners == null || inners.length == 0) return;
+            for (Class<?> inner : inners) {
+                hookBigGlowCallbackInvokeByClass(inner);
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private void hookDynamicIslandShaderFeature(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(DYNAMIC_FEATURE_CONFIG_CLASS, false, classLoader);
+            String clsName = cls.getName();
+            if (!sHookedShaderFeatureClasses.add(clsName)) return;
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"getFEATURE_DYNAMIC_ISLAND_SHADER".equals(m.getName())) continue;
+                if (m.getParameterTypes().length != 0) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        param.setResult(Boolean.TRUE);
+                        XposedBridge.log(TAG + ": shader feature forced -> true");
+                    }
+                });
+                XposedBridge.log(TAG + ": shader feature hook installed -> " + clsName);
+                return;
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private void hookDynamicIslandDataSetPropertiesForGlow(ClassLoader classLoader) {
+        try {
+            Class<?> dataCls = Class.forName(DYNAMIC_ISLAND_DATA_CLASS, false, classLoader);
+            String clsName = dataCls.getName();
+            if (!sHookedDataSetPropertiesClasses.add(clsName)) return;
+            boolean hooked = false;
+            for (Method m : dataCls.getDeclaredMethods()) {
+                if (!"setProperties".equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts == null || pts.length != 1) continue;
+                Class<?> pt = pts[0];
+                if (!(Integer.class.equals(pt) || int.class.equals(pt))) continue;
+                m.setAccessible(true);
+                hooked = true;
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        try {
+                            Object dataObj = param.thisObject;
+                            if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+                            Class<?> argType = param.args[0] == null ? Integer.class : param.args[0].getClass();
+                            if (Integer.class.equals(argType) || param.args[0] instanceof Integer || param.args[0] == null) {
+                                param.args[0] = Integer.valueOf(0);
+                            } else {
+                                param.args[0] = 0;
+                            }
+                            XposedBridge.log(TAG + ": setProperties forced -> 0 for glow");
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                });
+            }
+            if (hooked) {
+                XposedBridge.log(TAG + ": data setProperties hook installed -> " + clsName);
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private void hookBigGlowCallbackInvokeByClass(Class<?> callbackClass) {
+        if (callbackClass == null) return;
+        String className = callbackClass.getName();
+        if (!isCoordinatorOrInnerClassName(className)) return;
+        if (!isBigIslandGlowCallbackClassName(className)) return;
+        if (!sHookedBigGlowCallbackClasses.add(className)) return;
+        boolean hooked = false;
+        for (Method m : callbackClass.getDeclaredMethods()) {
+            if (m == null) continue;
+            if (!"invoke".equals(m.getName())) continue;
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts == null || pts.length != 1) continue;
+            if (!String.class.equals(pts[0])) continue;
+            m.setAccessible(true);
+            hooked = true;
+            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        Object owner = resolveCoordinatorOwner(param.thisObject);
+                        if (owner == null) return;
+                        Object dataObj = resolveCurrentTempShowDataFromCoordinator(owner);
+                        if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+                        Integer oldProp = readDataProperties(dataObj);
+                        if (oldProp == null || oldProp.intValue() != 0) {
+                            writeDataProperties(dataObj, Integer.valueOf(0));
+                            sBigGlowPatchedData.set(dataObj);
+                            sBigGlowPatchedOldProp.set(oldProp);
+                            XposedBridge.log(TAG + ": shader invoke pre -> prop="
+                                    + oldProp + " => 0");
+                        } else {
+                            sBigGlowPatchedData.remove();
+                            sBigGlowPatchedOldProp.remove();
+                        }
+                    } catch (Throwable ignore) {
+                    }
+                }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Object patchedData = sBigGlowPatchedData.get();
+                        Integer oldProp = sBigGlowPatchedOldProp.get();
+                        if (patchedData != null) {
+                            writeDataProperties(patchedData, oldProp);
+                            XposedBridge.log(TAG + ": shader invoke post -> restore prop=" + oldProp);
+                        }
+                    } catch (Throwable ignore) {
+                    } finally {
+                        sBigGlowPatchedData.remove();
+                        sBigGlowPatchedOldProp.remove();
+                    }
+                    try {
+                        Object owner = resolveCoordinatorOwner(param.thisObject);
+                        if (owner == null) return;
+                        forceStartBigIslandGlowFromCoordinator(owner);
+                    } catch (Throwable ignore) {
+                    }
+                }
+            });
+        }
+        if (hooked) {
+            XposedBridge.log(TAG + ": big glow callback hooked -> " + className);
+        }
+    }
+
+    private Object resolveCoordinatorOwner(Object callbackObj) {
+        if (callbackObj == null) return null;
+        String callbackClassName = callbackObj.getClass().getName();
+        if (DYNAMIC_ISLAND_EVENT_COORDINATOR_CLASS.equals(callbackClassName)) {
+            return callbackObj;
+        }
+        Object owner = getFieldValue(callbackObj, "this$0");
+        if (owner == null) return null;
+        String ownerName = owner.getClass().getName();
+        if (DYNAMIC_ISLAND_EVENT_COORDINATOR_CLASS.equals(ownerName)) {
+            return owner;
+        }
+        return null;
+    }
+
+    private void forceStartBigIslandGlowFromCoordinator(Object coordinatorObj) {
+        if (coordinatorObj == null) return;
+        Object bigHandler = invokeNoArg(coordinatorObj, "getBigIslandStateHandler");
+        if (bigHandler == null) return;
+        Object contentView = invokeNoArg(bigHandler, "getCurrentTempShow");
+        if (contentView == null) contentView = invokeNoArg(bigHandler, "getCurrent");
+        if (contentView == null) return;
+        Object dataObj = invokeNoArg(contentView, "getCurrentIslandData");
+        if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+        Object bigView = invokeNoArg(contentView, "getBigIslandView");
+        if (bigView == null) return;
+        invokeStartGlowEffect(bigView);
+    }
+
+    private Object resolveCurrentTempShowDataFromCoordinator(Object coordinatorObj) {
+        if (coordinatorObj == null) return null;
+        Object bigHandler = invokeNoArg(coordinatorObj, "getBigIslandStateHandler");
+        if (bigHandler == null) return null;
+        Object contentView = invokeNoArg(bigHandler, "getCurrentTempShow");
+        if (contentView == null) contentView = invokeNoArg(bigHandler, "getCurrent");
+        if (contentView == null) return null;
+        return invokeNoArg(contentView, "getCurrentIslandData");
+    }
+
+    private boolean hasVoiceAssistBigGlowRequest(Object dataObj) {
+        Bundle extras = extractExtrasFromDynamicIslandData(dataObj);
+        if (extras == null) return false;
+        String bigEffect = extras.getString(EXTRA_BIG_ISLAND_EFFECT, "");
+        if (!TextUtils.isEmpty(bigEffect)) return true;
+        String expandEffect = extras.getString(EXTRA_EXPAND_EFFECT, "");
+        return !TextUtils.isEmpty(expandEffect);
+    }
+
+    private Integer readDataProperties(Object dataObj) {
+        if (dataObj == null) return null;
+        try {
+            Object value = invokeNoArg(dataObj, "getProperties");
+            if (value instanceof Integer) return (Integer) value;
+        } catch (Throwable ignore) {
+        }
+        return null;
+    }
+
+    private void writeDataProperties(Object dataObj, Integer value) {
+        if (dataObj == null) return;
+        try {
+            Method m = dataObj.getClass().getMethod("setProperties", Integer.class);
+            m.setAccessible(true);
+            m.invoke(dataObj, value);
+            return;
+        } catch (Throwable ignore) {
+        }
+        try {
+            Method m = dataObj.getClass().getMethod("setProperties", int.class);
+            m.setAccessible(true);
+            int v = value == null ? 0 : value.intValue();
+            m.invoke(dataObj, v);
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private Object resolveBigIslandView(Object windowController) {
+        if (windowController == null) return null;
+        Object rootView = invokeNoArg(windowController, "getView");
+        if (rootView == null) return null;
+        Object big = invokeNoArg(rootView, "getBigIslandView");
+        if (big != null) return big;
+        return findFieldByTypeName(rootView, "DynamicIslandBigIslandView");
+    }
+
+    private void invokeStartGlowEffect(Object target) {
+        if (target == null) return;
+        String[] names = new String[] {
+                "startGlowEffect$miui_dynamicisland_release",
+                "startGlowEffect"
+        };
+        for (String n : names) {
+            try {
+                Method m = target.getClass().getMethod(n);
+                m.setAccessible(true);
+                m.invoke(target);
+                return;
+            } catch (Throwable ignore) {
+            }
+        }
+        try {
+            for (Method m : target.getClass().getMethods()) {
+                if (m.getParameterTypes().length != 0) continue;
+                if (!m.getName().contains("startGlowEffect")) continue;
+                m.setAccessible(true);
+                m.invoke(target);
+                return;
+            }
+        } catch (Throwable ignore) {
+        }
     }
 
     private void hookPluginClassLoaderBridge(ClassLoader classLoader) {
@@ -114,8 +504,14 @@ public class SystemUiHook {
                                         Object nameObj = param.args[0];
                                         if (!(nameObj instanceof String)) return;
                                         String name = (String) nameObj;
-                                        if (!isFocusModuleClassName(name)) return;
                                         ClassLoader hit = (ClassLoader) param.thisObject;
+                                        if (isCoordinatorOrInnerClassName(name)) {
+                                            Object loadedObj = param.getResult();
+                                            if (loadedObj instanceof Class) {
+                                                hookBigGlowCallbackInvokeByClass((Class<?>) loadedObj);
+                                            }
+                                        }
+                                        if (!isFocusModuleClassName(name)) return;
                                         installHooksForClassLoader(hit);
                                     }
                                 });
@@ -157,6 +553,17 @@ public class SystemUiHook {
         return name.startsWith("miui.systemui.notification.focus.moduleV3.")
                 || name.startsWith("miui.systemui.notification.focus.templateV3.")
                 || name.startsWith("miui.systemui.dynamicisland.");
+    }
+
+    private boolean isCoordinatorOrInnerClassName(String name) {
+        if (TextUtils.isEmpty(name)) return false;
+        return DYNAMIC_ISLAND_EVENT_COORDINATOR_CLASS.equals(name)
+                || name.startsWith(DYNAMIC_ISLAND_EVENT_COORDINATOR_CLASS + "$");
+    }
+
+    private boolean isBigIslandGlowCallbackClassName(String name) {
+        if (TextUtils.isEmpty(name)) return false;
+        return name.contains("$initBigIslandEffectShader$");
     }
 
     private boolean isLikelyPluginClassLoader(ClassLoader cl) {
@@ -1534,6 +1941,29 @@ public class SystemUiHook {
         } catch (Throwable ignore) {
             return null;
         }
+    }
+
+    private static Object findFieldByTypeName(Object target, String typeNamePart) {
+        if (target == null || TextUtils.isEmpty(typeNamePart)) return null;
+        Class<?> cur = target.getClass();
+        while (cur != null) {
+            try {
+                Field[] fields = cur.getDeclaredFields();
+                for (Field f : fields) {
+                    if (f == null) continue;
+                    Class<?> ft = f.getType();
+                    if (ft == null) continue;
+                    String tn = ft.getName();
+                    if (TextUtils.isEmpty(tn) || !tn.contains(typeNamePart)) continue;
+                    f.setAccessible(true);
+                    Object v = f.get(target);
+                    if (v != null) return v;
+                }
+            } catch (Throwable ignore) {
+            }
+            cur = cur.getSuperclass();
+        }
+        return null;
     }
 
     private static Field findField(Class<?> cls, String name) {

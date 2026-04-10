@@ -38,6 +38,8 @@ public class SystemUiHook {
     private static final String DYNAMIC_ISLAND_DATA_CLASS =
             "com.android.systemui.plugins.miui.dynamicisland.DynamicIslandData";
     private static final String EXTRA_BIG_ISLAND_EFFECT = "miui.bigIsland.effect.src";
+    private static final String EXTRA_OWNER_KEY = "xiaoai.islandnotify.owner";
+    private static final String EXTRA_OWNER_VALUE = "com.xiaoai.islandnotify";
     private static final String FOCUS_CONTENT_CLASS =
             "com.android.systemui.plugins.miui.notification.FocusNotificationContent";
     private static final String FOCUS_NOTIFICATION_CONTROLLER_CLASS =
@@ -90,6 +92,7 @@ public class SystemUiHook {
 
     private static final ThreadLocal<Boolean> sReentry = new ThreadLocal<>();
     private static final ThreadLocal<Integer> sIslandBindDepth = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> sCurrentBindOwned = new ThreadLocal<>();
     private static final Set<String> sHookedIslandContentClasses = ConcurrentHashMap.newKeySet();
     private static final Set<String> sHookedShaderFeatureClasses = ConcurrentHashMap.newKeySet();
     private static final Set<String> sHookedAnimationControllerClasses = ConcurrentHashMap.newKeySet();
@@ -108,11 +111,15 @@ public class SystemUiHook {
     private static final int GLOW_MODE_AUTO = 0;
     private static final int GLOW_MODE_STATUS = 1;
     private static final int GLOW_MODE_EXPAND = 2;
+    private static volatile int sRecentOwnedGlowMode = GLOW_MODE_AUTO;
+    private static volatile long sRecentOwnedGlowAt = 0L;
+    private static final long RECENT_OWNED_GLOW_TTL_MS = 2500L;
     private static final Map<TextView, Boolean> sAdaptiveWatchers =
             java.util.Collections.synchronizedMap(new WeakHashMap<TextView, Boolean>());
     private static final Map<Object, String> sFocusContentKeyMap =
             java.util.Collections.synchronizedMap(new WeakHashMap<Object, String>());
     private static final ConcurrentMap<String, CachedTexts> sFullTextByKey = new ConcurrentHashMap<>();
+    private static final Set<String> sOwnedNotifyKeys = ConcurrentHashMap.newKeySet();
     private static final Map<ClassLoader, Boolean> sInstalledHookLoaders =
             java.util.Collections.synchronizedMap(new WeakHashMap<ClassLoader, Boolean>());
     private static volatile boolean sBaseDexCtorHooked = false;
@@ -174,14 +181,23 @@ public class SystemUiHook {
                                 if (n != null) notifExtras = n.extras;
                             }
                             String bigEffect = dataBundle.getString(EXTRA_BIG_ISLAND_EFFECT, null);
+                            String owner = dataBundle.getString(EXTRA_OWNER_KEY, null);
                             if (notifExtras != null) {
                                 String nBig = notifExtras.getString(EXTRA_BIG_ISLAND_EFFECT, null);
                                 if (!TextUtils.isEmpty(nBig)) {
                                     bigEffect = nBig;
                                 }
+                                String nOwner = notifExtras.getString(EXTRA_OWNER_KEY, null);
+                                if (!TextUtils.isEmpty(nOwner)) {
+                                    owner = nOwner;
+                                }
                             }
-                            if (TextUtils.isEmpty(bigEffect)) return;
-                            dataBundle.putString(EXTRA_BIG_ISLAND_EFFECT, bigEffect);
+                            if (!TextUtils.isEmpty(bigEffect)) {
+                                dataBundle.putString(EXTRA_BIG_ISLAND_EFFECT, bigEffect);
+                            }
+                            if (!TextUtils.isEmpty(owner)) {
+                                dataBundle.putString(EXTRA_OWNER_KEY, owner);
+                            }
                         } catch (Throwable ignore) {
                         }
                     }
@@ -200,6 +216,40 @@ public class SystemUiHook {
         } catch (Throwable ignore) {
         }
         return null;
+    }
+
+    private boolean isOwnedExtras(Bundle extras) {
+        if (extras == null) return false;
+        String owner = extras.getString(EXTRA_OWNER_KEY, "");
+        return EXTRA_OWNER_VALUE.equals(owner);
+    }
+
+    private String extractKeyFromDynamicIslandData(Object dataObj) {
+        if (dataObj == null) return "";
+        Object keyObj = invokeNoArg(dataObj, "getKey");
+        return keyObj instanceof String ? (String) keyObj : "";
+    }
+
+    private boolean isOwnedDynamicIslandData(Object dataObj) {
+        Bundle extras = extractExtrasFromDynamicIslandData(dataObj);
+        return isOwnedExtras(extras);
+    }
+
+    private boolean markOwnedKeyFromDynamicIslandData(Object dataObj) {
+        String key = extractKeyFromDynamicIslandData(dataObj);
+        if (TextUtils.isEmpty(key)) return false;
+        boolean owned = isOwnedDynamicIslandData(dataObj);
+        if (owned) {
+            sOwnedNotifyKeys.add(key);
+        } else {
+            sOwnedNotifyKeys.remove(key);
+            sFullTextByKey.remove(key);
+        }
+        return owned;
+    }
+
+    private boolean isOwnedNotifyKey(String key) {
+        return !TextUtils.isEmpty(key) && sOwnedNotifyKeys.contains(key);
     }
 
     private void hookDynamicIslandShaderFeature(ClassLoader classLoader) {
@@ -227,6 +277,7 @@ public class SystemUiHook {
     private boolean hasVoiceAssistBigGlowRequest(Object dataObj) {
         Bundle extras = extractExtrasFromDynamicIslandData(dataObj);
         if (extras == null) return false;
+        if (!isOwnedExtras(extras)) return false;
         String bigEffect = extras.getString(EXTRA_BIG_ISLAND_EFFECT, "");
         return !TextUtils.isEmpty(bigEffect);
     }
@@ -249,7 +300,9 @@ public class SystemUiHook {
                             if (stateObj == null) return;
                             boolean isBig = isBigIslandStateTag(stateObj);
                             boolean isDeleted = isDeletedIslandStateTag(stateObj);
+                            boolean isExpand = isExpandIslandStateTag(stateObj);
                             Object dataObj = extractDynamicDataFromAnimationState(stateObj);
+                            updateRecentOwnedGlowState(dataObj, resolveStrictGlowMode(isBig, isExpand));
                             if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
                             Object bigView = invokeNoArg(stateObj, "getBigIslandView");
                             if (bigView == null) return;
@@ -346,6 +399,7 @@ public class SystemUiHook {
                         try {
                             Object glowView = param.thisObject;
                             int mode = resolveGlowModeFromGlowView(glowView);
+                            if (!shouldApplyOwnedGlowForMode(mode)) return;
                             applyCustomGlowColorForGlowViewInstance(glowView, mode);
                         } catch (Throwable t) {
                             sGlowColorHookDisabled = true;
@@ -374,6 +428,21 @@ public class SystemUiHook {
                 ? currentOrDefault
                 : rebuildLightShaderArray(currentOrDefault, cfg.argb);
         setRuntimeShaderLightColors(runtimeShader, target);
+    }
+
+    private void updateRecentOwnedGlowState(Object dataObj, int mode) {
+        if (mode == GLOW_MODE_AUTO) return;
+        if (isOwnedDynamicIslandData(dataObj)) {
+            sRecentOwnedGlowMode = mode;
+            sRecentOwnedGlowAt = System.currentTimeMillis();
+        }
+    }
+
+    private boolean shouldApplyOwnedGlowForMode(int mode) {
+        if (mode == GLOW_MODE_AUTO) return false;
+        long now = System.currentTimeMillis();
+        if (now - sRecentOwnedGlowAt > RECENT_OWNED_GLOW_TTL_MS) return false;
+        return sRecentOwnedGlowMode == mode;
     }
 
     private Object resolveLightBgShaderFromGlowView(Object glowView) {
@@ -875,6 +944,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         Object digitObj = getFieldValue(self, "sameWidthDigit");
@@ -950,6 +1020,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         if (!ISLAND_SAME_WIDTH_DIGIT_VIEW_HOLDER_CLASS.equals(self.getClass().getName())) return;
@@ -1084,6 +1155,7 @@ public class SystemUiHook {
             XposedBridge.hookMethod(m, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
+                    if (!isInOurIslandBind()) return;
                     Object self = param.thisObject;
                     if (self == null) return;
                     applyMarqueeForFieldTextView(self, "focusSmallTitle");
@@ -1171,6 +1243,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         if (param.args == null || param.args.length == 0) return;
                         if (!(param.args[0] instanceof Integer)) return;
                         Object self = param.thisObject;
@@ -1772,16 +1845,23 @@ public class SystemUiHook {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             enterIslandBind();
+                            boolean owned = false;
                             if (param.args != null && param.args.length > 0) {
-                                tuneDynamicIslandData(param.args[0]);
+                                owned = markOwnedKeyFromDynamicIslandData(param.args[0]);
+                                if (owned) {
+                                    tuneDynamicIslandData(param.args[0]);
+                                }
                             }
+                            sCurrentBindOwned.set(owned);
                         }
 
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (param.args != null && param.args.length > 0) {
+                            boolean owned = Boolean.TRUE.equals(sCurrentBindOwned.get());
+                            if (owned && param.args != null && param.args.length > 0) {
                                 applyFullTextToRenderedViews(param.args[0]);
                             }
+                            sCurrentBindOwned.set(Boolean.FALSE);
                             exitIslandBind();
                         }
                     });
@@ -1876,6 +1956,7 @@ public class SystemUiHook {
 
     private void rewriteTickerDataWithFullText(Object dataObj) {
         try {
+            if (!isOwnedDynamicIslandData(dataObj)) return;
             Object keyObj = invokeNoArg(dataObj, "getKey");
             if (!(keyObj instanceof String)) return;
             String key = (String) keyObj;
@@ -1917,6 +1998,7 @@ public class SystemUiHook {
 
     private void applyFullTextToRenderedViews(Object dataObj) {
         try {
+            if (!isOwnedDynamicIslandData(dataObj)) return;
             Object keyObj = invokeNoArg(dataObj, "getKey");
             String key = keyObj instanceof String ? (String) keyObj : "";
             CachedTexts cached = pickCachedTexts(key);
@@ -2009,6 +2091,7 @@ public class SystemUiHook {
         if (focusContentObj == null) return;
         String key = sFocusContentKeyMap.get(focusContentObj);
         if (TextUtils.isEmpty(key)) return;
+        if (!isOwnedNotifyKey(key)) return;
         CachedTexts cached = sFullTextByKey.get(key);
         if (cached == null) return;
         applyFullTextToTree(root, cached);
@@ -2182,6 +2265,7 @@ public class SystemUiHook {
         Integer depth = sIslandBindDepth.get();
         if (depth == null || depth <= 1) {
             sIslandBindDepth.set(0);
+            sCurrentBindOwned.set(Boolean.FALSE);
             return;
         }
         sIslandBindDepth.set(depth - 1);
@@ -2190,6 +2274,10 @@ public class SystemUiHook {
     private static boolean isInIslandBind() {
         Integer depth = sIslandBindDepth.get();
         return depth != null && depth > 0;
+    }
+
+    private static boolean isInOurIslandBind() {
+        return isInIslandBind() && Boolean.TRUE.equals(sCurrentBindOwned.get());
     }
 
     private static String safeIdName(View view, int id) {

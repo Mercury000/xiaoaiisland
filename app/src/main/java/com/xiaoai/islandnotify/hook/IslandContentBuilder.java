@@ -36,6 +36,8 @@ final class IslandContentBuilder {
     private static final String VAR_TEACHER = "{\u6559\u5e08}";
     private static final String VAR_COUNTDOWN = "{\u5012\u8ba1\u65f6}";
     private static final String VAR_ELAPSED = "{\u6b63\u8ba1\u65f6}";
+    private static final String EXTRA_OWNER_KEY = "xiaoai.islandnotify.owner";
+    private static final String EXTRA_OWNER_VALUE = "com.xiaoai.islandnotify";
 
     private static final String UNSUPPORTED_ELAPSED_IN_PRE = "\u4e0a\u8bfe\u524d\u4e0d\u652f\u6301\u6b63\u8ba1\u65f6";
     private static final String UNSUPPORTED_COUNTDOWN_IN_POST = "\u4e0b\u8bfe\u540e\u4e0d\u652f\u6301\u5012\u8ba1\u65f6";
@@ -407,6 +409,7 @@ final class IslandContentBuilder {
                 extras.remove("miui.bigIsland.effect.src");
                 extras.remove("miui.effect.src");
             }
+            extras.putString(EXTRA_OWNER_KEY, EXTRA_OWNER_VALUE);
             return extras;
         } catch (Throwable ignored) {
             return new Bundle();

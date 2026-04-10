@@ -47,10 +47,6 @@ public class SystemUiHook {
             "miui.systemui.dynamicisland.window.DynamicIslandWindowViewController";
     private static final String DYNAMIC_ISLAND_WINDOW_VIEW_CLASS =
             "miui.systemui.dynamicisland.window.DynamicIslandWindowView";
-    private static final String METHOD_ADD_DYNAMIC_ISLAND_DATA = "addDynamicIslandData";
-    private static final String METHOD_UPDATE_DYNAMIC_ISLAND_VIEW = "updateDynamicIslandView";
-    private static final String METHOD_ADD_DYNAMIC_ISLAND_DATA_SUSPEND = "addDynamicIslandDataSuspend";
-    private static final String METHOD_UPDATE_DYNAMIC_ISLAND_VIEW_SUSPEND = "updateDynamicIslandViewSuspend";
     private static final String DYNAMIC_ISLAND_BASE_CONTENT_VIEW_CLASS =
             "miui.systemui.dynamicisland.window.content.DynamicIslandBaseContentView";
     private static final String TEMPLATE_FACTORY_V3_CLASS =
@@ -181,10 +177,9 @@ public class SystemUiHook {
             Class<?> cls = Class.forName(DYNAMIC_ISLAND_WINDOW_VIEW_CLASS, false, classLoader);
             String clsName = cls.getName();
             if (!sHookedWindowViewGlowClasses.add(clsName)) return;
-            boolean hasSuspendEntry = hasSuspendGlowEntryMethods(cls);
             for (Method m : cls.getDeclaredMethods()) {
                 String name = m.getName();
-                if (!isTargetGlowEntryMethodName(name, hasSuspendEntry)) continue;
+                if (!("addDynamicIslandData".equals(name) || "updateDynamicIslandView".equals(name))) continue;
                 Class<?>[] pts = m.getParameterTypes();
                 if (pts == null || pts.length < 1) continue;
                 if (!DYNAMIC_ISLAND_DATA_CLASS.equals(pts[0].getName())) continue;
@@ -194,7 +189,13 @@ public class SystemUiHook {
                     protected void afterHookedMethod(MethodHookParam param) {
                         try {
                             Object dataObj = (param.args != null && param.args.length > 0) ? param.args[0] : null;
-                            triggerGlowForData(param.thisObject, dataObj);
+                            if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+                            Object contentView = resolveContentViewFromWindowView(param.thisObject, dataObj);
+                            if (contentView == null) return;
+                            Object bigView = invokeNoArg(contentView, "getBigIslandView");
+                            if (bigView == null) return;
+                            normalizeBigGlowView(bigView);
+                            invokeStartGlowEffect(bigView);
                         } catch (Throwable ignore) {
                         }
                     }
@@ -206,11 +207,13 @@ public class SystemUiHook {
     }
 
     private Object resolveContentViewFromWindowView(Object windowView, Object dataObj) {
-        return resolveContentViewFromWindowViewByKey(windowView, extractDataKey(dataObj));
-    }
-
-    private Object resolveContentViewFromWindowViewByKey(Object windowView, String key) {
-        if (windowView == null) return null;
+        if (windowView == null || dataObj == null) return null;
+        String key = null;
+        try {
+            Object keyObj = invokeNoArg(dataObj, "getKey");
+            if (keyObj instanceof String) key = (String) keyObj;
+        } catch (Throwable ignore) {
+        }
         if (TextUtils.isEmpty(key)) return null;
         try {
             Method getViewFromList = windowView.getClass().getMethod("getViewFromList", String.class);
@@ -220,55 +223,6 @@ public class SystemUiHook {
         } catch (Throwable ignore) {
         }
         return null;
-    }
-
-    private boolean hasSuspendGlowEntryMethods(Class<?> cls) {
-        if (cls == null) return false;
-        try {
-            for (Method m : cls.getDeclaredMethods()) {
-                if (m == null) continue;
-                String n = m.getName();
-                if (METHOD_ADD_DYNAMIC_ISLAND_DATA_SUSPEND.equals(n)
-                        || METHOD_UPDATE_DYNAMIC_ISLAND_VIEW_SUSPEND.equals(n)) {
-                    return true;
-                }
-            }
-        } catch (Throwable ignore) {
-        }
-        return false;
-    }
-
-    private boolean isTargetGlowEntryMethodName(String name, boolean preferSuspend) {
-        if (TextUtils.isEmpty(name)) return false;
-        if (preferSuspend) {
-            return METHOD_ADD_DYNAMIC_ISLAND_DATA_SUSPEND.equals(name)
-                    || METHOD_UPDATE_DYNAMIC_ISLAND_VIEW_SUSPEND.equals(name);
-        }
-        return METHOD_ADD_DYNAMIC_ISLAND_DATA.equals(name)
-                || METHOD_UPDATE_DYNAMIC_ISLAND_VIEW.equals(name);
-    }
-
-    private String extractDataKey(Object dataObj) {
-        if (dataObj == null) return null;
-        try {
-            Object keyObj = invokeNoArg(dataObj, "getKey");
-            return keyObj instanceof String ? (String) keyObj : null;
-        } catch (Throwable ignore) {
-            return null;
-        }
-    }
-
-    private void triggerGlowForData(Object windowView, Object dataObj) {
-        if (windowView == null || dataObj == null) return;
-        if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
-        String key = extractDataKey(dataObj);
-        if (TextUtils.isEmpty(key)) return;
-        Object contentView = resolveContentViewFromWindowViewByKey(windowView, key);
-        if (contentView == null) return;
-        Object bigView = invokeNoArg(contentView, "getBigIslandView");
-        if (bigView == null) return;
-        normalizeBigGlowView(bigView);
-        invokeStartGlowEffect(bigView);
     }
 
     private void hookDynamicIslandShaderFeature(ClassLoader classLoader) {

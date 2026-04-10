@@ -47,6 +47,8 @@ public class SystemUiHook {
             "miui.systemui.dynamicisland.window.DynamicIslandWindowViewController";
     private static final String DYNAMIC_ISLAND_WINDOW_VIEW_CLASS =
             "miui.systemui.dynamicisland.window.DynamicIslandWindowView";
+    private static final String DYNAMIC_ISLAND_ANIMATION_CONTROLLER_CLASS =
+            "miui.systemui.dynamicisland.anim.DynamicIslandAnimationController";
     private static final String DYNAMIC_ISLAND_BASE_CONTENT_VIEW_CLASS =
             "miui.systemui.dynamicisland.window.content.DynamicIslandBaseContentView";
     private static final String TEMPLATE_FACTORY_V3_CLASS =
@@ -79,6 +81,7 @@ public class SystemUiHook {
     private static final Set<String> sHookedIslandContentClasses = ConcurrentHashMap.newKeySet();
     private static final Set<String> sHookedShaderFeatureClasses = ConcurrentHashMap.newKeySet();
     private static final Set<String> sHookedWindowViewGlowClasses = ConcurrentHashMap.newKeySet();
+    private static final Set<String> sHookedAnimationControllerClasses = ConcurrentHashMap.newKeySet();
     private static final Map<TextView, Boolean> sAdaptiveWatchers =
             java.util.Collections.synchronizedMap(new WeakHashMap<TextView, Boolean>());
     private static final Map<Object, String> sFocusContentKeyMap =
@@ -110,6 +113,7 @@ public class SystemUiHook {
         sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
         hookDynamicIslandShaderFeature(classLoader);
         hookBigIslandGlowByWindowView(classLoader);
+        hookBigIslandAnimationState(classLoader);
         hookFocusDynamicIslandExtrasBridge(classLoader);
         hookExactFirstLimitPoints(classLoader);
         hookIslandExpandedView(classLoader);
@@ -179,23 +183,34 @@ public class SystemUiHook {
             if (!sHookedWindowViewGlowClasses.add(clsName)) return;
             for (Method m : cls.getDeclaredMethods()) {
                 String name = m.getName();
-                if (!("addDynamicIslandData".equals(name) || "updateDynamicIslandView".equals(name))) continue;
+                if (!("addDynamicIslandData".equals(name)
+                        || "updateDynamicIslandView".equals(name)
+                        || "addDynamicIslandDataSuspend".equals(name)
+                        || "updateDynamicIslandViewSuspend".equals(name))) continue;
                 Class<?>[] pts = m.getParameterTypes();
                 if (pts == null || pts.length < 1) continue;
                 if (!DYNAMIC_ISLAND_DATA_CLASS.equals(pts[0].getName())) continue;
+                final boolean isAddEntry = name.startsWith("addDynamicIslandData");
                 m.setAccessible(true);
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        try {
+                            Object dataObj = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+                            forceDataPropertiesNonZeroIfBigEffect(dataObj);
+                        } catch (Throwable ignore) {
+                        }
+                    }
+
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         try {
                             Object dataObj = (param.args != null && param.args.length > 0) ? param.args[0] : null;
                             if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
-                            Object contentView = resolveContentViewFromWindowView(param.thisObject, dataObj);
-                            if (contentView == null) return;
-                            Object bigView = invokeNoArg(contentView, "getBigIslandView");
-                            if (bigView == null) return;
-                            normalizeBigGlowView(bigView);
-                            invokeStartGlowEffect(bigView);
+                            boolean started = tryStartBigGlowFromWindowView(param.thisObject, dataObj);
+                            if (!started && isAddEntry) {
+                                postOneShotGlow(param.thisObject, dataObj);
+                            }
                         } catch (Throwable ignore) {
                         }
                     }
@@ -223,6 +238,31 @@ public class SystemUiHook {
         } catch (Throwable ignore) {
         }
         return null;
+    }
+
+    private boolean tryStartBigGlowFromWindowView(Object windowView, Object dataObj) {
+        if (windowView == null || dataObj == null) return false;
+        Object contentView = resolveContentViewFromWindowView(windowView, dataObj);
+        if (contentView == null) return false;
+        Object bigView = invokeNoArg(contentView, "getBigIslandView");
+        if (bigView == null) return false;
+        normalizeBigGlowView(bigView);
+        invokeStartGlowEffect(bigView);
+        return true;
+    }
+
+    private void postOneShotGlow(final Object windowView, final Object dataObj) {
+        View host = asView(windowView);
+        if (host == null) return;
+        host.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    tryStartBigGlowFromWindowView(windowView, dataObj);
+                } catch (Throwable ignore) {
+                }
+            }
+        });
     }
 
     private void hookDynamicIslandShaderFeature(ClassLoader classLoader) {
@@ -264,6 +304,105 @@ public class SystemUiHook {
         return null;
     }
 
+    private void forceDataPropertiesNonZeroIfBigEffect(Object dataObj) {
+        if (dataObj == null) return;
+        if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+        Integer properties = readDataProperties(dataObj);
+        if (properties != null && properties.intValue() != 0) return;
+        if (trySetDataProperties(dataObj, 2)) return;
+        trySetDataProperties(dataObj, 1);
+    }
+
+    private boolean trySetDataProperties(Object dataObj, int value) {
+        if (dataObj == null) return false;
+        try {
+            Method setInt = dataObj.getClass().getMethod("setProperties", int.class);
+            setInt.setAccessible(true);
+            setInt.invoke(dataObj, value);
+            return true;
+        } catch (Throwable ignore) {
+        }
+        try {
+            Method setInteger = dataObj.getClass().getMethod("setProperties", Integer.class);
+            setInteger.setAccessible(true);
+            setInteger.invoke(dataObj, Integer.valueOf(value));
+            return true;
+        } catch (Throwable ignore) {
+        }
+        return false;
+    }
+
+    private void hookBigIslandAnimationState(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(DYNAMIC_ISLAND_ANIMATION_CONTROLLER_CLASS, false, classLoader);
+            String clsName = cls.getName();
+            if (!sHookedAnimationControllerClasses.add(clsName)) return;
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"onStateChange".equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts == null || pts.length < 1) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            Object stateObj = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+                            if (stateObj == null) return;
+                            Object dataObj = extractDynamicDataFromAnimationState(stateObj);
+                            if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
+                            forceDataPropertiesNonZeroIfBigEffect(dataObj);
+                            boolean isBig = isBigIslandStateTag(stateObj);
+                            boolean isDeleted = isDeletedIslandStateTag(stateObj);
+                            Object bigView = invokeNoArg(stateObj, "getBigIslandView");
+                            if (bigView == null) return;
+                            if (isBig) {
+                                normalizeBigGlowView(bigView);
+                                invokeStartGlowEffect(bigView);
+                            } else if (isDeleted) {
+                                invokeStopGlowEffect(bigView);
+                            }
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                });
+                return;
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private Object extractDynamicDataFromAnimationState(Object stateObj) {
+        if (stateObj == null) return null;
+        String[] names = new String[] {
+                "getCurrentIslandData",
+                "getIslandData",
+                "getData"
+        };
+        for (String n : names) {
+            try {
+                Object value = invokeNoArg(stateObj, n);
+                if (value != null) return value;
+            } catch (Throwable ignore) {
+            }
+        }
+        return null;
+    }
+
+    private boolean isBigIslandStateTag(Object stateObj) {
+        if (stateObj == null) return false;
+        Object state = invokeNoArg(stateObj, "getState");
+        String text = String.valueOf(state);
+        return text.contains("BigIsland");
+    }
+
+    private boolean isDeletedIslandStateTag(Object stateObj) {
+        if (stateObj == null) return false;
+        Object state = invokeNoArg(stateObj, "getState");
+        String text = String.valueOf(state);
+        return text.contains("Deleted");
+    }
+
     private void normalizeBigGlowView(Object bigView) {
         if (bigView == null) return;
         // Keep default adaptive glow size from SystemUI. Forcing suppressAdaptiveGlowViewSize
@@ -294,6 +433,30 @@ public class SystemUiHook {
                 return;
             }
         } catch (Throwable ignore) {
+        }
+    }
+
+    private void invokeStopGlowEffect(Object target) {
+        if (target == null) return;
+        String[] names = new String[] {
+                "stopGlowEffect$miui_dynamicisland_release",
+                "stopGlowEffect"
+        };
+        for (String n : names) {
+            try {
+                Method m = target.getClass().getMethod(n, boolean.class);
+                m.setAccessible(true);
+                m.invoke(target, Boolean.TRUE);
+                return;
+            } catch (Throwable ignore) {
+            }
+            try {
+                Method m = target.getClass().getMethod(n);
+                m.setAccessible(true);
+                m.invoke(target);
+                return;
+            } catch (Throwable ignore) {
+            }
         }
     }
 

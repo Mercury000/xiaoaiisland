@@ -454,6 +454,8 @@ private class SettingsComposeState {
     var iconAEnabled by mutableStateOf(true)
     var outEffectStatusEnabled by mutableStateOf(true)
     var outEffectExpandEnabled by mutableStateOf(true)
+    var outEffectStatusCustomColorEnabled by mutableStateOf(false)
+    var outEffectStatusCustomColorArgb by mutableIntStateOf(0xFFFFFFFF.toInt())
     var outEffectExpandCustomColorEnabled by mutableStateOf(false)
     var outEffectExpandCustomColorArgb by mutableIntStateOf(0xFFFFFFFF.toInt())
     var timeoutState by mutableStateOf(TimeoutUiState())
@@ -545,6 +547,16 @@ private class SettingsComposeState {
             prefs,
             "out_effect_expand_enabled",
             expandEffectDefault,
+        )
+        outEffectStatusCustomColorEnabled = PrefsAccess.readConfigBool(
+            prefs,
+            "out_effect_status_custom_color_enabled",
+            false,
+        )
+        outEffectStatusCustomColorArgb = PrefsAccess.readConfigInt(
+            prefs,
+            "out_effect_status_custom_color_argb",
+            0xFFFFFFFF.toInt(),
         )
         outEffectExpandCustomColorEnabled = PrefsAccess.readConfigBool(
             prefs,
@@ -733,6 +745,7 @@ private fun StatusCustomPage(
     pagePadding: PaddingValues = PaddingValues(0.dp),
 ) {
     var editDialog by remember { mutableStateOf<EditDialogSpec?>(null) }
+    var showColorDialog by remember { mutableStateOf(false) }
     val stageLabels = remember { listOf("上课前", "上课中", "下课后") }
 
     fun persistStatusConfig() {
@@ -748,6 +761,14 @@ private fun StatusCustomPage(
         }
         editor.putBoolean("icon_a", state.iconAEnabled)
         editor.putBoolean("out_effect_status_enabled", state.outEffectStatusEnabled)
+        editor.putBoolean(
+            "out_effect_status_custom_color_enabled",
+            state.outEffectStatusCustomColorEnabled,
+        )
+        editor.putInt(
+            "out_effect_status_custom_color_argb",
+            state.outEffectStatusCustomColorArgb,
+        )
         editor.apply()
     }
 
@@ -858,6 +879,25 @@ private fun StatusCustomPage(
                             persistStatusConfig()
                         },
                     )
+                    if (state.outEffectStatusEnabled) {
+                        SwitchPreference(
+                            title = "发光自定义颜色",
+                            summary = "仅作用于状态栏大岛发光颜色",
+                            value = state.outEffectStatusCustomColorEnabled,
+                            onCheckedChange = {
+                                state.outEffectStatusCustomColorEnabled = it
+                                persistStatusConfig()
+                            },
+                        )
+                        if (state.outEffectStatusCustomColorEnabled) {
+                            TextPreference(
+                                title = "发光颜色",
+                                value = formatColorHexArgb(state.outEffectStatusCustomColorArgb),
+                                enabled = true,
+                                onClick = { showColorDialog = true },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -865,6 +905,17 @@ private fun StatusCustomPage(
     }
     editDialog?.let { spec ->
         EditValueDialog(spec = spec, onDismiss = { editDialog = null })
+    }
+    if (showColorDialog) {
+        GlowColorPickerDialog(
+            initialArgb = state.outEffectStatusCustomColorArgb,
+            onDismiss = { showColorDialog = false },
+            onConfirm = { argb ->
+                state.outEffectStatusCustomColorArgb = argb
+                persistStatusConfig()
+                showColorDialog = false
+            },
+        )
     }
 }
 
@@ -1061,25 +1112,25 @@ private fun ExpandedCustomPage(
                             persistExpandedConfig()
                         },
                     )
-                    SwitchPreference(
-                        title = "发光自定义颜色",
-                        summary = "开启后使用自定义颜色覆盖系统默认发光色",
-                        value = state.outEffectExpandCustomColorEnabled,
-                        onCheckedChange = {
-                            state.outEffectExpandCustomColorEnabled = it
-                            persistExpandedConfig()
-                        },
-                    )
-                    TextPreference(
-                        title = "发光颜色",
-                        value = formatColorHexArgb(state.outEffectExpandCustomColorArgb),
-                        enabled = state.outEffectExpandCustomColorEnabled,
-                        onClick = {
-                            if (state.outEffectExpandCustomColorEnabled) {
-                                showColorDialog = true
-                            }
-                        },
-                    )
+                    if (state.outEffectExpandEnabled) {
+                        SwitchPreference(
+                            title = "发光自定义颜色",
+                            summary = "开启后使用自定义颜色覆盖系统默认发光色",
+                            value = state.outEffectExpandCustomColorEnabled,
+                            onCheckedChange = {
+                                state.outEffectExpandCustomColorEnabled = it
+                                persistExpandedConfig()
+                            },
+                        )
+                        if (state.outEffectExpandCustomColorEnabled) {
+                            TextPreference(
+                                title = "发光颜色",
+                                value = formatColorHexArgb(state.outEffectExpandCustomColorArgb),
+                                enabled = true,
+                                onClick = { showColorDialog = true },
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -49,6 +49,8 @@ public class SystemUiHook {
             "miui.systemui.dynamicisland.window.DynamicIslandWindowViewController";
     private static final String DYNAMIC_ISLAND_ANIMATION_CONTROLLER_CLASS =
             "miui.systemui.dynamicisland.anim.DynamicIslandAnimationController";
+    private static final String DYNAMIC_GLOW_EFFECT_VIEW_CLASS =
+            "miui.systemui.dynamicisland.view.DynamicGlowEffectView";
     private static final String DYNAMIC_ISLAND_BASE_CONTENT_VIEW_CLASS =
             "miui.systemui.dynamicisland.window.content.DynamicIslandBaseContentView";
     private static final String TEMPLATE_FACTORY_V3_CLASS =
@@ -70,8 +72,11 @@ public class SystemUiHook {
     private static final String LIGHT_BG_SHADER_CLASS = "com.mi.widget.shader.LightBgShader";
     private static final String LIGHT_BG_SHADER_FIELD = "U_LIGHT_COLORS";
     private static final String PREFS_GROUP_CONFIG = "island_custom";
-    private static final String KEY_CUSTOM_GLOW_COLOR_ENABLED = "out_effect_expand_custom_color_enabled";
-    private static final String KEY_CUSTOM_GLOW_COLOR_ARGB = "out_effect_expand_custom_color_argb";
+    private static final String KEY_STATUS_CUSTOM_GLOW_COLOR_ENABLED = "out_effect_status_custom_color_enabled";
+    private static final String KEY_STATUS_CUSTOM_GLOW_COLOR_ARGB = "out_effect_status_custom_color_argb";
+    private static final String KEY_EXPAND_CUSTOM_GLOW_COLOR_ENABLED = "out_effect_expand_custom_color_enabled";
+    private static final String KEY_EXPAND_CUSTOM_GLOW_COLOR_ARGB = "out_effect_expand_custom_color_argb";
+    private static final String KEY_STATUS_GLOW_ENABLED = "out_effect_status_enabled";
     private static final String KEY_EXPAND_GLOW_ENABLED = "out_effect_expand_enabled";
     private static final String BASE_ISLAND_MODULE_VIEW_HOLDER_CLASS =
             "miui.systemui.dynamicisland.module.BaseIslandModuleViewHolder";
@@ -88,13 +93,20 @@ public class SystemUiHook {
     private static final Set<String> sHookedShaderFeatureClasses = ConcurrentHashMap.newKeySet();
     private static final Set<String> sHookedAnimationControllerClasses = ConcurrentHashMap.newKeySet();
     private static final Set<String> sHookedLightBgShaderClasses = ConcurrentHashMap.newKeySet();
+    private static final Set<String> sHookedGlowEffectViewClasses = ConcurrentHashMap.newKeySet();
     private static final Map<Class<?>, float[]> sDefaultLightShaderColors =
             java.util.Collections.synchronizedMap(new WeakHashMap<Class<?>, float[]>());
     private static volatile boolean sGlowColorHookDisabled = false;
-    private static volatile boolean sCachedCustomGlowEnabled = false;
-    private static volatile int sCachedCustomGlowArgb = 0xFFFFFFFF;
+    private static volatile boolean sCachedStatusCustomGlowEnabled = false;
+    private static volatile int sCachedStatusCustomGlowArgb = 0xFFFFFFFF;
+    private static volatile boolean sCachedExpandCustomGlowEnabled = false;
+    private static volatile int sCachedExpandCustomGlowArgb = 0xFFFFFFFF;
+    private static volatile boolean sCachedStatusGlowEnabled = false;
     private static volatile boolean sCachedExpandGlowEnabled = true;
     private static volatile long sLastGlowPrefsReadAt = 0L;
+    private static final int GLOW_MODE_AUTO = 0;
+    private static final int GLOW_MODE_STATUS = 1;
+    private static final int GLOW_MODE_EXPAND = 2;
     private static final Map<TextView, Boolean> sAdaptiveWatchers =
             java.util.Collections.synchronizedMap(new WeakHashMap<TextView, Boolean>());
     private static final Map<Object, String> sFocusContentKeyMap =
@@ -126,7 +138,7 @@ public class SystemUiHook {
         sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
         hookDynamicIslandShaderFeature(classLoader);
         hookBigIslandAnimationState(classLoader);
-        hookLightBgShaderColor(classLoader);
+        hookGlowEffectStartColor(classLoader);
         hookFocusDynamicIslandExtrasBridge(classLoader);
         hookExactFirstLimitPoints(classLoader);
         hookIslandExpandedView(classLoader);
@@ -234,11 +246,10 @@ public class SystemUiHook {
                         try {
                             Object stateObj = (param.args != null && param.args.length > 0) ? param.args[0] : null;
                             if (stateObj == null) return;
-                            applyCustomGlowColorForClassLoader(stateObj.getClass().getClassLoader());
-                            Object dataObj = extractDynamicDataFromAnimationState(stateObj);
-                            if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
                             boolean isBig = isBigIslandStateTag(stateObj);
                             boolean isDeleted = isDeletedIslandStateTag(stateObj);
+                            Object dataObj = extractDynamicDataFromAnimationState(stateObj);
+                            if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
                             Object bigView = invokeNoArg(stateObj, "getBigIslandView");
                             if (bigView == null) return;
                             if (isBig) {
@@ -287,6 +298,155 @@ public class SystemUiHook {
         Object state = invokeNoArg(stateObj, "getState");
         String text = String.valueOf(state);
         return text.contains("Deleted");
+    }
+
+    private boolean isExpandIslandStateTag(Object stateObj) {
+        if (stateObj == null) return false;
+        Object state = invokeNoArg(stateObj, "getState");
+        String text = String.valueOf(state);
+        return text.contains("Expand");
+    }
+
+    private int resolveStrictGlowMode(boolean isBig, boolean isExpand) {
+        // Strict split:
+        // 1) status-only state -> status color
+        // 2) expand state -> expand color
+        // 3) mixed/unknown -> do not force either side to avoid cross-using colors
+        if (isExpand && !isBig) return GLOW_MODE_EXPAND;
+        if (isBig && !isExpand) return GLOW_MODE_STATUS;
+        return GLOW_MODE_AUTO;
+    }
+
+    private int resolveGlowModeFromGlowView(Object glowViewObj) {
+        if (glowViewObj == null) return GLOW_MODE_AUTO;
+        String cls = glowViewObj.getClass().getName();
+        if (cls.contains("DynamicIslandExpandedView")) return GLOW_MODE_EXPAND;
+        if (cls.contains("DynamicIslandBigIslandView")) return GLOW_MODE_STATUS;
+        return GLOW_MODE_AUTO;
+    }
+
+    private void hookGlowEffectStartColor(ClassLoader classLoader) {
+        try {
+            refreshGlowPrefsCache(true);
+            Class<?> glowCls = Class.forName(DYNAMIC_GLOW_EFFECT_VIEW_CLASS, false, classLoader);
+            String clsName = glowCls.getName();
+            if (!sHookedGlowEffectViewClasses.add(clsName)) return;
+            for (Method m : glowCls.getDeclaredMethods()) {
+                if (!"startGlowEffect$miui_dynamicisland_release".equals(m.getName())
+                        && !"startGlowEffect".equals(m.getName())) {
+                    continue;
+                }
+                if (m.getParameterTypes().length != 0) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (sGlowColorHookDisabled) return;
+                        try {
+                            Object glowView = param.thisObject;
+                            int mode = resolveGlowModeFromGlowView(glowView);
+                            applyCustomGlowColorForGlowViewInstance(glowView, mode);
+                        } catch (Throwable t) {
+                            sGlowColorHookDisabled = true;
+                            swallowOptionalHookFailure(t);
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private void applyCustomGlowColorForGlowViewInstance(Object glowView, int glowMode) {
+        if (glowView == null) return;
+        refreshGlowPrefsCache(false);
+        Object shaderObj = resolveLightBgShaderFromGlowView(glowView);
+        if (shaderObj == null) return;
+        Object runtimeShader = resolveTextureShaderFromLightBgShader(shaderObj);
+        if (runtimeShader == null) return;
+        Class<?> shaderCls = shaderObj.getClass();
+        float[] currentOrDefault = getDefaultLightShaderArrayOrCurrent(shaderCls);
+        if (currentOrDefault == null || currentOrDefault.length == 0) return;
+        GlowColorConfig cfg = resolveGlowColorConfig(glowMode);
+        float[] target = (!cfg.effectEnabled || !cfg.customEnabled)
+                ? currentOrDefault
+                : rebuildLightShaderArray(currentOrDefault, cfg.argb);
+        setRuntimeShaderLightColors(runtimeShader, target);
+    }
+
+    private Object resolveLightBgShaderFromGlowView(Object glowView) {
+        Object container = invokeNoArg(glowView, "getMContainer");
+        if (container == null) return null;
+        Object shaderObj = invokeNoArg(container, "getMShader$hyper_widget_1_0_8_pluginRelease");
+        if (shaderObj != null) return shaderObj;
+        try {
+            for (Method m : container.getClass().getDeclaredMethods()) {
+                if (m.getParameterTypes().length != 0) continue;
+                if (!m.getName().contains("getMShader")) continue;
+                m.setAccessible(true);
+                Object out = m.invoke(container);
+                if (out != null) return out;
+            }
+        } catch (Throwable ignore) {
+        }
+        return null;
+    }
+
+    private Object resolveTextureShaderFromLightBgShader(Object lightBgShader) {
+        if (lightBgShader == null) return null;
+        try {
+            Method m = lightBgShader.getClass().getDeclaredMethod("getMTextureShader");
+            m.setAccessible(true);
+            return m.invoke(lightBgShader);
+        } catch (Throwable ignore) {
+        }
+        try {
+            for (Method m : lightBgShader.getClass().getDeclaredMethods()) {
+                if (m.getParameterTypes().length != 0) continue;
+                if (!m.getName().contains("getMTextureShader")) continue;
+                m.setAccessible(true);
+                Object out = m.invoke(lightBgShader);
+                if (out != null) return out;
+            }
+        } catch (Throwable ignore) {
+        }
+        return null;
+    }
+
+    private void setRuntimeShaderLightColors(Object runtimeShader, float[] colors) {
+        if (runtimeShader == null || colors == null || colors.length == 0) return;
+        try {
+            Method m = runtimeShader.getClass().getMethod("setFloatUniform", String.class, float[].class);
+            m.setAccessible(true);
+            m.invoke(runtimeShader, "uLightColors", colors);
+            return;
+        } catch (Throwable ignore) {
+        }
+        try {
+            for (Method m : runtimeShader.getClass().getMethods()) {
+                if (!"setFloatUniform".equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts.length != 2) continue;
+                if (!String.class.equals(pts[0])) continue;
+                if (!pts[1].isArray()) continue;
+                m.setAccessible(true);
+                m.invoke(runtimeShader, "uLightColors", colors);
+                return;
+            }
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private float[] getDefaultLightShaderArrayOrCurrent(Class<?> shaderCls) {
+        if (shaderCls == null) return null;
+        float[] current = getLightShaderArray(shaderCls);
+        if (current != null && current.length > 0) {
+            cacheDefaultLightShaderArray(shaderCls, current);
+        }
+        float[] def = sDefaultLightShaderColors.get(shaderCls);
+        if (def == null || def.length == 0) return current;
+        return Arrays.copyOf(def, def.length);
     }
 
     private void normalizeBigGlowView(Object bigView) {
@@ -451,13 +611,22 @@ public class SystemUiHook {
         }
     }
 
-    private void applyCustomGlowColorForClassLoader(ClassLoader classLoader) {
+    private int resolveGlowModeFromState(Object stateObj) {
+        if (stateObj == null) return GLOW_MODE_AUTO;
+        Object state = invokeNoArg(stateObj, "getState");
+        String text = String.valueOf(state);
+        if (text.contains("Expand")) return GLOW_MODE_EXPAND;
+        if (text.contains("BigIsland")) return GLOW_MODE_STATUS;
+        return GLOW_MODE_AUTO;
+    }
+
+    private void applyCustomGlowColorForClassLoader(ClassLoader classLoader, int glowMode) {
         if (sGlowColorHookDisabled) return;
         if (classLoader == null) return;
         try {
             refreshGlowPrefsCache(false);
             Class<?> shaderCls = Class.forName(LIGHT_BG_SHADER_CLASS, false, classLoader);
-            applyCustomGlowColor(shaderCls);
+            applyCustomGlowColor(shaderCls, glowMode);
         } catch (Throwable t) {
             sGlowColorHookDisabled = true;
             swallowOptionalHookFailure(t);
@@ -465,18 +634,43 @@ public class SystemUiHook {
     }
 
     private void applyCustomGlowColor(Class<?> shaderCls) {
+        applyCustomGlowColor(shaderCls, GLOW_MODE_AUTO);
+    }
+
+    private void applyCustomGlowColor(Class<?> shaderCls, int glowMode) {
         if (shaderCls == null) return;
         float[] current = getLightShaderArray(shaderCls);
         if (current == null || current.length == 0) return;
         cacheDefaultLightShaderArray(shaderCls, current);
 
-        if (!sCachedExpandGlowEnabled || !sCachedCustomGlowEnabled) {
+        GlowColorConfig cfg = resolveGlowColorConfig(glowMode);
+        if (!cfg.effectEnabled || !cfg.customEnabled) {
             restoreDefaultLightShaderArray(shaderCls);
             return;
         }
-        float[] target = rebuildLightShaderArray(current, sCachedCustomGlowArgb);
+        float[] target = rebuildLightShaderArray(current, cfg.argb);
         if (target == null || target.length == 0) return;
         setLightShaderArray(shaderCls, target);
+    }
+
+    private GlowColorConfig resolveGlowColorConfig(int glowMode) {
+        if (glowMode == GLOW_MODE_STATUS) {
+            boolean effectEnabled = sCachedStatusGlowEnabled;
+            boolean customEnabled = sCachedStatusCustomGlowEnabled;
+            int argb = sCachedStatusCustomGlowArgb;
+            return new GlowColorConfig(effectEnabled, customEnabled, argb);
+        } else if (glowMode == GLOW_MODE_EXPAND) {
+            boolean effectEnabled = sCachedExpandGlowEnabled;
+            boolean customEnabled = sCachedExpandCustomGlowEnabled;
+            int argb = sCachedExpandCustomGlowArgb;
+            return new GlowColorConfig(effectEnabled, customEnabled, argb);
+        } else {
+            // Unknown view type: don't force either side's custom color to avoid cross contamination.
+            boolean effectEnabled = false;
+            boolean customEnabled = false;
+            int argb = 0xFFFFFFFF;
+            return new GlowColorConfig(effectEnabled, customEnabled, argb);
+        }
     }
 
     private void refreshGlowPrefsCache(boolean force) {
@@ -484,10 +678,25 @@ public class SystemUiHook {
         if (!force && now - sLastGlowPrefsReadAt < 1000L) return;
         SharedPreferences prefs = readModuleConfigPrefs();
         if (prefs == null) return;
+        sCachedStatusGlowEnabled = prefs.getBoolean(KEY_STATUS_GLOW_ENABLED, false);
         sCachedExpandGlowEnabled = prefs.getBoolean(KEY_EXPAND_GLOW_ENABLED, true);
-        sCachedCustomGlowEnabled = prefs.getBoolean(KEY_CUSTOM_GLOW_COLOR_ENABLED, false);
-        sCachedCustomGlowArgb = prefs.getInt(KEY_CUSTOM_GLOW_COLOR_ARGB, 0xFFFFFFFF);
+        sCachedStatusCustomGlowEnabled = prefs.getBoolean(KEY_STATUS_CUSTOM_GLOW_COLOR_ENABLED, false);
+        sCachedStatusCustomGlowArgb = prefs.getInt(KEY_STATUS_CUSTOM_GLOW_COLOR_ARGB, 0xFFFFFFFF);
+        sCachedExpandCustomGlowEnabled = prefs.getBoolean(KEY_EXPAND_CUSTOM_GLOW_COLOR_ENABLED, false);
+        sCachedExpandCustomGlowArgb = prefs.getInt(KEY_EXPAND_CUSTOM_GLOW_COLOR_ARGB, 0xFFFFFFFF);
         sLastGlowPrefsReadAt = now;
+    }
+
+    private static final class GlowColorConfig {
+        final boolean effectEnabled;
+        final boolean customEnabled;
+        final int argb;
+
+        GlowColorConfig(boolean effectEnabled, boolean customEnabled, int argb) {
+            this.effectEnabled = effectEnabled;
+            this.customEnabled = customEnabled;
+            this.argb = argb;
+        }
     }
 
     private SharedPreferences readModuleConfigPrefs() {

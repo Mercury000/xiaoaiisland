@@ -3,6 +3,7 @@ package com.xiaoai.islandnotify
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,12 +19,14 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -89,6 +92,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
@@ -882,7 +886,6 @@ private fun StatusCustomPage(
                     if (state.outEffectStatusEnabled) {
                         SwitchPreference(
                             title = "发光自定义颜色",
-                            summary = "仅作用于状态栏大岛发光颜色",
                             value = state.outEffectStatusCustomColorEnabled,
                             onCheckedChange = {
                                 state.outEffectStatusCustomColorEnabled = it
@@ -890,10 +893,9 @@ private fun StatusCustomPage(
                             },
                         )
                         if (state.outEffectStatusCustomColorEnabled) {
-                            TextPreference(
+                            GlowColorValuePreference(
                                 title = "发光颜色",
-                                value = formatColorHexArgb(state.outEffectStatusCustomColorArgb),
-                                enabled = true,
+                                argb = state.outEffectStatusCustomColorArgb,
                                 onClick = { showColorDialog = true },
                             )
                         }
@@ -1115,7 +1117,6 @@ private fun ExpandedCustomPage(
                     if (state.outEffectExpandEnabled) {
                         SwitchPreference(
                             title = "发光自定义颜色",
-                            summary = "开启后使用自定义颜色覆盖系统默认发光色",
                             value = state.outEffectExpandCustomColorEnabled,
                             onCheckedChange = {
                                 state.outEffectExpandCustomColorEnabled = it
@@ -1123,10 +1124,9 @@ private fun ExpandedCustomPage(
                             },
                         )
                         if (state.outEffectExpandCustomColorEnabled) {
-                            TextPreference(
+                            GlowColorValuePreference(
                                 title = "发光颜色",
-                                value = formatColorHexArgb(state.outEffectExpandCustomColorArgb),
-                                enabled = true,
+                                argb = state.outEffectExpandCustomColorArgb,
                                 onClick = { showColorDialog = true },
                             )
                         }
@@ -1156,6 +1156,69 @@ private fun formatColorHexArgb(argb: Int): String {
     return String.format(Locale.ROOT, "#%08X", argb)
 }
 
+private fun parseColorHexArgbOrNull(input: String): Int? {
+    val text = input.trim().uppercase(Locale.ROOT)
+    if (!text.startsWith("#")) return null
+    return try {
+        when (text.length) {
+            7 -> (0xFF000000L or text.substring(1).toLong(16)).toInt()
+            9 -> text.substring(1).toLong(16).toInt()
+            else -> null
+        }
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+private fun normalizeColorHexInput(raw: String): String {
+    val upper = raw.uppercase(Locale.ROOT)
+    val hexOnly = upper.filter { it in '0'..'9' || it in 'A'..'F' }
+    return "#" + hexOnly.take(8)
+}
+
+@Composable
+private fun GlowColorValuePreference(
+    title: String,
+    argb: Int,
+    onClick: () -> Unit,
+) {
+    val previewColor = Color(argb)
+    val borderColor = if (previewColor.luminance() > 0.92f) {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f)
+    } else {
+        Color.Transparent
+    }
+    ArrowPreference(
+        title = title,
+        endActions = {
+            Row(
+                modifier = Modifier.widthIn(max = 130.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .background(previewColor, RoundedCornerShape(4.dp))
+                        .then(
+                            if (borderColor != Color.Transparent) {
+                                Modifier.border(1.dp, borderColor, RoundedCornerShape(4.dp))
+                            } else {
+                                Modifier
+                            },
+                        ),
+                )
+                Text(
+                    text = formatColorHexArgb(argb),
+                    fontSize = MiuixTheme.textStyles.body2.fontSize,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                )
+            }
+        },
+        onClick = onClick,
+    )
+}
+
 @Composable
 private fun GlowColorPickerDialog(
     initialArgb: Int,
@@ -1163,6 +1226,7 @@ private fun GlowColorPickerDialog(
     onConfirm: (Int) -> Unit,
 ) {
     var pickedColor by remember(initialArgb) { mutableStateOf(Color(initialArgb)) }
+    var hexInput by remember(initialArgb) { mutableStateOf(formatColorHexArgb(initialArgb)) }
     OverlayDialog(
         show = true,
         title = "选择发光颜色",
@@ -1170,15 +1234,30 @@ private fun GlowColorPickerDialog(
     ) {
         ColorPicker(
             color = pickedColor,
-            onColorChanged = { pickedColor = it },
+            onColorChanged = {
+                pickedColor = it
+                val hex = formatColorHexArgb(it.toArgb())
+                if (hexInput != hex) hexInput = hex
+            },
             colorSpace = ColorSpace.HSV,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = formatColorHexArgb(pickedColor.toArgb()),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        top.yukonga.miuix.kmp.basic.TextField(
+            value = hexInput,
+            onValueChange = { value ->
+                val normalized = normalizeColorHexInput(value)
+                hexInput = normalized
+                val parsed = parseColorHexArgbOrNull(normalized)
+                if (parsed != null && parsed != pickedColor.toArgb()) {
+                    pickedColor = Color(parsed)
+                }
+            },
+            label = "#AARRGGBB / #RRGGBB",
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = MiuixTheme.textStyles.main.copy(color = MiuixTheme.colorScheme.onSurface),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
         )
         Spacer(modifier = Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

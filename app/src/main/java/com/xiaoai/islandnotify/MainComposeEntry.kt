@@ -258,6 +258,7 @@ private fun MainComposeApp(
     val holidayState = remember { HolidayComposeState() }
 
     LaunchedEffect(refreshTick) {
+        activity.uiSyncFrameworkServiceState()
         settingsState.loadFrom(activity)
         holidayState.loadFrom(activity)
         aboutState.loadFrom(activity)
@@ -1681,9 +1682,11 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
                         2 -> "shiguang"
                         else -> "xiaoai"
                     }
-                    state.courseDataSource = source
-                    activity.uiEditConfigPrefs().putString("course_data_source", source).apply()
-                    activity.uiOnCourseDataSourceChanged(source)
+                    activity.uiEnsureScopeForCourseDataSource(source) {
+                        state.courseDataSource = source
+                        activity.uiEditConfigPrefs().putString("course_data_source", source).apply()
+                        activity.uiOnCourseDataSourceChanged(source)
+                    }
                 },
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -1965,6 +1968,13 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
                 summary = "根据上午第一次课的节次指定闹钟设置",
                 value = state.wakeupMorningEnabled,
                 onCheckedChange = {
+                    if (it) {
+                        activity.uiEnsureScopeForWakeupEnable {
+                            state.wakeupMorningEnabled = true
+                            persistWakeupConfigNow()
+                        }
+                        return@SwitchPreference
+                    }
                     state.wakeupMorningEnabled = it
                     persistWakeupConfigNow()
                 },
@@ -1976,6 +1986,13 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
                 summary = "根据下午第一次课的节次指定闹钟设置",
                 value = state.wakeupAfternoonEnabled,
                 onCheckedChange = {
+                    if (it) {
+                        activity.uiEnsureScopeForWakeupEnable {
+                            state.wakeupAfternoonEnabled = true
+                            persistWakeupConfigNow()
+                        }
+                        return@SwitchPreference
+                    }
                     state.wakeupAfternoonEnabled = it
                     persistWakeupConfigNow()
                 },

@@ -29,6 +29,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.util.Collections;
 import java.util.Set;
 
 import io.github.libxposed.service.XposedService;
@@ -47,6 +48,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String TARGET_WAKEUP = "com.suda.yzune.wakeupschedule";
     private static final String TARGET_SHIGUANG = "com.xingheyuzhuan.shiguangschedule";
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";
+    private static final String TARGET_SYSTEMUI = "com.android.systemui";
+    private static final String TARGET_SYSTEMUI_PLUGIN = "miui.systemui.plugin";
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
     private static final String ALIAS = "com.xiaoai.islandnotify.MainActivityAlias";
     private static final String HINT_KEY_PREFIX = "hint_";
@@ -109,6 +112,10 @@ public class MainActivity extends AppCompatActivity {
         ComposeRefreshBus.bump();
     }
 
+    void uiSyncFrameworkServiceState() {
+        syncFrameworkServiceState();
+    }
+
     boolean uiFrameworkActive() {
         return IslandNotifyApp.isFrameworkActive();
     }
@@ -149,6 +156,22 @@ public class MainActivity extends AppCompatActivity {
             sendBroadcast(reschedule);
         } catch (Throwable ignored) {
         }
+    }
+
+    void uiEnsureScopeForCourseDataSource(String source, Runnable onApproved) {
+        if ("wakeup".equalsIgnoreCase(source)) {
+            ensureScopeForTarget(TARGET_WAKEUP, onApproved);
+            return;
+        }
+        if ("shiguang".equalsIgnoreCase(source)) {
+            ensureScopeForTarget(TARGET_SHIGUANG, onApproved);
+            return;
+        }
+        if (onApproved != null) onApproved.run();
+    }
+
+    void uiEnsureScopeForWakeupEnable(Runnable onApproved) {
+        ensureScopeForTarget(TARGET_DESKCLOCK, onApproved);
     }
 
     int uiReadTotalWeekFromCourseData() {
@@ -288,7 +311,17 @@ public class MainActivity extends AppCompatActivity {
 
     private void syncFrameworkServiceState() {
         XposedService service = IslandNotifyApp.currentService();
-        if (service == mXposedService) return;
+        if (service == mXposedService) {
+            if (service != null) {
+                try {
+                    if (service.getApiVersion() >= 101) {
+                        requestMissingScopeIfNeeded(service);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            return;
+        }
         mXposedService = service;
         if (service == null) {
             mRemotePrefs = null;
@@ -455,22 +488,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void requestMissingScopeIfNeeded(XposedService service) {
-        if (mScopeRequested) return;
         try {
             List<String> required = new ArrayList<>();
             Set<String> current = new HashSet<>(service.getScope());
             if (!current.contains(TARGET_VOICEASSIST)) required.add(TARGET_VOICEASSIST);
-            if (!current.contains(TARGET_DESKCLOCK)) required.add(TARGET_DESKCLOCK);
-            if (!current.contains(TARGET_WAKEUP)) required.add(TARGET_WAKEUP);
-            if (!current.contains(TARGET_SHIGUANG)) required.add(TARGET_SHIGUANG);
+            if (!current.contains(TARGET_SYSTEMUI)) required.add(TARGET_SYSTEMUI);
+            if (!current.contains(TARGET_SYSTEMUI_PLUGIN)) required.add(TARGET_SYSTEMUI_PLUGIN);
             if (required.isEmpty()) {
-                mScopeRequested = true;
                 return;
             }
             service.requestScope(required, new XposedService.OnScopeEventListener() {
                 @Override
                 public void onScopeRequestApproved(List<String> approved) {
-                    mScopeRequested = true;
                     runOnUiThread(() -> Toast.makeText(
                             MainActivity.this,
                             "\u4f5c\u7528\u57df\u5df2\u6388\u6743: " + approved,
@@ -489,6 +518,46 @@ public class MainActivity extends AppCompatActivity {
             });
         } catch (Throwable t) {
             Log.w("IslandNotify", "requestMissingScopeIfNeeded failed: " + t.getMessage());
+        }
+    }
+
+    private void ensureScopeForTarget(String targetPackage, Runnable onApproved) {
+        if (targetPackage == null || targetPackage.isEmpty()) {
+            if (onApproved != null) onApproved.run();
+            return;
+        }
+        XposedService service = IslandNotifyApp.currentService();
+        if (service == null) {
+            Toast.makeText(this, "请授权作用域：" + targetPackage, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            Set<String> current = new HashSet<>(service.getScope());
+            if (current.contains(targetPackage)) {
+                if (onApproved != null) onApproved.run();
+                return;
+            }
+            Toast.makeText(this, "请授权作用域：" + targetPackage, Toast.LENGTH_SHORT).show();
+            service.requestScope(Collections.singletonList(targetPackage), new XposedService.OnScopeEventListener() {
+                @Override
+                public void onScopeRequestApproved(List<String> approved) {
+                    if (approved != null && approved.contains(targetPackage) && onApproved != null) {
+                        runOnUiThread(onApproved);
+                    }
+                }
+
+                @Override
+                public void onScopeRequestFailed(String message) {
+                    runOnUiThread(() -> Toast.makeText(
+                            MainActivity.this,
+                            "作用域请求失败: " + message,
+                            Toast.LENGTH_SHORT
+                    ).show());
+                }
+            });
+        } catch (Throwable t) {
+            Log.w("IslandNotify", "ensureScopeForTarget(" + targetPackage + ") failed: " + t.getMessage());
+            Toast.makeText(this, "请授权作用域：" + targetPackage, Toast.LENGTH_SHORT).show();
         }
     }
 

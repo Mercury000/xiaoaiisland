@@ -1,0 +1,138 @@
+name: Notify Bot Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      githubtag:
+        description: "GitHub tag 链接（例如：https://github.com/Mercury000/xiaoaiisland/releases/tag/2026041101）"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      title:
+        required: true
+        type: string
+      content:
+        required: true
+        type: string
+      url:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      WEBHOOK_URL: ${{ secrets.BOT_UPDATE_WEBHOOK_URL }}
+      WEBHOOK_TOKEN: ${{ secrets.BOT_UPDATE_WEBHOOK_TOKEN }}
+      DISPATCH_GITHUBTAG: ${{ inputs.githubtag }}
+      CALL_TITLE: ${{ inputs.title }}
+      CALL_CONTENT: ${{ inputs.content }}
+      CALL_URL: ${{ inputs.url }}
+    steps:
+      - name: Validate webhook url
+        shell: bash
+        run: |
+          if [ -z "${WEBHOOK_URL}" ]; then
+            echo "BOT_UPDATE_WEBHOOK_URL is missing."
+            exit 1
+          fi
+
+      - name: Resolve payload
+        id: payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "${CALL_URL}" ] && [ -n "${CALL_TITLE}" ]; then
+            TITLE="${CALL_TITLE}"
+            CONTENT="${CALL_CONTENT:-}"
+            URL="${CALL_URL}"
+          else
+            TAG_INPUT="${DISPATCH_GITHUBTAG}"
+            if [ -z "${TAG_INPUT}" ]; then
+              echo "githubtag is required in workflow_dispatch mode."
+              exit 1
+            fi
+
+            if [[ "${TAG_INPUT}" =~ ^https://github\.com/([^/]+/[^/]+)/releases/tag/(.+)$ ]]; then
+              REPO="${BASH_REMATCH[1]}"
+              TAG="${BASH_REMATCH[2]}"
+            else
+              echo "Invalid githubtag format: ${TAG_INPUT}"
+              echo "Expected: https://github.com/<owner>/<repo>/releases/tag/<tag>"
+              exit 1
+            fi
+
+            if [ -z "${GH_TOKEN}" ]; then
+              echo "RELEASE_TOKEN is required for githubtag parsing mode."
+              exit 1
+            fi
+
+            RELEASE_JSON="$(gh api "repos/${REPO}/releases/tags/${TAG}")"
+            TITLE="$(jq -r '.name // empty' <<<"${RELEASE_JSON}")"
+            if [ -z "${TITLE}" ]; then
+              TITLE="${TAG}"
+            fi
+            CONTENT="$(jq -r '.body // ""' <<<"${RELEASE_JSON}")"
+
+            URL="$(jq -r '
+              (.assets // [])
+              | (map(select(.name|test("\\.apk$"; "i"))) + .)
+              | map(.browser_download_url // empty)
+              | map(select(length > 0))
+              | .[0] // empty
+            ' <<<"${RELEASE_JSON}")"
+
+            if [ -z "${URL}" ]; then
+              echo "No downloadable asset url found in ${REPO}@${TAG}"
+              exit 1
+            fi
+          fi
+
+          BODY_FILE="$RUNNER_TEMP/notify_payload.json"
+          jq -n \
+            --arg title "$TITLE" \
+            --arg content "$CONTENT" \
+            --arg url "$URL" \
+            --arg message "课程表超级岛-$TITLE"$'\n'"$CONTENT" \
+            '{title:$title, content:$content, url:$url, message:$message}' > "$BODY_FILE"
+
+          {
+            echo "title=${TITLE}"
+            echo "url=${URL}"
+            echo "body_file=${BODY_FILE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send webhook
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY_FILE='${{ steps.payload.outputs.body_file }}'
+          if [ ! -f "$BODY_FILE" ]; then
+            echo "payload file missing"
+            exit 1
+          fi
+
+          if [ -n "${WEBHOOK_TOKEN}" ]; then
+            curl -fsS -X POST "${WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${WEBHOOK_TOKEN}" \
+              --data-binary "@${BODY_FILE}"
+          else
+            curl -fsS -X POST "${WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              --data-binary "@${BODY_FILE}"
+          fi
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "Notified bot update:"
+          echo "title=${{ steps.payload.outputs.title }}"
+          echo "url=${{ steps.payload.outputs.url }}"
+

@@ -20,6 +20,10 @@ permissions:
 jobs:
   sync-release:
     runs-on: ubuntu-latest
+    outputs:
+      notify_title: ${{ steps.meta.outputs.target_name }}
+      notify_content: ${{ steps.body.outputs.notify_content }}
+      notify_url: ${{ steps.xposed_asset.outputs.notify_url }}
     env:
       SOURCE_REPO: ${{ github.repository }}
       TARGET_REPO: Xposed-Modules-Repo/com.xiaoai.islandnotify
@@ -160,7 +164,49 @@ jobs:
           tag='${{ steps.meta.outputs.target_tag }}'
           gh release upload "$tag" release-assets/* -R "$TARGET_REPO" --clobber
 
+      - name: Export release body for notify
+        id: body
+        shell: bash
+        run: |
+          set -euo pipefail
+          body_file='${{ steps.meta.outputs.body_file }}'
+          {
+            echo "notify_content<<__BODY__"
+            cat "$body_file"
+            echo "__BODY__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve xposed release asset url
+        id: xposed_asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ steps.meta.outputs.target_tag }}'
+          REL_JSON="$(gh api "repos/${TARGET_REPO}/releases/tags/${tag}")"
+          URL="$(jq -r '
+            (.assets // [])
+            | (map(select(.name|test("\\.apk$"; "i"))) + .)
+            | map(.browser_download_url // empty)
+            | map(select(length > 0))
+            | .[0] // empty
+          ' <<<"${REL_JSON}")"
+
+          if [ -z "${URL}" ]; then
+            echo "No downloadable asset url found in target release ${TARGET_REPO}@${tag}"
+            exit 1
+          fi
+          echo "notify_url=${URL}" >> "$GITHUB_OUTPUT"
+
       - name: Summary
         shell: bash
         run: |
           echo "Synced ${SOURCE_REPO}@${{ steps.meta.outputs.source_tag }} -> ${TARGET_REPO}@${{ steps.meta.outputs.target_tag }}"
+
+  notify-bot:
+    needs: sync-release
+    uses: ./.github/workflows/notify-bot-update.yml
+    with:
+      title: ${{ needs.sync-release.outputs.notify_title }}
+      content: ${{ needs.sync-release.outputs.notify_content }}
+      url: ${{ needs.sync-release.outputs.notify_url }}
+    secrets: inherit

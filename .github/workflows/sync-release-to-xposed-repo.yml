@@ -13,6 +13,16 @@ on:
         required: false
         default: ""
         type: string
+      notify_enabled:
+        description: "是否推送到 Bot"
+        required: false
+        default: true
+        type: boolean
+      mention_all:
+        description: "是否艾特全体成员"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -209,4 +219,6 @@ jobs:
       title: ${{ needs.sync-release.outputs.notify_title }}
       content: ${{ needs.sync-release.outputs.notify_content }}
       url: ${{ needs.sync-release.outputs.notify_url }}
+      notify_enabled: ${{ inputs.notify_enabled }}
+      mention_all: ${{ inputs.mention_all }}
     secrets: inherit

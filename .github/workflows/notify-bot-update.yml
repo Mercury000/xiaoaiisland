@@ -7,6 +7,11 @@ on:
         description: "GitHub tag 链接（例如：https://github.com/Mercury000/xiaoaiisland/releases/tag/2026041101）"
         required: true
         type: string
+      mention_all:
+        description: "是否艾特全体成员"
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       title:
@@ -18,6 +23,14 @@ on:
       url:
         required: true
         type: string
+      notify_enabled:
+        required: false
+        default: true
+        type: boolean
+      mention_all:
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -33,10 +46,16 @@ jobs:
       CALL_TITLE: ${{ inputs.title }}
       CALL_CONTENT: ${{ inputs.content }}
       CALL_URL: ${{ inputs.url }}
+      NOTIFY_ENABLED: ${{ inputs.notify_enabled || 'true' }}
+      MENTION_ALL: ${{ inputs.mention_all }}
     steps:
       - name: Validate webhook url
         shell: bash
         run: |
+          if [ "${NOTIFY_ENABLED}" != "true" ]; then
+            echo "Notify disabled, skip webhook."
+            exit 0
+          fi
           if [ -z "${WEBHOOK_URL}" ]; then
             echo "BOT_UPDATE_WEBHOOK_URL is missing."
             exit 1
@@ -100,7 +119,8 @@ jobs:
             --arg content "$CONTENT" \
             --arg url "$URL" \
             --arg message "课程表超级岛-$TITLE"$'\n'"$CONTENT" \
-            '{title:$title, content:$content, url:$url, message:$message}' > "$BODY_FILE"
+            --argjson mention_all "${MENTION_ALL:-false}" \
+            '{title:$title, content:$content, url:$url, message:$message, mention_all:$mention_all}' > "$BODY_FILE"
 
           {
             echo "title=${TITLE}"
@@ -109,6 +129,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Send webhook
+        if: ${{ env.NOTIFY_ENABLED == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -132,7 +153,10 @@ jobs:
       - name: Summary
         shell: bash
         run: |
+          if [ "${NOTIFY_ENABLED}" != "true" ]; then
+            echo "Notify disabled by input."
+            exit 0
+          fi
           echo "Notified bot update:"
           echo "title=${{ steps.payload.outputs.title }}"
           echo "url=${{ steps.payload.outputs.url }}"
-

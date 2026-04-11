@@ -1,17 +1,6 @@
 name: CI Debug Build
 
 on:
-  push:
-    branches:
-      - "main"
-    paths:
-      - "app/**"
-      - "gradle/**"
-      - "gradlew"
-      - "gradlew.bat"
-      - "build.gradle"
-      - "settings.gradle"
-      - "gradle.properties"
   pull_request:
     branches:
       - "main"
@@ -57,3 +46,13 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew --no-daemon clean assembleDebug
+
+      - name: Upload debug APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apks-${{ github.run_number }}
+          path: |
+            build/debug/**/*.apk
+            app/build/outputs/apk/**/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

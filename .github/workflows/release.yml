@@ -59,6 +59,16 @@ jobs:
       - name: Build debug APK
         run: ./gradlew --no-daemon clean assembleDebug
 
+      - name: Upload debug APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-debug-apks-${{ github.run_number }}
+          path: |
+            build/debug/**/*.apk
+            app/build/outputs/apk/**/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
   build-release:
     needs: debug-check
     runs-on: ubuntu-latest
@@ -133,19 +143,13 @@ jobs:
         id: notes
         shell: bash
         run: |
-          BEFORE="${{ github.event.before }}"
           NOW="${{ github.sha }}"
-
-          RANGE=""
-          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            RANGE="$BEFORE..$NOW"
+          git fetch --tags --force
+          LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -n "$LAST_TAG" ]; then
+            RANGE="$LAST_TAG..$NOW"
           else
-            LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-            if [ -n "$LAST_TAG" ]; then
-              RANGE="$LAST_TAG..$NOW"
-            else
-              RANGE="$NOW"
-            fi
+            RANGE="$NOW"
           fi
 
           NOTES="$(git log --reverse --pretty='- %h %s (%an)' $RANGE)"

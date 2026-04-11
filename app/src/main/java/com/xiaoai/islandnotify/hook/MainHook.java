@@ -49,6 +49,8 @@ public class MainHook {
     private static final String ACTION_MANUAL_UNMUTE = "com.xiaoai.islandnotify.MANUAL_UNMUTE";
     /** 每日 00:01 跨日重调广播 Action（链式保证次日课程 alarm 不丢失） */
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
+    /** WakeUp 数据源同步到超级小爱进程 */
+    private static final String ACTION_WAKEUP_COURSE_SYNC = WakeupHook.ACTION_WAKEUP_COURSE_SYNC;
     /** 通知定时取消广播 Action（替代 Handler.postDelayed，setAlarmClock 保证精确触发） */
     private static final String ACTION_NOTIF_CANCEL = "com.xiaoai.islandnotify.ACTION_NOTIF_CANCEL";
     /** shareData 拖拽分享图片在 miui.focus.pics Bundle 中的 key */
@@ -70,6 +72,7 @@ public class MainHook {
     /** SharedPreferences 名称（与 MainActivity 保持一致） */
     private static final String PREFS_NAME = "island_custom";
     private static final String PREFS_RUNTIME_NAME = "island_runtime";
+    private static final String PREFS_WAKEUP_MIRROR = "island_wakeup_mirror";
     /** 模块自身包名，用于跨进程读取 SharedPreferences */
     private static final String MODULE_PKG  = "com.xiaoai.islandnotify";
 
@@ -81,6 +84,15 @@ public class MainHook {
     private static final String ACTION_COURSE_REMINDER = "com.xiaoai.islandnotify.ACTION_COURSE_REMINDER";
     /** CourseData SharedPreferences 名称（voiceassist 自身） */
     private static final String PREFS_COURSE_DATA = "CourseData";
+    /** 课程数据源：超级小爱原始 CourseData */
+    private static final String SOURCE_XIAOAI = "xiaoai";
+    /** 课程数据源：WakeUp 镜像 */
+    private static final String SOURCE_WAKEUP = "wakeup";
+    /** 配置项：课程数据源 */
+    private static final String KEY_COURSE_DATA_SOURCE = "course_data_source";
+    /** WakeUp 镜像存储键（写入 voiceassist 自身 island_runtime） */
+    private static final String KEY_WAKEUP_MIRROR_BEAN = "wakeup_mirror_week_course_bean";
+    private static final String KEY_WAKEUP_MIRROR_HASH = "wakeup_mirror_week_course_hash";
     /** 课前提醒分钟数配置键（存入 island_custom SP） */
     private static final String KEY_REMINDER_MINUTES = "reminder_minutes_before";
     /** 课前提醒默认提前分钟数 */
@@ -247,6 +259,7 @@ public class MainHook {
                 filter.addAction(ACTION_MANUAL_UNMUTE);
                 filter.addAction(ACTION_RESCHEDULE_DAILY);
                 filter.addAction(ACTION_NOTIF_CANCEL);
+                filter.addAction(ACTION_WAKEUP_COURSE_SYNC);
                 BroadcastReceiver receiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
@@ -583,10 +596,7 @@ public class MainHook {
                 }
                 // 初始化课表内容哈希，确保 FileObserver 首次触发时能正确跳过未实质变动的写入。
                 try {
-                    @SuppressWarnings("deprecation")
-                    SharedPreferences initCp = appCtx.getSharedPreferences(
-                            PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
-                    String initBj = initCp.getString("weekCourseBean", null);
+                    String initBj = readActiveCourseBeanJson(appCtx, initPrefs);
                     if (initBj != null && !initBj.isEmpty()) {
                         mLastCourseDataHash = stableCourseHash(initBj);
                     }
@@ -626,6 +636,26 @@ public class MainHook {
             String courseName = intent.getStringExtra("course_name");
             if (sIslandButtonMode == 0 || sIslandButtonMode == 2) applyMuteState(context, enable, courseName);
             if (sIslandButtonMode == 1 || sIslandButtonMode == 2) applyDndState(context, enable, courseName);
+            return true;
+        }
+        if (ACTION_WAKEUP_COURSE_SYNC.equals(action)) {
+            String beanJson = intent.getStringExtra("bean_json");
+            if (beanJson == null || beanJson.isEmpty()) return true;
+            int hash = stableCourseHash(beanJson);
+            SharedPreferences wakeupMirror =
+                    context.getSharedPreferences(PREFS_WAKEUP_MIRROR, Context.MODE_PRIVATE);
+            int oldHash = wakeupMirror.getInt(KEY_WAKEUP_MIRROR_HASH, 0);
+            if (hash == oldHash) return true;
+            wakeupMirror.edit()
+                    .putString(KEY_WAKEUP_MIRROR_BEAN, beanJson)
+                    .putInt(KEY_WAKEUP_MIRROR_HASH, hash)
+                    .apply();
+            SharedPreferences prefs = getConfigPrefs(context);
+            if (isWakeupDataSource(prefs)) {
+                mLastCourseDataHash = hash;
+                XposedBridge.log(TAG + ": 收到 WakeUp 课程镜像，触发重调度 hash=" + hash);
+                safeReschedule(context, "wakeup_source_sync", false);
+            }
             return true;
         }
         if (ACTION_RESCHEDULE_DAILY.equals(action)) {
@@ -808,19 +838,18 @@ public class MainHook {
             if (cachedBeanJson != null) {
                 beanJson = cachedBeanJson;
             } else {
-                @SuppressWarnings("deprecation")
-                SharedPreferences coursePrefs = ctx.getSharedPreferences(
-                        PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
-                String raw = coursePrefs.getString("weekCourseBean", null);
+                SharedPreferences prefs = getConfigPrefs(ctx);
+                String raw = readActiveCourseBeanJson(ctx, prefs);
                 if (raw == null || raw.isEmpty()) {
-                    XposedBridge.log(TAG + ": CourseData 为空，跳过课前提醒调度");
+                    XposedBridge.log(TAG + ": 课程数据为空，跳过课前提醒调度 source="
+                            + readCourseSource(prefs));
                     return;
                 }
                 beanJson = raw;
                 mLastCourseDataHash = stableCourseHash(beanJson);
             }
             if (beanJson.isEmpty()) {
-                XposedBridge.log(TAG + ": CourseData 为空，跳过课前提醒调度");
+                XposedBridge.log(TAG + ": 课程数据为空，跳过课前提醒调度");
                 return;
             }
 
@@ -1267,10 +1296,8 @@ public class MainHook {
             }
             HolidayManager.HolidayEntry workSwap = HolidayManager.getWorkSwap(ctx, todayDateStr);
 
-            @SuppressWarnings("deprecation")
-            SharedPreferences coursePrefs = ctx.getSharedPreferences(
-                    PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
-            String beanJson = coursePrefs.getString("weekCourseBean", null);
+            SharedPreferences prefs = getConfigPrefs(ctx);
+            String beanJson = readActiveCourseBeanJson(ctx, prefs);
             if (beanJson == null || beanJson.isEmpty()) {
                 return;
             }
@@ -1286,7 +1313,6 @@ public class MainHook {
             final int currentWeek = (workSwap != null && workSwap.followWeek > 0)
                     ? workSwap.followWeek : baseWeek;
 
-            SharedPreferences prefs = getConfigPrefs(ctx);
             int muteMinsBefore = readConfigInt(prefs, KEY_MUTE_MINS_BEFORE, DEFAULT_MUTE_MINS_BEFORE);
             int unmuteMinsAfter = readConfigInt(prefs, KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER);
             int dndMinsBefore = readConfigInt(prefs, KEY_DND_MINS_BEFORE, DEFAULT_DND_MINS_BEFORE);
@@ -1392,10 +1418,8 @@ public class MainHook {
             }
             HolidayManager.HolidayEntry workSwap = HolidayManager.getWorkSwap(ctx, todayDateStr);
 
-            @SuppressWarnings("deprecation")
-            SharedPreferences coursePrefs = ctx.getSharedPreferences(
-                    PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
-            String beanJson = coursePrefs.getString("weekCourseBean", null);
+            SharedPreferences sourcePrefs = getConfigPrefs(ctx);
+            String beanJson = readActiveCourseBeanJson(ctx, sourcePrefs);
             if (beanJson == null || beanJson.isEmpty()) {
                 sendClearClockAlarms(ctx);
                 return;
@@ -1541,6 +1565,7 @@ public class MainHook {
             @Override
             public void onEvent(int event, String path) {
                 if (path == null || !path.equals("CourseData.xml")) return;
+                if (!isXiaoaiDataSource(getConfigPrefs(ctx))) return;
                 // 防抖：移除上次未执行的任务，延迟 1500ms 执行
                 getRescheduleHandler().removeCallbacksAndMessages(mRescheduleToken);
                 getRescheduleHandler().postDelayed(() -> {
@@ -1550,10 +1575,7 @@ public class MainHook {
                     // 若只开静音（sCustomReminderEnabled=false），mLastCourseDataHash 由 init block 初始化。
                     String bj = null;
                     try {
-                        @SuppressWarnings("deprecation")
-                        SharedPreferences cp = ctx.getSharedPreferences(
-                                PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
-                        bj = cp.getString("weekCourseBean", null);
+                        bj = readCourseDataBean(ctx);
                         if (bj != null && !bj.isEmpty()) {
                             int h = stableCourseHash(bj);
                             if (h == mLastCourseDataHash) {
@@ -2151,7 +2173,8 @@ public class MainHook {
                 || KEY_DND_MINS_BEFORE.equals(key)
                 || KEY_UNDND_ENABLED.equals(key)
                 || KEY_UNDND_MINS_AFTER.equals(key)
-                || KEY_REPOST_ENABLED.equals(key);
+                || KEY_REPOST_ENABLED.equals(key)
+                || KEY_COURSE_DATA_SOURCE.equals(key);
     }
 
     private boolean isWakeupRelatedKey(String key) {
@@ -2183,6 +2206,48 @@ public class MainHook {
 
     private SharedPreferences getConfigPrefs(Context ctx) {
         return loadConfigPrefsRemoteFirst(ctx);
+    }
+
+    private String readCourseSource(SharedPreferences prefs) {
+        String source = readConfigString(prefs, KEY_COURSE_DATA_SOURCE, SOURCE_XIAOAI);
+        if (source == null || source.isEmpty()) return SOURCE_XIAOAI;
+        return source;
+    }
+
+    private boolean isWakeupDataSource(SharedPreferences prefs) {
+        return SOURCE_WAKEUP.equalsIgnoreCase(readCourseSource(prefs));
+    }
+
+    private boolean isXiaoaiDataSource(SharedPreferences prefs) {
+        return !isWakeupDataSource(prefs);
+    }
+
+    private String readCourseDataBean(Context ctx) {
+        try {
+            @SuppressWarnings("deprecation")
+            SharedPreferences coursePrefs = ctx.getSharedPreferences(
+                    PREFS_COURSE_DATA, Context.MODE_PRIVATE | Context.MODE_MULTI_PROCESS);
+            return coursePrefs.getString("weekCourseBean", null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private String readWakeupMirrorBean(Context ctx) {
+        try {
+            SharedPreferences wakeupMirror =
+                    ctx.getSharedPreferences(PREFS_WAKEUP_MIRROR, Context.MODE_PRIVATE);
+            return wakeupMirror.getString(KEY_WAKEUP_MIRROR_BEAN, null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private String readActiveCourseBeanJson(Context ctx, SharedPreferences prefs) {
+        if (isWakeupDataSource(prefs)) {
+            return readWakeupMirrorBean(ctx);
+        }
+        return readCourseDataBean(ctx);
     }
 
     private int readConfigInt(SharedPreferences prefs, String key, int fallback) {

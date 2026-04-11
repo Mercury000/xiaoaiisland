@@ -465,6 +465,7 @@ private class SettingsComposeState {
     var outEffectExpandCustomColorEnabled by mutableStateOf(false)
     var outEffectExpandCustomColorArgb by mutableIntStateOf(0xFFFFFFFF.toInt())
     var timeoutState by mutableStateOf(TimeoutUiState())
+    var courseDataSource by mutableStateOf("xiaoai")
     var reminderMinutes by mutableStateOf("15")
     var repostEnabled by mutableStateOf(true)
     var muteEnabled by mutableStateOf(false)
@@ -575,6 +576,7 @@ private class SettingsComposeState {
             0xFFFFFFFF.toInt(),
         )
         timeoutState = readTimeoutState(prefs)
+        courseDataSource = PrefsAccess.readConfigString(prefs, "course_data_source", "xiaoai")
         reminderMinutes = PrefsAccess.readConfigInt(prefs, "reminder_minutes_before", 15).toString()
         repostEnabled = PrefsAccess.readConfigBool(prefs, "repost_enabled", true)
         muteEnabled = PrefsAccess.readConfigBool(prefs, "mute_enabled", false)
@@ -1648,6 +1650,13 @@ private fun TimeoutCard(activity: MainActivity, state: SettingsComposeState) {
 @Composable
 private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
     var showReminderPicker by remember { mutableStateOf(false) }
+    val dataSourceEntries = remember {
+        listOf(
+            DropDownEntry(title = "超级小爱"),
+            DropDownEntry(title = "WakeUp"),
+        )
+    }
+    val dataSourceIndex = if (state.courseDataSource.equals("wakeup", ignoreCase = true)) 1 else 0
     DismissibleHint(
         activity = activity,
         key = "hint_reminder",
@@ -1655,6 +1664,19 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
     )
     PreferenceGroup(first = true, last = true) {
         Column(modifier = Modifier.fillMaxWidth()) {
+            DropDownPreference(
+                title = "课程数据源",
+                summary = "通知仍由超级小爱发出",
+                entries = dataSourceEntries,
+                value = dataSourceIndex,
+                mode = DropDownMode.Popup,
+                onSelectedIndexChange = {
+                    val source = if (it == 1) "wakeup" else "xiaoai"
+                    state.courseDataSource = source
+                    activity.uiEditConfigPrefs().putString("course_data_source", source).apply()
+                },
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             SwitchPreference(
                 title = "补发机制（全局）",
                 summary = "是否在错过提醒时间时补发，由于通知已稳定，不建议启用。",

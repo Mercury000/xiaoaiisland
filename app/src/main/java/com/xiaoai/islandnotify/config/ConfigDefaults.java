@@ -115,6 +115,7 @@ final class ConfigDefaults {
         }
         switch (key) {
             case "notif_dismiss_trigger": return NOTIF_TRIGGER;
+            case "course_data_source": return "xiaoai";
             case "wakeup_morning_rules_json": return WAKEUP_MORNING_RULES_JSON;
             case "wakeup_afternoon_rules_json": return WAKEUP_AFTERNOON_RULES_JSON;
             default: return fallback;
@@ -189,6 +190,7 @@ final class ConfigDefaults {
                 || "undnd_enabled".equals(key)
                 || "undnd_mins_after".equals(key)
                 || "repost_enabled".equals(key)
+                || "course_data_source".equals(key)
                 || "active_countdown_to_end".equals(key)
                 || "island_button_mode".equals(key)
                 || "icon_a".equals(key)

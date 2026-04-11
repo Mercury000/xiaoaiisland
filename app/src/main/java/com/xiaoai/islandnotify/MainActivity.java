@@ -67,27 +67,37 @@ public class MainActivity extends AppCompatActivity {
     private String mPendingExportBackupJson;
 
     private SharedPreferences getConfigPrefs() {
-        return PrefsAccess.resolve(mRemotePrefs);
+        SharedPreferences remote = fetchRemotePrefs(PREFS_NAME);
+        if (remote != null) {
+            mRemotePrefs = remote;
+            return remote;
+        }
+        return PrefsAccess.resolve(null);
     }
 
     private SharedPreferences.Editor editConfigPrefs() {
-        return PrefsAccess.edit(mRemotePrefs);
+        return PrefsAccess.edit(getConfigPrefs());
     }
 
     private int readConfigInt(String key, int defaultValue) {
-        return PrefsAccess.readConfigInt(mRemotePrefs, key, defaultValue);
+        return PrefsAccess.readConfigInt(getConfigPrefs(), key, defaultValue);
     }
 
     private boolean readConfigBool(String key, boolean defaultValue) {
-        return PrefsAccess.readConfigBool(mRemotePrefs, key, defaultValue);
+        return PrefsAccess.readConfigBool(getConfigPrefs(), key, defaultValue);
     }
 
     private SharedPreferences getHolidayPrefs() {
-        return PrefsAccess.resolve(mRemoteHolidayPrefs);
+        SharedPreferences remote = fetchRemotePrefs(HolidayManager.PREFS_HOLIDAY);
+        if (remote != null) {
+            mRemoteHolidayPrefs = remote;
+            return remote;
+        }
+        return PrefsAccess.resolve(null);
     }
 
     private SharedPreferences.Editor editHolidayPrefs() {
-        return PrefsAccess.edit(mRemoteHolidayPrefs);
+        return PrefsAccess.edit(getHolidayPrefs());
     }
 
     private void clearLocalPrefs(String prefsName) {
@@ -216,7 +226,7 @@ public class MainActivity extends AppCompatActivity {
             return ui.getBoolean(key, false);
         }
         // One-time compatibility fallback from old config(remote) storage.
-        boolean legacy = PrefsAccess.readConfigBool(mRemotePrefs, key, false);
+        boolean legacy = PrefsAccess.readConfigBool(getConfigPrefs(), key, false);
         if (legacy) {
             ui.edit().putBoolean(key, true).apply();
         }
@@ -295,6 +305,17 @@ public class MainActivity extends AppCompatActivity {
         }
         if (apiVersion >= 101) {
             requestMissingScopeIfNeeded(service);
+        }
+    }
+
+    private SharedPreferences fetchRemotePrefs(String prefsName) {
+        XposedService service = IslandNotifyApp.currentService();
+        if (service == null) return null;
+        try {
+            return service.getRemotePreferences(prefsName);
+        } catch (Throwable t) {
+            Log.w("IslandNotify", "fetchRemotePrefs(" + prefsName + ") failed: " + t.getMessage());
+            return null;
         }
     }
 

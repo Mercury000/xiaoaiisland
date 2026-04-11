@@ -1654,9 +1654,14 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
         listOf(
             DropDownEntry(title = "超级小爱"),
             DropDownEntry(title = "WakeUp"),
+            DropDownEntry(title = "拾光"),
         )
     }
-    val dataSourceIndex = if (state.courseDataSource.equals("wakeup", ignoreCase = true)) 1 else 0
+    val dataSourceIndex = when {
+        state.courseDataSource.equals("wakeup", ignoreCase = true) -> 1
+        state.courseDataSource.equals("shiguang", ignoreCase = true) -> 2
+        else -> 0
+    }
     DismissibleHint(
         activity = activity,
         key = "hint_reminder",
@@ -1671,9 +1676,14 @@ private fun ReminderCard(activity: MainActivity, state: SettingsComposeState) {
                 value = dataSourceIndex,
                 mode = DropDownMode.Popup,
                 onSelectedIndexChange = {
-                    val source = if (it == 1) "wakeup" else "xiaoai"
+                    val source = when (it) {
+                        1 -> "wakeup"
+                        2 -> "shiguang"
+                        else -> "xiaoai"
+                    }
                     state.courseDataSource = source
                     activity.uiEditConfigPrefs().putString("course_data_source", source).apply()
+                    activity.uiOnCourseDataSourceChanged(source)
                 },
             )
             Spacer(modifier = Modifier.height(8.dp))

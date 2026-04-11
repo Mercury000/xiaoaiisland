@@ -51,6 +51,8 @@ public class MainHook {
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
     /** WakeUp 数据源同步到超级小爱进程 */
     private static final String ACTION_WAKEUP_COURSE_SYNC = WakeupHook.ACTION_WAKEUP_COURSE_SYNC;
+    /** 拾光数据源同步到超级小爱进程 */
+    private static final String ACTION_SHIGUANG_COURSE_SYNC = ShiguangHook.ACTION_SHIGUANG_COURSE_SYNC;
     /** 通知定时取消广播 Action（替代 Handler.postDelayed，setAlarmClock 保证精确触发） */
     private static final String ACTION_NOTIF_CANCEL = "com.xiaoai.islandnotify.ACTION_NOTIF_CANCEL";
     /** shareData 拖拽分享图片在 miui.focus.pics Bundle 中的 key */
@@ -73,6 +75,7 @@ public class MainHook {
     private static final String PREFS_NAME = "island_custom";
     private static final String PREFS_RUNTIME_NAME = "island_runtime";
     private static final String PREFS_WAKEUP_MIRROR = "island_wakeup_mirror";
+    private static final String PREFS_SHIGUANG_MIRROR = "island_shiguang_mirror";
     /** 模块自身包名，用于跨进程读取 SharedPreferences */
     private static final String MODULE_PKG  = "com.xiaoai.islandnotify";
 
@@ -88,11 +91,16 @@ public class MainHook {
     private static final String SOURCE_XIAOAI = "xiaoai";
     /** 课程数据源：WakeUp 镜像 */
     private static final String SOURCE_WAKEUP = "wakeup";
+    /** 课程数据源：拾光镜像 */
+    private static final String SOURCE_SHIGUANG = "shiguang";
     /** 配置项：课程数据源 */
     private static final String KEY_COURSE_DATA_SOURCE = "course_data_source";
     /** WakeUp 镜像存储键（写入 voiceassist 自身 island_runtime） */
     private static final String KEY_WAKEUP_MIRROR_BEAN = "wakeup_mirror_week_course_bean";
     private static final String KEY_WAKEUP_MIRROR_HASH = "wakeup_mirror_week_course_hash";
+    /** 拾光镜像存储键（写入 voiceassist 自身独立 SP） */
+    private static final String KEY_SHIGUANG_MIRROR_BEAN = "shiguang_mirror_week_course_bean";
+    private static final String KEY_SHIGUANG_MIRROR_HASH = "shiguang_mirror_week_course_hash";
     /** 课前提醒分钟数配置键（存入 island_custom SP） */
     private static final String KEY_REMINDER_MINUTES = "reminder_minutes_before";
     /** 课前提醒默认提前分钟数 */
@@ -260,6 +268,7 @@ public class MainHook {
                 filter.addAction(ACTION_RESCHEDULE_DAILY);
                 filter.addAction(ACTION_NOTIF_CANCEL);
                 filter.addAction(ACTION_WAKEUP_COURSE_SYNC);
+                filter.addAction(ACTION_SHIGUANG_COURSE_SYNC);
                 BroadcastReceiver receiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
@@ -655,6 +664,26 @@ public class MainHook {
                 mLastCourseDataHash = hash;
                 XposedBridge.log(TAG + ": 收到 WakeUp 课程镜像，触发重调度 hash=" + hash);
                 safeReschedule(context, "wakeup_source_sync", false);
+            }
+            return true;
+        }
+        if (ACTION_SHIGUANG_COURSE_SYNC.equals(action)) {
+            String beanJson = intent.getStringExtra("bean_json");
+            if (beanJson == null || beanJson.isEmpty()) return true;
+            int hash = stableCourseHash(beanJson);
+            SharedPreferences mirror =
+                    context.getSharedPreferences(PREFS_SHIGUANG_MIRROR, Context.MODE_PRIVATE);
+            int oldHash = mirror.getInt(KEY_SHIGUANG_MIRROR_HASH, 0);
+            if (hash == oldHash) return true;
+            mirror.edit()
+                    .putString(KEY_SHIGUANG_MIRROR_BEAN, beanJson)
+                    .putInt(KEY_SHIGUANG_MIRROR_HASH, hash)
+                    .apply();
+            SharedPreferences prefs = getConfigPrefs(context);
+            if (isShiguangDataSource(prefs)) {
+                mLastCourseDataHash = hash;
+                XposedBridge.log(TAG + ": 收到拾光课程镜像，触发重调度 hash=" + hash);
+                safeReschedule(context, "shiguang_source_sync", false);
             }
             return true;
         }
@@ -2218,8 +2247,12 @@ public class MainHook {
         return SOURCE_WAKEUP.equalsIgnoreCase(readCourseSource(prefs));
     }
 
+    private boolean isShiguangDataSource(SharedPreferences prefs) {
+        return SOURCE_SHIGUANG.equalsIgnoreCase(readCourseSource(prefs));
+    }
+
     private boolean isXiaoaiDataSource(SharedPreferences prefs) {
-        return !isWakeupDataSource(prefs);
+        return !isWakeupDataSource(prefs) && !isShiguangDataSource(prefs);
     }
 
     private String readCourseDataBean(Context ctx) {
@@ -2243,9 +2276,22 @@ public class MainHook {
         }
     }
 
+    private String readShiguangMirrorBean(Context ctx) {
+        try {
+            SharedPreferences mirror =
+                    ctx.getSharedPreferences(PREFS_SHIGUANG_MIRROR, Context.MODE_PRIVATE);
+            return mirror.getString(KEY_SHIGUANG_MIRROR_BEAN, null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private String readActiveCourseBeanJson(Context ctx, SharedPreferences prefs) {
         if (isWakeupDataSource(prefs)) {
             return readWakeupMirrorBean(ctx);
+        }
+        if (isShiguangDataSource(prefs)) {
+            return readShiguangMirrorBean(ctx);
         }
         return readCourseDataBean(ctx);
     }

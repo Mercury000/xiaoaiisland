@@ -17,6 +17,7 @@ public class ModuleEntry extends XposedModule {
     private final DeskClockHook deskClockHook = new DeskClockHook();
     private final SystemUiHook systemUiHook = new SystemUiHook();
     private final WakeupHook wakeupHook = new WakeupHook();
+    private final ShiguangHook shiguangHook = new ShiguangHook();
     private volatile String processName = "";
 
     @Override
@@ -64,6 +65,13 @@ public class ModuleEntry extends XposedModule {
             wakeupHook.handleLoadPackage(packageName, resolvedProcessName, classLoader);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": WakeupHook failed -> " + t.getMessage());
+            XposedBridge.log(t);
+        }
+
+        try {
+            shiguangHook.handleLoadPackage(packageName, resolvedProcessName, classLoader);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": ShiguangHook failed -> " + t.getMessage());
             XposedBridge.log(t);
         }
     }

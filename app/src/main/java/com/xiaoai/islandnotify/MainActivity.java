@@ -45,6 +45,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS_UI_NAME = "island_ui";
     private static final String KEY_UI_MONET_ENABLED = "ui_monet_enabled";
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
+    private static final String TARGET_WAKEUP = "com.suda.yzune.wakeupschedule";
+    private static final String TARGET_SHIGUANG = "com.xingheyuzhuan.shiguangschedule";
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
     private static final String ALIAS = "com.xiaoai.islandnotify.MainActivityAlias";
@@ -130,6 +132,15 @@ public class MainActivity extends AppCompatActivity {
 
     void uiRescheduleIfCoversToday(String date, String endDate) {
         rescheduleIfCoversToday(date, endDate);
+    }
+
+    void uiOnCourseDataSourceChanged(String source) {
+        try {
+            Intent reschedule = new Intent(ACTION_RESCHEDULE_DAILY);
+            reschedule.setPackage(TARGET_VOICEASSIST);
+            sendBroadcast(reschedule);
+        } catch (Throwable ignored) {
+        }
     }
 
     int uiReadTotalWeekFromCourseData() {
@@ -445,6 +456,8 @@ public class MainActivity extends AppCompatActivity {
             Set<String> current = new HashSet<>(service.getScope());
             if (!current.contains(TARGET_VOICEASSIST)) required.add(TARGET_VOICEASSIST);
             if (!current.contains(TARGET_DESKCLOCK)) required.add(TARGET_DESKCLOCK);
+            if (!current.contains(TARGET_WAKEUP)) required.add(TARGET_WAKEUP);
+            if (!current.contains(TARGET_SHIGUANG)) required.add(TARGET_SHIGUANG);
             if (required.isEmpty()) {
                 mScopeRequested = true;
                 return;

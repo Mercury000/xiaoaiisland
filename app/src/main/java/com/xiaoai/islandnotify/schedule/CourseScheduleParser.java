@@ -131,12 +131,34 @@ final class CourseScheduleParser {
         if (weekMatcher.isEmpty()) return null;
 
         int[] sectionBounds = parseSectionBounds(course.optString("sections", ""));
-        if (sectionBounds == null) return null;
-        int firstSection = sectionBounds[0];
-        int lastSection = sectionBounds[1];
-        SectionTime startSection = sectionTimes.get(firstSection);
-        SectionTime endSection = sectionTimes.get(lastSection);
-        if (startSection == null || endSection == null) return null;
+        int firstSection = sectionBounds == null ? -1 : sectionBounds[0];
+        int lastSection = sectionBounds == null ? -1 : sectionBounds[1];
+
+        String directStartTime = firstNonEmpty(
+                course.optString("startTime", ""),
+                course.optString("start_time", ""),
+                course.optString("customStartTime", ""),
+                course.optString("custom_start_time", ""));
+        String directEndTime = firstNonEmpty(
+                course.optString("endTime", ""),
+                course.optString("end_time", ""),
+                course.optString("customEndTime", ""),
+                course.optString("custom_end_time", ""));
+        boolean hasDirectTime = isValidTimeRange(directStartTime, directEndTime);
+
+        String resolvedStartTime;
+        String resolvedEndTime;
+        if (hasDirectTime) {
+            resolvedStartTime = directStartTime;
+            resolvedEndTime = directEndTime;
+        } else {
+            if (sectionBounds == null) return null;
+            SectionTime startSection = sectionTimes.get(firstSection);
+            SectionTime endSection = sectionTimes.get(lastSection);
+            if (startSection == null || endSection == null) return null;
+            resolvedStartTime = startSection.startTime;
+            resolvedEndTime = endSection.endTime;
+        }
 
         String courseName = firstNonEmpty(
                 course.optString("name", ""),
@@ -145,10 +167,29 @@ final class CourseScheduleParser {
         String classroom = firstNonEmpty(
                 course.optString("position", ""),
                 course.optString("classroom", ""));
-        String sectionRange = firstSection + "-" + lastSection;
+        String sectionRange = sectionBounds == null
+                ? safeStr(course.optString("sections", ""))
+                : (firstSection + "-" + lastSection);
         String teacher = extractTeacher(course);
-        return new CourseSlot(day, courseName, startSection.startTime, endSection.endTime,
+        return new CourseSlot(day, courseName, resolvedStartTime, resolvedEndTime,
                 classroom, sectionRange, teacher, weekMatcher);
+    }
+
+    private static boolean isValidTimeRange(String start, String end) {
+        if (!isLikelyTime(start) || !isLikelyTime(end)) return false;
+        // WakeUp 常见占位值：00:00；这类值不能作为课程时间。
+        if ("00:00".equals(start) || "00:00".equals(end)) return false;
+        return true;
+    }
+
+    private static boolean isLikelyTime(String value) {
+        if (value == null || value.isEmpty()) return false;
+        if (value.length() != 5 || value.charAt(2) != ':') return false;
+        char h1 = value.charAt(0), h2 = value.charAt(1), m1 = value.charAt(3), m2 = value.charAt(4);
+        if (h1 < '0' || h1 > '2' || h2 < '0' || h2 > '9') return false;
+        if (m1 < '0' || m1 > '5' || m2 < '0' || m2 > '9') return false;
+        int hour = (h1 - '0') * 10 + (h2 - '0');
+        return hour >= 0 && hour <= 23;
     }
 
     private static int[] parseSectionBounds(String sectionsSpec) {

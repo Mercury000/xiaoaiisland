@@ -168,7 +168,8 @@ public class WakeupHook {
             JSONArray courses = new JSONArray();
             int maxEndWeek = 0;
             c = sqLiteDb.rawQuery(
-                    "SELECT d.day, d.room, d.teacher, d.startNode, d.step, d.startWeek, d.endWeek, d.type, b.courseName " +
+                    "SELECT d.day, d.room, d.teacher, d.startNode, d.step, d.startWeek, d.endWeek, d.type, " +
+                            "d.ownTime, d.startTime, d.endTime, b.courseName " +
                             "FROM CourseDetailBean d " +
                             "JOIN CourseBaseBean b ON b.id = d.id AND b.tableId = d.tableId " +
                             "WHERE d.tableId = ? " +
@@ -181,7 +182,10 @@ public class WakeupHook {
                 int startWeek = Math.max(1, c.getInt(5));
                 int endWeek = Math.max(startWeek, c.getInt(6));
                 int type = c.getInt(7);
-                String courseName = safeStr(c.getString(8));
+                int ownTime = c.getInt(8);
+                String customStartTime = safeStr(c.getString(9));
+                String customEndTime = safeStr(c.getString(10));
+                String courseName = safeStr(c.getString(11));
                 if (day < 1 || day > 7 || startNode <= 0 || courseName.isEmpty()) continue;
 
                 String weeks = buildWeeks(startWeek, endWeek, type);
@@ -197,6 +201,12 @@ public class WakeupHook {
                         ? String.valueOf(startNode)
                         : (startNode + "-" + endNode));
                 course.put("weeks", weeks);
+                // WakeUp 自定义时间存于 CourseDetailBean.startTime/endTime（ownTime=1）。
+                // 写入镜像后由解析器优先采用，避免被节次默认时间覆盖。
+                if (ownTime == 1 && !isInvalidSectionTime(customStartTime, customEndTime)) {
+                    course.put("startTime", customStartTime);
+                    course.put("endTime", customEndTime);
+                }
                 courses.put(course);
                 if (endWeek > maxEndWeek) maxEndWeek = endWeek;
             }

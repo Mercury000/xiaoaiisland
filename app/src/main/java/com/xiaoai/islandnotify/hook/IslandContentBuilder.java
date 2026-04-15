@@ -1,6 +1,10 @@
 package com.xiaoai.islandnotify;
 
+import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Color;
+import android.graphics.drawable.Icon;
 import android.os.Bundle;
 
 import com.xzakota.hyper.notification.common.model.TimerInfo;
@@ -66,16 +70,32 @@ final class IslandContentBuilder {
         final int islandButtonMode;
         final String manualMuteAction;
         final String manualUnmuteAction;
+        final String manualSkipAction;
         final String targetPackage;
         final String picKeyShare;
+        final Context context;
+        final Icon sourceSmallIcon;
+        final int notificationId;
+        final String notificationTag;
+        final int automationAlarmId;
 
         BuildOptions(int islandButtonMode, String manualMuteAction, String manualUnmuteAction,
-                     String targetPackage, String picKeyShare) {
+                     String manualSkipAction,
+                     String targetPackage, String picKeyShare,
+                     Context context, Icon sourceSmallIcon,
+                     int notificationId, String notificationTag,
+                     int automationAlarmId) {
             this.islandButtonMode = islandButtonMode;
             this.manualMuteAction = safeStr(manualMuteAction);
             this.manualUnmuteAction = safeStr(manualUnmuteAction);
+            this.manualSkipAction = safeStr(manualSkipAction);
             this.targetPackage = safeStr(targetPackage);
             this.picKeyShare = safeStr(picKeyShare);
+            this.context = context;
+            this.sourceSmallIcon = sourceSmallIcon;
+            this.notificationId = notificationId;
+            this.notificationTag = safeStr(notificationTag);
+            this.automationAlarmId = automationAlarmId;
         }
     }
 
@@ -87,13 +107,18 @@ final class IslandContentBuilder {
             long now = System.currentTimeMillis();
             boolean isFinished = state == STATE_FINISHED;
             boolean isActive = state != STATE_COUNTDOWN;
+            boolean showSkipClass = options.islandButtonMode == 3;
 
             boolean showMute = options.islandButtonMode == 0 || options.islandButtonMode == 2;
             boolean showDnd = options.islandButtonMode == 1 || options.islandButtonMode == 2;
 
-            String muteAction = isFinished ? options.manualUnmuteAction : options.manualMuteAction;
+            String muteAction = showSkipClass
+                    ? options.manualSkipAction
+                    : (isFinished ? options.manualUnmuteAction : options.manualMuteAction);
             String actionTitle;
-            if (showMute && showDnd) {
+            if (showSkipClass) {
+                actionTitle = "\u6211\u8981\u9003\u8bfe";
+            } else if (showMute && showDnd) {
                 actionTitle = isFinished ? "\u89e3\u9664\u9759\u9ed8" : "\u4e0a\u8bfe\u9759\u9ed8";
             } else if (showDnd) {
                 actionTitle = isFinished ? "\u89e3\u9664\u52ff\u6270" : "\u4e0a\u8bfe\u52ff\u6270";
@@ -127,6 +152,8 @@ final class IslandContentBuilder {
             int stageIndex = stageIndexByState(state);
             String stageSuffix = ConfigDefaults.stageSuffix(stageIndex);
             final boolean showIconA = PrefsAccess.readConfigBool(prefs, "icon_a", true);
+            final boolean leftHighlightEnabled = true;
+            final boolean rightHighlightEnabled = true;
             final boolean legacyOutEffectEnabled = PrefsAccess.readConfigBool(
                     prefs, "out_effect_enabled", true);
             final boolean legacyOutEffectExists = prefs.contains("out_effect_enabled");
@@ -295,7 +322,6 @@ final class IslandContentBuilder {
             final int finalIslandTimeoutSec = islandTimeoutSec;
             final long finalTimerMs = timerMs;
             final int finalTimerType = timerType;
-
             String tickerText = applyExtraVars(resolveTemplate(
                     PrefsAccess.readStagedTemplate(prefs, "tpl_ticker", stageSuffix, ""),
                     info, buildTickerText(info)), info);
@@ -325,10 +351,16 @@ final class IslandContentBuilder {
 
                 ActionInfo actionInfo = new ActionInfo();
                 actionInfo.setActionIntentType(2);
-                actionInfo.setActionIntent(
-                        "intent:#Intent;action=" + muteAction
-                                + ";package=" + options.targetPackage
-                                + ";launchFlags=0x10000000;end");
+                Intent actionIntent = new Intent(muteAction);
+                actionIntent.setPackage(options.targetPackage);
+                actionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                actionIntent.putExtra("course_name", info.courseName);
+                actionIntent.putExtra("start_time", info.startTime);
+                actionIntent.putExtra("end_time", info.endTime);
+                actionIntent.putExtra("notif_id", options.notificationId);
+                actionIntent.putExtra("notif_tag", options.notificationTag);
+                actionIntent.putExtra("automation_alarm_id", options.automationAlarmId);
+                actionInfo.setActionIntent(actionIntent.toUri(Intent.URI_INTENT_SCHEME));
                 actionInfo.setActionTitle(actionTitle);
 
                 HintInfo hintInfo = new HintInfo();
@@ -353,6 +385,7 @@ final class IslandContentBuilder {
 
                 TextInfo aTextInfo = new TextInfo();
                 aTextInfo.setTitle(aTitle);
+                aTextInfo.setShowHighlightColor(leftHighlightEnabled);
                 ImageTextInfo imageTextInfoLeft = new ImageTextInfo();
                 imageTextInfoLeft.setType(1);
                 imageTextInfoLeft.setTextInfo(aTextInfo);
@@ -376,11 +409,12 @@ final class IslandContentBuilder {
                         sameWidthDigitInfo.setContent(bSameWidthSpec.suffix);
                     }
                     sameWidthDigitInfo.setTurnAnim(true);
-                    sameWidthDigitInfo.setShowHighlightColor(Boolean.FALSE);
+                    sameWidthDigitInfo.setShowHighlightColor(rightHighlightEnabled);
                     bigIslandArea.setSameWidthDigitInfo(sameWidthDigitInfo);
                 } else {
                     TextInfo bTextInfo = new TextInfo();
                     bTextInfo.setTitle(bTitle);
+                    bTextInfo.setShowHighlightColor(rightHighlightEnabled);
                     bigIslandArea.setTextInfo(bTextInfo);
                 }
 

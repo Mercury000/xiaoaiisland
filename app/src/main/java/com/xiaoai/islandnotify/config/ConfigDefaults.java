@@ -97,6 +97,9 @@ final class ConfigDefaults {
             case "out_effect_enabled": return true;
             case "out_effect_status_enabled": return false;
             case "out_effect_expand_enabled": return true;
+            // legacy keys (兼容旧版本)
+            case "status_left_text_dynamic_highlight_enabled":
+            case "status_right_text_dynamic_highlight_enabled": return false;
             case "mute_enabled":
             case "unmute_enabled":
             case "dnd_enabled":
@@ -194,6 +197,11 @@ final class ConfigDefaults {
                 || "active_countdown_to_end".equals(key)
                 || "island_button_mode".equals(key)
                 || "icon_a".equals(key)
+                || "status_left_text_highlight_custom_color_argb".equals(key)
+                || "status_right_text_highlight_custom_color_argb".equals(key)
+                || "status_text_highlight_custom_color_argb".equals(key) // legacy
+                || "status_left_text_dynamic_highlight_enabled".equals(key)
+                || "status_right_text_dynamic_highlight_enabled".equals(key)
                 || "out_effect_enabled".equals(key)
                 || "out_effect_status_enabled".equals(key)
                 || "out_effect_expand_enabled".equals(key)

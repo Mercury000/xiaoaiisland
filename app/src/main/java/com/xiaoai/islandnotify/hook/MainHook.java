@@ -47,6 +47,8 @@ public class MainHook {
     private static final String ACTION_MANUAL_MUTE   = "com.xiaoai.islandnotify.MANUAL_MUTE";
     /** 超级岛按钮手动触发：立即解除所有已配置的静音/勿扰 */
     private static final String ACTION_MANUAL_UNMUTE = "com.xiaoai.islandnotify.MANUAL_UNMUTE";
+    /** 超级岛按钮手动触发：我要逃课（取消通知，必要时回滚模块已执行的静音/勿扰） */
+    private static final String ACTION_MANUAL_SKIP_CLASS = "com.xiaoai.islandnotify.MANUAL_SKIP_CLASS";
     /** 每日 00:01 跨日重调广播 Action（链式保证次日课程 alarm 不丢失） */
     private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
     /** WakeUp 数据源同步到超级小爱进程 */
@@ -146,6 +148,9 @@ public class MainHook {
     private static final String KEY_COURSE_TOTAL_WEEK = "course_total_week";
     private static final String KEY_SCHEDULED_ALARM_IDS = "scheduled_alarm_ids";
     private static final String KEY_SCHEDULED_MUTE_IDS = "scheduled_mute_ids";
+    private static final String KEY_SKIPPED_AUTOMATION_TOKENS = "skipped_automation_tokens";
+    private static final String KEY_RUNTIME_MODULE_MUTE_APPLIED = "runtime_module_mute_applied";
+    private static final String KEY_RUNTIME_MODULE_DND_APPLIED = "runtime_module_dnd_applied";
     private static final String SETTINGS_CACHE_PREFIX = "settings_util_class_@";
     private static final String TIMETABLE_CACHE_PREFIX = "timetable_helper_class_@";
     private static final String KEY_RUNTIME_MIGRATION_DONE = "runtime_storage_v1_done";
@@ -180,7 +185,7 @@ public class MainHook {
     private static volatile boolean sWakeupAfternoonEnabled = ConfigDefaults.SWITCH_DISABLED;
     /** 全局补发开关：控制通知补发与课中即时静音/勿扰 */
     private static volatile boolean sRepostEnabled = ConfigDefaults.REPOST_ENABLED;
-    /** 超级岛按钮功能模式：0=仅静音, 1=仅勿扰, 2=两者 */
+    /** 超级岛按钮功能模式：0=仅静音, 1=仅勿扰, 2=两者, 3=逃课 */
     private static volatile int sIslandButtonMode = ConfigDefaults.ISLAND_BUTTON_MODE;
     /** 已调度的静音/取消静音 alarm reqCode 集合，用于批量取消 */
     private final java.util.Set<Integer> mScheduledMuteIds = new java.util.HashSet<>();
@@ -213,6 +218,69 @@ public class MainHook {
         } catch (Throwable ignored) {}
         return ids;
     }
+
+    private void saveSkippedAutomationTokens(Context ctx, java.util.Set<String> tokens) {
+        try {
+            SharedPreferences sp = ctx.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
+            JSONArray arr = new JSONArray();
+            synchronized (tokens) {
+                for (String token : tokens) {
+                    if (token != null && !token.isEmpty()) arr.put(token);
+                }
+            }
+            sp.edit().putString(KEY_SKIPPED_AUTOMATION_TOKENS, arr.toString()).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    private java.util.Set<String> loadSkippedAutomationTokens(Context ctx) {
+        java.util.Set<String> tokens = new java.util.HashSet<>();
+        try {
+            SharedPreferences sp = ctx.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
+            String json = sp.getString(KEY_SKIPPED_AUTOMATION_TOKENS, null);
+            if (json == null || json.isEmpty()) return tokens;
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                String token = arr.optString(i, "");
+                if (!token.isEmpty()) tokens.add(token);
+            }
+        } catch (Throwable ignored) {}
+        return tokens;
+    }
+
+    private String todayDateToken() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(new java.util.Date());
+    }
+
+    private String buildSkippedAutomationToken(String dateToken, int automationAlarmId) {
+        return dateToken + "#" + (automationAlarmId & 0x00FFFFFF);
+    }
+
+    private void markAutomationSkippedToday(Context ctx, int automationAlarmId) {
+        if (automationAlarmId < 0) return;
+        try {
+            String today = todayDateToken();
+            java.util.Set<String> tokens = loadSkippedAutomationTokens(ctx);
+            java.util.Set<String> next = new java.util.HashSet<>();
+            String todayPrefix = today + "#";
+            for (String token : tokens) {
+                if (token != null && token.startsWith(todayPrefix)) next.add(token);
+            }
+            next.add(buildSkippedAutomationToken(today, automationAlarmId));
+            saveSkippedAutomationTokens(ctx, next);
+        } catch (Throwable ignored) {}
+    }
+
+    private boolean isAutomationSkippedToday(Context ctx, int automationAlarmId) {
+        if (automationAlarmId < 0) return false;
+        try {
+            String token = buildSkippedAutomationToken(todayDateToken(), automationAlarmId);
+            return loadSkippedAutomationTokens(ctx).contains(token);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     /** 有连续后续课程的通知 alarmId 集合：injectIslandParams 跳过 cancel alarm 注册，
      *  防止中间课程通知被提前清除；cancel 由 consecutive 更新路径接管后统一重建。 */
     private final java.util.Set<Integer> mConsecutiveAnchors =
@@ -269,6 +337,7 @@ public class MainHook {
                 filter.addAction(ACTION_DO_DND_OFF);
                 filter.addAction(ACTION_MANUAL_MUTE);
                 filter.addAction(ACTION_MANUAL_UNMUTE);
+                filter.addAction(ACTION_MANUAL_SKIP_CLASS);
                 filter.addAction(ACTION_RESCHEDULE_DAILY);
                 filter.addAction(ACTION_NOTIF_CANCEL);
                 filter.addAction(ACTION_WAKEUP_COURSE_SYNC);
@@ -405,7 +474,7 @@ public class MainHook {
                                 // 使用 MainActivity 传来的精确毫秒时间戳，与真实调度逻辑完全一致
                                 long classStartMs = intent.getLongExtra("start_ms", tNow + 60_000L);
                                 long classEndMs   = intent.getLongExtra("end_ms",   tNow + 120_000L);
-                                int  tAlarmId     = Math.abs(("test_" + tCourseName).hashCode());
+                                int  tAlarmId     = tNotifId;
                                 if (tMuteEnabled || tUnmuteEnabled) {
                                     int  tMuteBefore    = intent.getIntExtra(KEY_MUTE_MINS_BEFORE,  DEFAULT_MUTE_MINS_BEFORE);
                                     int  tUnmuteAfter   = intent.getIntExtra(KEY_UNMUTE_MINS_AFTER, DEFAULT_UNMUTE_MINS_AFTER);
@@ -629,18 +698,38 @@ public class MainHook {
     private boolean dispatchSimpleAction(Context context, Intent intent, String action) {
         if (action == null) return true;
         if (ACTION_DO_MUTE.equals(action)) {
+            int automationAlarmId = intent.getIntExtra("automation_alarm_id", -1);
+            if (isAutomationSkippedToday(context, automationAlarmId)) {
+                XposedBridge.log(TAG + ": [逃课] 忽略静音自动化 alarmId=" + automationAlarmId);
+                return true;
+            }
             applyMuteState(context, true, intent.getStringExtra("course_name"));
             return true;
         }
         if (ACTION_DO_UNMUTE.equals(action)) {
+            int automationAlarmId = intent.getIntExtra("automation_alarm_id", -1);
+            if (isAutomationSkippedToday(context, automationAlarmId)) {
+                XposedBridge.log(TAG + ": [逃课] 忽略取消静音自动化 alarmId=" + automationAlarmId);
+                return true;
+            }
             applyMuteState(context, false, intent.getStringExtra("course_name"));
             return true;
         }
         if (ACTION_DO_DND_ON.equals(action)) {
+            int automationAlarmId = intent.getIntExtra("automation_alarm_id", -1);
+            if (isAutomationSkippedToday(context, automationAlarmId)) {
+                XposedBridge.log(TAG + ": [逃课] 忽略开启勿扰自动化 alarmId=" + automationAlarmId);
+                return true;
+            }
             applyDndState(context, true, intent.getStringExtra("course_name"));
             return true;
         }
         if (ACTION_DO_DND_OFF.equals(action)) {
+            int automationAlarmId = intent.getIntExtra("automation_alarm_id", -1);
+            if (isAutomationSkippedToday(context, automationAlarmId)) {
+                XposedBridge.log(TAG + ": [逃课] 忽略关闭勿扰自动化 alarmId=" + automationAlarmId);
+                return true;
+            }
             applyDndState(context, false, intent.getStringExtra("course_name"));
             return true;
         }
@@ -649,6 +738,25 @@ public class MainHook {
             String courseName = intent.getStringExtra("course_name");
             if (sIslandButtonMode == 0 || sIslandButtonMode == 2) applyMuteState(context, enable, courseName);
             if (sIslandButtonMode == 1 || sIslandButtonMode == 2) applyDndState(context, enable, courseName);
+            return true;
+        }
+        if (ACTION_MANUAL_SKIP_CLASS.equals(action)) {
+            SharedPreferences runtime = context.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
+            String courseName = intent.getStringExtra("course_name");
+            int targetId = intent.getIntExtra("notif_id", -1);
+            int automationAlarmId = intent.getIntExtra("automation_alarm_id", -1);
+            markAutomationSkippedToday(context, automationAlarmId);
+            cancelCourseAutomationAlarms(context, automationAlarmId);
+            if (runtime.getBoolean(KEY_RUNTIME_MODULE_MUTE_APPLIED, false)) {
+                applyMuteState(context, false, courseName);
+            }
+            if (runtime.getBoolean(KEY_RUNTIME_MODULE_DND_APPLIED, false)) {
+                applyDndState(context, false, courseName);
+            }
+            String targetTag = intent.getStringExtra("notif_tag");
+            int canceled = cancelTargetIslandNotification(context, targetId, targetTag);
+            XposedBridge.log(TAG + ": [逃课] 已执行，取消通知 " + canceled + " 条"
+                    + " automationAlarmId=" + automationAlarmId);
             return true;
         }
         if (ACTION_WAKEUP_COURSE_SYNC.equals(action)) {
@@ -717,6 +825,69 @@ public class MainHook {
 
     private Intent createServiceIntent(String action) {
         return AlarmScheduler.buildServiceIntent(TARGET_PACKAGE, UPLOAD_STATE_SERVICE, action);
+    }
+
+    private int cancelOwnedIslandNotifications(Context context) {
+        int count = 0;
+        try {
+            android.app.NotificationManager nm =
+                    context.getSystemService(android.app.NotificationManager.class);
+            if (nm == null) return 0;
+            for (StatusBarNotification sbn : nm.getActiveNotifications()) {
+                if (sbn == null) continue;
+                Notification n = sbn.getNotification();
+                if (n == null || n.extras == null) continue;
+                String owner = n.extras.getString("xiaoai.islandnotify.owner", "");
+                if (!"com.xiaoai.islandnotify".equals(owner)) continue;
+                String tag = sbn.getTag();
+                int id = sbn.getId();
+                if (tag != null) nm.cancel(tag, id);
+                else nm.cancel(id);
+                mNotifCourseOwner.remove(id);
+                count++;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cancelOwnedIslandNotifications 失败 -> " + t.getMessage());
+        }
+        return count;
+    }
+
+    private int cancelTargetIslandNotification(Context context, int notifId, String notifTag) {
+        if (notifId < 0) return 0;
+        try {
+            android.app.NotificationManager nm =
+                    context.getSystemService(android.app.NotificationManager.class);
+            if (nm == null) return 0;
+            if (notifTag != null && !notifTag.isEmpty()) nm.cancel(notifTag, notifId);
+            else nm.cancel(notifId);
+            mNotifCourseOwner.remove(notifId);
+            return 1;
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cancelTargetIslandNotification 失败 -> " + t.getMessage());
+            return 0;
+        }
+    }
+
+    private void cancelCourseAutomationAlarms(Context ctx, int automationAlarmId) {
+        if (automationAlarmId < 0) return;
+        int alarmId = automationAlarmId & 0x00FFFFFF;
+        try {
+            for (String action : new String[]{ACTION_DO_MUTE, ACTION_DO_UNMUTE, ACTION_DO_DND_ON, ACTION_DO_DND_OFF}) {
+                int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, action);
+                Intent dummy = createServiceIntent(action);
+                AlarmScheduler.cancelAlarmClock(
+                        ctx, dummy, reqCode,
+                        action, TARGET_PACKAGE, reqCode | 0x40000000,
+                        true);
+            }
+            synchronized (mScheduledMuteIds) {
+                mScheduledMuteIds.remove(alarmId);
+                saveScheduledIds(ctx, KEY_SCHEDULED_MUTE_IDS, mScheduledMuteIds);
+            }
+            XposedBridge.log(TAG + ": [逃课] 已取消该课自动化闹钟 alarmId=" + alarmId);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cancelCourseAutomationAlarms 失败 -> " + t.getMessage());
+        }
     }
 
     /** 判断给定 action 是否为闹钟触发的 action（需通过 Service 拉起进程） */
@@ -960,8 +1131,8 @@ public class MainHook {
                 String teacher = course.teacher;
                 CourseInfo info = new CourseInfo(courseName, startTime, endTime, classroom, sectionRange, teacher);
 
-                int alarmId = Math.abs((courseName + startTime + endTime + classroom + sectionRange + teacher)
-                        .hashCode()) & 0x00FFFFFF;
+                int alarmId = buildCourseNotificationId(
+                        courseName, startTime, endTime, classroom, sectionRange, teacher);
                 validAlarmIds.add(alarmId);
 
                 long triggerMs = startMs - reminderMs;
@@ -1162,6 +1333,7 @@ public class MainHook {
             int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_MUTE);
             Intent intent = createServiceIntent(ACTION_DO_MUTE);
             intent.putExtra("course_name", courseName);
+            intent.putExtra("automation_alarm_id", alarmId);
             boolean scheduled = AlarmScheduler.scheduleAlarmClock(
                     ctx, intent, reqCode,
                     ACTION_DO_MUTE, TARGET_PACKAGE, reqCode | 0x40000000,
@@ -1219,6 +1391,7 @@ public class MainHook {
             int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_UNMUTE);
             Intent intent = createServiceIntent(ACTION_DO_UNMUTE);
             intent.putExtra("course_name", courseName);
+            intent.putExtra("automation_alarm_id", alarmId);
             boolean scheduled = AlarmScheduler.scheduleAlarmClock(
                     ctx, intent, reqCode,
                     ACTION_DO_UNMUTE, TARGET_PACKAGE, reqCode | 0x40000000,
@@ -1244,6 +1417,7 @@ public class MainHook {
             int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_DND_ON);
             Intent intent = createServiceIntent(ACTION_DO_DND_ON);
             intent.putExtra("course_name", courseName);
+            intent.putExtra("automation_alarm_id", alarmId);
             boolean scheduled = AlarmScheduler.scheduleAlarmClock(
                     ctx, intent, reqCode,
                     ACTION_DO_DND_ON, TARGET_PACKAGE, reqCode | 0x40000000,
@@ -1269,6 +1443,7 @@ public class MainHook {
             int reqCode = AlarmScheduler.reqCodeForMuteAction(alarmId, ACTION_DO_DND_OFF);
             Intent intent = createServiceIntent(ACTION_DO_DND_OFF);
             intent.putExtra("course_name", courseName);
+            intent.putExtra("automation_alarm_id", alarmId);
             boolean scheduled = AlarmScheduler.scheduleAlarmClock(
                     ctx, intent, reqCode,
                     ACTION_DO_DND_OFF, TARGET_PACKAGE, reqCode | 0x40000000,
@@ -1291,15 +1466,62 @@ public class MainHook {
     /** 在 voiceassist 进程内执行静音/恢复铃声。 */
     private void applyMuteState(Context ctx, boolean mute, String courseName) {
         String modeTip = mute ? "静音" : "恢复铃声";
+        AudioManager audioMgr = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        int beforeMode = audioMgr != null ? audioMgr.getRingerMode() : -1;
         boolean ok = MiuiSettingsInvoker.applyMute(ctx, mute);
+        if (ok) {
+            if (mute) {
+                // 仅在确实由模块从非静音切到静音时，标记为“模块执行”
+                if (beforeMode != AudioManager.RINGER_MODE_SILENT) {
+                    setModuleMuteApplied(ctx, true);
+                }
+            } else {
+                setModuleMuteApplied(ctx, false);
+            }
+        }
         XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
     }
 
     /** 在 voiceassist 进程内开启/关闭勿扰（DND）模式。 */
     private void applyDndState(Context ctx, boolean enable, String courseName) {
         String modeTip = enable ? "开启勿扰" : "关闭勿扰";
+        android.app.NotificationManager nm =
+                ctx.getSystemService(android.app.NotificationManager.class);
+        int beforeFilter = nm != null
+                ? nm.getCurrentInterruptionFilter()
+                : android.app.NotificationManager.INTERRUPTION_FILTER_UNKNOWN;
         boolean ok = MiuiSettingsInvoker.applyDnd(ctx, enable);
+        if (ok) {
+            if (enable) {
+                // 仅在确实由模块从非勿扰切到勿扰时，标记为“模块执行”
+                if (beforeFilter != android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY) {
+                    setModuleDndApplied(ctx, true);
+                }
+            } else {
+                setModuleDndApplied(ctx, false);
+            }
+        }
         XposedBridge.log(TAG + ": [" + modeTip + "] MiuiSettingsInvoker " + (ok ? "成功" : "失败 ← " + courseName));
+    }
+
+    private void setModuleMuteApplied(Context ctx, boolean applied) {
+        try {
+            ctx.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(KEY_RUNTIME_MODULE_MUTE_APPLIED, applied)
+                    .apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void setModuleDndApplied(Context ctx, boolean applied) {
+        try {
+            ctx.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(KEY_RUNTIME_MODULE_DND_APPLIED, applied)
+                    .apply();
+        } catch (Throwable ignored) {
+        }
     }
 
     /**
@@ -1365,7 +1587,13 @@ public class MainHook {
                 if (startMs < 0 || endMs < 0) continue;
 
                 String courseName = course.courseName;
-                int alarmId = Math.abs((courseName + startTime).hashCode()) & 0x00FFFFFF;
+                int alarmId = buildCourseNotificationId(
+                        courseName, startTime, endTime, course.classroom, course.sectionRange, course.teacher);
+                if (isAutomationSkippedToday(ctx, alarmId)) {
+                    XposedBridge.log(TAG + ": [逃课] 跳过该课自动化调度 alarmId=" + alarmId
+                            + " " + courseName + "@" + startTime);
+                    continue;
+                }
 
                 if (sMuteEnabled) {
                     long muteTriggerMs = startMs - (long) muteMinsBefore * 60_000L;
@@ -1750,7 +1978,9 @@ public class MainHook {
                 state = STATE_ELAPSED;
             }
 
-            notif.extras.putAll(buildIslandExtras(info, state, prefs));
+            int automationAlarmId = notifId;
+            notif.extras.putAll(buildIslandExtras(
+                    info, state, prefs, ctx, notif, notifId, notifTag, automationAlarmId));
             mNotifCourseOwner.put(notifId, info.courseName);
             try {
                 Intent tableIntent = buildCourseOpenIntent(ctx, prefs);
@@ -1936,7 +2166,9 @@ public class MainHook {
                     .setOnlyAlertOnce(true)   // 双重保险
                     .build();
             if (n.extras == null) n.extras = new Bundle();
-            n.extras.putAll(buildIslandExtras(info, state, prefs));
+            int automationAlarmId = id;
+            n.extras.putAll(buildIslandExtras(
+                    info, state, prefs, ctx, n, id, tag, automationAlarmId));
             n.contentIntent = src.contentIntent;
             if (tag != null) nm.notify(tag, id, n);
             else             nm.notify(id, n);
@@ -1952,7 +2184,15 @@ public class MainHook {
      *   STATE_ELAPSED  ：上课中正计时，上课静音按钮
      *   STATE_FINISHED ：下课后正计时，解除静音按钮
      */
-    private Bundle buildIslandExtras(CourseInfo info, int state, SharedPreferences prefs) {
+    private Bundle buildIslandExtras(
+            CourseInfo info,
+            int state,
+            SharedPreferences prefs,
+            Context ctx,
+            Notification sourceNotification,
+            int notificationId,
+            String notificationTag,
+            int automationAlarmId) {
         IslandContentBuilder.CourseSnapshot snapshot = new IslandContentBuilder.CourseSnapshot(
                 info.courseName, info.startTime, info.endTime,
                 info.classroom, info.sectionRange, info.teacher);
@@ -1960,9 +2200,30 @@ public class MainHook {
                 sIslandButtonMode,
                 ACTION_MANUAL_MUTE,
                 ACTION_MANUAL_UNMUTE,
+                ACTION_MANUAL_SKIP_CLASS,
                 TARGET_PACKAGE,
-                PIC_KEY_SHARE);
+                PIC_KEY_SHARE,
+                ctx,
+                sourceNotification != null ? sourceNotification.getSmallIcon() : null,
+                notificationId,
+                notificationTag,
+                automationAlarmId);
         return IslandContentBuilder.build(snapshot, state, prefs, options);
+    }
+
+    private int buildCourseNotificationId(
+            String courseName,
+            String startTime,
+            String endTime,
+            String classroom,
+            String sectionRange,
+            String teacher) {
+        return Math.abs((safeStr(courseName)
+                + safeStr(startTime)
+                + safeStr(endTime)
+                + safeStr(classroom)
+                + safeStr(sectionRange)
+                + safeStr(teacher)).hashCode()) & 0x00FFFFFF;
     }
 
 

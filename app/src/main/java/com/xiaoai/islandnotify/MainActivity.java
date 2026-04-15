@@ -937,5 +937,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         ed.putBoolean("icon_a", true);
+        ed.putInt("status_left_text_highlight_custom_color_argb", 0xFFFFFFFF);
+        ed.putInt("status_right_text_highlight_custom_color_argb", 0xFFFFFFFF);
     }
 }

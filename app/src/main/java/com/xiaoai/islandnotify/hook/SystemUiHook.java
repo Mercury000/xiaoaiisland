@@ -81,6 +81,10 @@ public class SystemUiHook {
     private static final String KEY_EXPAND_CUSTOM_GLOW_COLOR_ARGB = "out_effect_expand_custom_color_argb";
     private static final String KEY_STATUS_GLOW_ENABLED = "out_effect_status_enabled";
     private static final String KEY_EXPAND_GLOW_ENABLED = "out_effect_expand_enabled";
+    private static final String KEY_STATUS_LEFT_TEXT_HIGHLIGHT_CUSTOM_COLOR_ARGB =
+            "status_left_text_highlight_custom_color_argb";
+    private static final String KEY_STATUS_RIGHT_TEXT_HIGHLIGHT_CUSTOM_COLOR_ARGB =
+            "status_right_text_highlight_custom_color_argb";
     private static final String BASE_ISLAND_MODULE_VIEW_HOLDER_CLASS =
             "miui.systemui.dynamicisland.module.BaseIslandModuleViewHolder";
     private static final String ISLAND_TEXT_VIEW_HOLDER_CLASS =
@@ -152,6 +156,7 @@ public class SystemUiHook {
         hookIslandExpandedView(classLoader);
         hookSameWidthDigitSuffixStyle(classLoader);
         hookSameWidthDigitContentColor(classLoader);
+        hookIslandTextCustomColor(classLoader);
     }
 
     private void hookFocusDynamicIslandExtrasBridge(ClassLoader classLoader) {
@@ -1056,6 +1061,107 @@ public class SystemUiHook {
             }
         } catch (Throwable t) {
             swallowOptionalHookFailure(t);
+        }
+    }
+
+    private void hookIslandTextCustomColor(ClassLoader classLoader) {
+        hookIslandTextCustomColorForHolder(classLoader, ISLAND_TEXT_VIEW_HOLDER_CLASS, true);
+        hookIslandTextCustomColorForHolder(classLoader, ISLAND_RIGHT_TEXT_VIEW_HOLDER_CLASS, false);
+        hookSameWidthRightTextCustomColor(classLoader);
+    }
+
+    private void hookIslandTextCustomColorForHolder(
+            ClassLoader classLoader, String holderClassName, boolean leftSide) {
+        try {
+            Class<?> cls = Class.forName(holderClassName, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"bind".equals(m.getName())) continue;
+                if (m.getParameterTypes().length != 2) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
+                        TextColorConfig cfg = readStatusTextColorConfig(leftSide);
+                        if (!cfg.enabled) return;
+                        Object self = param.thisObject;
+                        if (self == null) return;
+                        Object titleObj = getFieldValue(self, "title");
+                        if (!(titleObj instanceof TextView)) return;
+                        TextView title = (TextView) titleObj;
+                        sReentry.set(Boolean.TRUE);
+                        try {
+                            title.setTextColor(cfg.argb);
+                        } catch (Throwable ignore) {
+                        } finally {
+                            sReentry.set(Boolean.FALSE);
+                        }
+                    }
+                });
+                return;
+            }
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private void hookSameWidthRightTextCustomColor(ClassLoader classLoader) {
+        try {
+            Class<?> cls = Class.forName(ISLAND_SAME_WIDTH_DIGIT_VIEW_HOLDER_CLASS, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"bind".equals(m.getName())) continue;
+                if (m.getParameterTypes().length != 2) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
+                        TextColorConfig cfg = readStatusTextColorConfig(false);
+                        if (!cfg.enabled) return;
+                        Object self = param.thisObject;
+                        if (self == null) return;
+                        Object titleObj = getFieldValue(self, "title");
+                        Object contentObj = getFieldValue(self, "content");
+                        Object digitObj = getFieldValue(self, "sameWidthDigit");
+                        sReentry.set(Boolean.TRUE);
+                        try {
+                            if (titleObj instanceof TextView) ((TextView) titleObj).setTextColor(cfg.argb);
+                            if (contentObj instanceof TextView) ((TextView) contentObj).setTextColor(cfg.argb);
+                            if (digitObj instanceof TextView) ((TextView) digitObj).setTextColor(cfg.argb);
+                        } catch (Throwable ignore) {
+                        } finally {
+                            sReentry.set(Boolean.FALSE);
+                        }
+                    }
+                });
+                return;
+            }
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private TextColorConfig readStatusTextColorConfig(boolean leftSide) {
+        SharedPreferences prefs = readModuleConfigPrefs();
+        if (prefs == null) return TextColorConfig.disabled();
+        if (leftSide) {
+            int argb = prefs.getInt(KEY_STATUS_LEFT_TEXT_HIGHLIGHT_CUSTOM_COLOR_ARGB, 0xFFFFFFFF);
+            return new TextColorConfig(true, argb);
+        } else {
+            int argb = prefs.getInt(KEY_STATUS_RIGHT_TEXT_HIGHLIGHT_CUSTOM_COLOR_ARGB, 0xFFFFFFFF);
+            return new TextColorConfig(true, argb);
+        }
+    }
+
+    private static final class TextColorConfig {
+        final boolean enabled;
+        final int argb;
+
+        TextColorConfig(boolean enabled, int argb) {
+            this.enabled = enabled;
+            this.argb = argb;
+        }
+
+        static TextColorConfig disabled() {
+            return new TextColorConfig(false, 0xFFFFFFFF);
         }
     }
 

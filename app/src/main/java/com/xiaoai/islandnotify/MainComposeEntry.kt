@@ -3576,7 +3576,6 @@ private fun AboutTab(
                 )
                 SwitchPreference(
                     title = "莫奈取色",
-                    summary = "开启后跟随系统动态配色",
                     value = state.monetEnabled,
                     onCheckedChange = {
                         state.monetEnabled = it
@@ -3585,7 +3584,6 @@ private fun AboutTab(
                 )
                 SwitchPreference(
                     title = "预测性返回",
-                    summary = "开启后使用系统预测性返回动画",
                     value = state.predictiveBackEnabled,
                     onCheckedChange = {
                         state.predictiveBackEnabled = it

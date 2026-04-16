@@ -81,8 +81,6 @@ public class SystemUiHook {
     private static final String KEY_EXPAND_CUSTOM_GLOW_COLOR_ARGB = "out_effect_expand_custom_color_argb";
     private static final String KEY_STATUS_GLOW_ENABLED = "out_effect_status_enabled";
     private static final String KEY_EXPAND_GLOW_ENABLED = "out_effect_expand_enabled";
-    private static final String KEY_STATUS_TEXT_HIGHLIGHT_CUSTOM_COLOR_ARGB =
-            "status_text_highlight_custom_color_argb";
     private static final String BASE_ISLAND_MODULE_VIEW_HOLDER_CLASS =
             "miui.systemui.dynamicisland.module.BaseIslandModuleViewHolder";
     private static final String ISLAND_TEXT_VIEW_HOLDER_CLASS =
@@ -304,6 +302,7 @@ public class SystemUiHook {
                             boolean isDeleted = isDeletedIslandStateTag(stateObj);
                             boolean isExpand = isExpandIslandStateTag(stateObj);
                             Object dataObj = extractDynamicDataFromAnimationState(stateObj);
+                            markOwnedKeyFromDynamicIslandData(dataObj);
                             updateRecentOwnedGlowState(dataObj, resolveStrictGlowMode(isBig, isExpand));
                             if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
                             Object bigView = invokeNoArg(stateObj, "getBigIslandView");
@@ -1061,102 +1060,6 @@ public class SystemUiHook {
         }
     }
 
-    private void hookIslandTextCustomColor(ClassLoader classLoader) {
-        hookIslandTextCustomColorForHolder(classLoader, ISLAND_TEXT_VIEW_HOLDER_CLASS, true);
-        hookIslandTextCustomColorForHolder(classLoader, ISLAND_RIGHT_TEXT_VIEW_HOLDER_CLASS, false);
-        hookSameWidthRightTextCustomColor(classLoader);
-    }
-
-    private void hookIslandTextCustomColorForHolder(
-            ClassLoader classLoader, String holderClassName, boolean leftSide) {
-        try {
-            Class<?> cls = Class.forName(holderClassName, false, classLoader);
-            for (Method m : cls.getDeclaredMethods()) {
-                if (!"bind".equals(m.getName())) continue;
-                if (m.getParameterTypes().length != 2) continue;
-                m.setAccessible(true);
-                XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        if (!isInOurIslandBind()) return;
-                        TextColorConfig cfg = readStatusTextColorConfig(leftSide);
-                        if (!cfg.enabled) return;
-                        Object self = param.thisObject;
-                        if (self == null) return;
-                        Object titleObj = getFieldValue(self, "title");
-                        if (!(titleObj instanceof TextView)) return;
-                        TextView title = (TextView) titleObj;
-                        sReentry.set(Boolean.TRUE);
-                        try {
-                            title.setTextColor(cfg.argb);
-                        } catch (Throwable ignore) {
-                        } finally {
-                            sReentry.set(Boolean.FALSE);
-                        }
-                    }
-                });
-                return;
-            }
-        } catch (Throwable ignore) {
-        }
-    }
-
-    private void hookSameWidthRightTextCustomColor(ClassLoader classLoader) {
-        try {
-            Class<?> cls = Class.forName(ISLAND_SAME_WIDTH_DIGIT_VIEW_HOLDER_CLASS, false, classLoader);
-            for (Method m : cls.getDeclaredMethods()) {
-                if (!"bind".equals(m.getName())) continue;
-                if (m.getParameterTypes().length != 2) continue;
-                m.setAccessible(true);
-                XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        if (!isInOurIslandBind()) return;
-                        TextColorConfig cfg = readStatusTextColorConfig(false);
-                        if (!cfg.enabled) return;
-                        Object self = param.thisObject;
-                        if (self == null) return;
-                        Object titleObj = getFieldValue(self, "title");
-                        Object contentObj = getFieldValue(self, "content");
-                        Object digitObj = getFieldValue(self, "sameWidthDigit");
-                        sReentry.set(Boolean.TRUE);
-                        try {
-                            if (titleObj instanceof TextView) ((TextView) titleObj).setTextColor(cfg.argb);
-                            if (contentObj instanceof TextView) ((TextView) contentObj).setTextColor(cfg.argb);
-                            if (digitObj instanceof TextView) ((TextView) digitObj).setTextColor(cfg.argb);
-                        } catch (Throwable ignore) {
-                        } finally {
-                            sReentry.set(Boolean.FALSE);
-                        }
-                    }
-                });
-                return;
-            }
-        } catch (Throwable ignore) {
-        }
-    }
-
-    private TextColorConfig readStatusTextColorConfig(boolean leftSide) {
-        SharedPreferences prefs = readModuleConfigPrefs();
-        if (prefs == null) return TextColorConfig.disabled();
-        int argb = prefs.getInt(KEY_STATUS_TEXT_HIGHLIGHT_CUSTOM_COLOR_ARGB, 0xFFFFFFFF);
-        return new TextColorConfig(true, argb);
-    }
-
-    private static final class TextColorConfig {
-        final boolean enabled;
-        final int argb;
-
-        TextColorConfig(boolean enabled, int argb) {
-            this.enabled = enabled;
-            this.argb = argb;
-        }
-
-        static TextColorConfig disabled() {
-            return new TextColorConfig(false, 0xFFFFFFFF);
-        }
-    }
-
     private void invokeUpdateTextWithColor(TextView target, String text, int color) {
         if (target == null) return;
         try {
@@ -1290,6 +1193,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         Object r = param.getResult();
                         if (!(r instanceof Number)) return;
                         int old = ((Number) r).intValue();
@@ -1400,6 +1304,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         Object tpl = (param.args != null && param.args.length > 0) ? param.args[0] : null;
@@ -1428,6 +1333,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         if (param.args == null || param.args.length < 3) return;
                         Object tvObj = param.args[0];
                         if (!(tvObj instanceof TextView)) return;
@@ -1458,6 +1364,7 @@ public class SystemUiHook {
 
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         if (param.args == null || param.args.length < 1) return;
                         Object tvObj = param.args[0];
                         if (!(tvObj instanceof TextView)) return;
@@ -1526,6 +1433,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         // hintInfo.type=2(按钮组件2): subTitle -> focusSmallSubtitleView
@@ -1770,6 +1678,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         if (param.args == null || param.args.length == 0) return;
                         for (int i = 0; i < param.args.length; i++) {
                             Object arg = param.args[i];
@@ -1808,6 +1717,7 @@ public class SystemUiHook {
                     "setIslandExpandedView", View.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
+                            if (!isInOurIslandBind()) return;
                             View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
                                     ? (View) param.args[0] : null;
                             tuneIslandViewTree(root);
@@ -1822,6 +1732,7 @@ public class SystemUiHook {
                     "setIslandExpandedViewFake", View.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
+                            if (!isInOurIslandBind()) return;
                             View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
                                     ? (View) param.args[0] : null;
                             tuneIslandViewTree(root);
@@ -1850,6 +1761,9 @@ public class SystemUiHook {
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
+                            // Ensure runtime island content hooks are installed so
+                            // owned-bind gating (isInOurIslandBind) can work correctly.
+                            installRuntimeIslandContentHook(param.thisObject);
                             // 不再改写岛A/B文本，避免未展开态宽度异常挤压状态栏图标。
                         }
                     });
@@ -1863,15 +1777,42 @@ public class SystemUiHook {
             findAndHookMethod(FOCUS_CONTENT_CLASS, classLoader,
                     methodName, View.class, new XC_MethodHook() {
                         @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            enterIslandBind();
+                            boolean owned = resolveOwnedForFocusContent(param.thisObject);
+                            sCurrentBindOwned.set(owned);
+                        }
+
+                        @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
-                                    ? (View) param.args[0] : null;
-                            if (!isActiveRoot(root)) return;
+                            try {
+                                View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
+                                        ? (View) param.args[0] : null;
+                                if (!isActiveRoot(root)) return;
+                            } finally {
+                                sCurrentBindOwned.set(Boolean.FALSE);
+                                exitIslandBind();
+                            }
                         }
                     });
         } catch (Throwable t) {
             swallowOptionalHookFailure(t);
         }
+    }
+
+    private boolean resolveOwnedForFocusContent(Object focusContentObj) {
+        if (focusContentObj == null) return false;
+        String key = sFocusContentKeyMap.get(focusContentObj);
+        if (TextUtils.isEmpty(key)) {
+            Object keyObj = invokeNoArg(focusContentObj, "getKey");
+            if (keyObj instanceof String) {
+                key = (String) keyObj;
+                if (!TextUtils.isEmpty(key)) {
+                    sFocusContentKeyMap.put(focusContentObj, key);
+                }
+            }
+        }
+        return isOwnedNotifyKey(key);
     }
 
     private void hookFocusViewMapSetter(ClassLoader classLoader) {

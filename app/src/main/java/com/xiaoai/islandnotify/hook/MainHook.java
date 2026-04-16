@@ -1134,6 +1134,11 @@ public class MainHook {
                 int alarmId = buildCourseNotificationId(
                         courseName, startTime, endTime, classroom, sectionRange, teacher);
                 validAlarmIds.add(alarmId);
+                if (isAutomationSkippedToday(ctx, alarmId)) {
+                    XposedBridge.log(TAG + ": [逃课] 跳过该课提醒/补发 alarmId=" + alarmId
+                            + " " + courseName + "@" + startTime);
+                    continue;
+                }
 
                 long triggerMs = startMs - reminderMs;
                 boolean isConsecutive = false;

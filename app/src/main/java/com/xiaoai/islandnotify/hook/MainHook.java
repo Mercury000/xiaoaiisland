@@ -119,6 +119,8 @@ public class MainHook {
     private android.os.Handler mRescheduleHandler;
     /** 防抖 token，用于 removeCallbacksAndMessages */
     private final Object mRescheduleToken = new Object();
+    /** UploadStateService.onStartCommand 是否已成功注入，避免重复 hook */
+    private volatile boolean mUploadStateServiceHooked = false;
     /** 上次成功调度时 weekCourseBean 的 hashCode；FileObserver 触发时若内容未变则跳过重调度，避免补发重复通知 */
     private volatile int mLastCourseDataHash = 0;
     /** 测试通知时间戳去重：记录上一次毫秒值 */
@@ -281,6 +283,14 @@ public class MainHook {
         }
     }
 
+    /** 跨日后清空“今日逃课跳过”token，避免历史日期残留。 */
+    private void clearSkippedAutomationTokens(Context ctx) {
+        try {
+            SharedPreferences sp = ctx.getSharedPreferences(PREFS_RUNTIME_NAME, Context.MODE_PRIVATE);
+            sp.edit().remove(KEY_SKIPPED_AUTOMATION_TOKENS).apply();
+        } catch (Throwable ignored) {}
+    }
+
     /** 有连续后续课程的通知 alarmId 集合：injectIslandParams 跳过 cancel alarm 注册，
      *  防止中间课程通知被提前清除；cancel 由 consecutive 更新路径接管后统一重建。 */
     private final java.util.Set<Integer> mConsecutiveAnchors =
@@ -328,6 +338,9 @@ public class MainHook {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 Context appCtx = (Context) param.thisObject;
+                // 部分系统在 onPackageLoaded 阶段 defaultClassLoader 可能为空，
+                // 在 Application.onCreate 使用真实 app classloader 补挂 Service hook。
+                hookUploadStateService(appCtx.getClassLoader());
                 IntentFilter filter = new IntentFilter(ACTION_ISLAND_UPDATE);
                 filter.addAction(ACTION_TEST_NOTIFY);
                 filter.addAction(ACTION_COURSE_REMINDER);
@@ -803,6 +816,7 @@ public class MainHook {
             XposedBridge.log(TAG + ": [daily-reschedule] trigger");
             SharedPreferences prefs = getConfigPrefs(context);
             refreshRuntimeSwitchesFromPrefs(prefs);
+            clearSkippedAutomationTokens(context);
             markDailyRescheduleRun(context);
             safeReschedule(context, "island_reschedule_daily", true);
             return true;
@@ -909,6 +923,11 @@ public class MainHook {
      *   → Service.onStartCommand（本 hook 拦截）→ 转发为包内广播 → 动态 BR 处理。
      */
     private void hookUploadStateService(ClassLoader classLoader) {
+        if (mUploadStateServiceHooked) return;
+        if (classLoader == null) {
+            XposedBridge.log(TAG + ": hookUploadStateService 跳过：classLoader 为空，等待 Application.onCreate 重试");
+            return;
+        }
         try {
             // UploadStateService 未覆写 onStartCommand，需用 getMethod 搜索继承链
             Class<?> svcClass = classLoader.loadClass(UPLOAD_STATE_SERVICE);
@@ -935,6 +954,7 @@ public class MainHook {
                     XposedBridge.log(TAG + ": [Service→BR] 转发 " + action);
                 }
             });
+            mUploadStateServiceHooked = true;
             XposedBridge.log(TAG + ": hookUploadStateService 已注入");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": hookUploadStateService 失败: " + t.getMessage());
@@ -1008,6 +1028,7 @@ public class MainHook {
             }
             XposedBridge.log(TAG + ": 检测到错过跨日重调，执行补偿（last=" + last + ", today=" + today + ")");
             sp.edit().putInt(KEY_LAST_DAILY_RESCHEDULE_DAY, today).apply();
+            clearSkippedAutomationTokens(context);
             safeReschedule(context, "island_reschedule_daily", true);
             return true;
         } catch (Throwable t) {

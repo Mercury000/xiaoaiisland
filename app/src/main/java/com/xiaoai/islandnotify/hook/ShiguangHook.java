@@ -50,14 +50,16 @@ public class ShiguangHook {
     private android.os.Handler mHandler;
     private final Object mSyncToken = new Object();
     private volatile int mLastPushedHash = 0;
+    private volatile String mSourcePackageName = TARGET_PACKAGE;
 
     public void handleLoadPackage(String packageName, String processName, ClassLoader classLoader) {
         if (!isTargetPackage(packageName)) return;
         if (!isTargetPackage(processName)) return;
         if (System.getProperty(HOOKED_KEY) != null) return;
         System.setProperty(HOOKED_KEY, "1");
+        mSourcePackageName = packageName;
         hookApplicationOnCreate(classLoader);
-        XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
+        XposedBridge.log(TAG + ": 已注入目标进程 → " + packageName);
     }
 
     private static boolean isTargetPackage(String packageName) {
@@ -156,6 +158,7 @@ public class ShiguangHook {
             sync.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
             sync.putExtra("bean_json", beanJson);
             sync.putExtra("hash", hash);
+            sync.putExtra("source_package", mSourcePackageName);
             ctx.sendBroadcast(sync);
             XposedBridge.log(TAG + ": 已推送拾光课程镜像 -> voiceassist reason=" + reason + " hash=" + hash);
         } catch (Throwable t) {

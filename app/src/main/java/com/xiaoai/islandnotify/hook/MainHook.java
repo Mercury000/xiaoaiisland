@@ -108,6 +108,7 @@ public class MainHook {
     /** 拾光镜像存储键（写入 voiceassist 自身独立 SP） */
     private static final String KEY_SHIGUANG_MIRROR_BEAN = "shiguang_mirror_week_course_bean";
     private static final String KEY_SHIGUANG_MIRROR_HASH = "shiguang_mirror_week_course_hash";
+    private static final String KEY_SHIGUANG_MIRROR_PACKAGE = "shiguang_mirror_package";
     /** 课前提醒分钟数配置键（存入 island_custom SP） */
     private static final String KEY_REMINDER_MINUTES = "reminder_minutes_before";
     /** 课前提醒默认提前分钟数 */
@@ -806,9 +807,11 @@ public class MainHook {
             int oldHash = mirror.getInt(KEY_SHIGUANG_MIRROR_HASH, 0);
             if (hash == oldHash) return true;
             boolean isFirstSync = (oldHash == 0);
+            String sourcePackage = safeStr(intent.getStringExtra("source_package"));
             mirror.edit()
                     .putString(KEY_SHIGUANG_MIRROR_BEAN, beanJson)
                     .putInt(KEY_SHIGUANG_MIRROR_HASH, hash)
+                    .putString(KEY_SHIGUANG_MIRROR_PACKAGE, sourcePackage)
                     .apply();
             SharedPreferences prefs = getConfigPrefs(context);
             if (isShiguangDataSource(prefs)) {
@@ -2059,7 +2062,15 @@ public class MainHook {
         if (SOURCE_WAKEUP.equalsIgnoreCase(source)) {
             launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_WAKEUP);
         } else if (SOURCE_SHIGUANG.equalsIgnoreCase(source)) {
-            launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_SHIGUANG);
+            String sourcePackage = readShiguangMirrorPackage(ctx);
+            if (PKG_SHIGUANG_DEV.equals(sourcePackage)) {
+                launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_SHIGUANG_DEV);
+            } else if (PKG_SHIGUANG.equals(sourcePackage)) {
+                launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_SHIGUANG);
+            }
+            if (launchIntent == null) {
+                launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_SHIGUANG);
+            }
             if (launchIntent == null) {
                 launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_SHIGUANG_DEV);
             }
@@ -2605,6 +2616,16 @@ public class MainHook {
             SharedPreferences mirror =
                     ctx.getSharedPreferences(PREFS_SHIGUANG_MIRROR, Context.MODE_PRIVATE);
             return mirror.getString(KEY_SHIGUANG_MIRROR_BEAN, null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private String readShiguangMirrorPackage(Context ctx) {
+        try {
+            SharedPreferences mirror =
+                    ctx.getSharedPreferences(PREFS_SHIGUANG_MIRROR, Context.MODE_PRIVATE);
+            return mirror.getString(KEY_SHIGUANG_MIRROR_PACKAGE, null);
         } catch (Throwable ignored) {
             return null;
         }

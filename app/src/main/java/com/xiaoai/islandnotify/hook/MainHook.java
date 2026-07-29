@@ -99,6 +99,7 @@ public class MainHook {
     private static final String PKG_WAKEUP = "com.suda.yzune.wakeupschedule";
     /** 拾光包名（作为通知点击目标） */
     private static final String PKG_SHIGUANG = "com.xingheyuzhuan.shiguangschedule";
+    private static final String PKG_SHIGUANG_DEV = "com.xingheyuzhuan.shiguangschedule.dev";
     /** 配置项：课程数据源 */
     private static final String KEY_COURSE_DATA_SOURCE = "course_data_source";
     /** WakeUp 镜像存储键（写入 voiceassist 自身 island_runtime） */
@@ -2059,6 +2060,9 @@ public class MainHook {
             launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_WAKEUP);
         } else if (SOURCE_SHIGUANG.equalsIgnoreCase(source)) {
             launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_SHIGUANG);
+            if (launchIntent == null) {
+                launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(PKG_SHIGUANG_DEV);
+            }
         }
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

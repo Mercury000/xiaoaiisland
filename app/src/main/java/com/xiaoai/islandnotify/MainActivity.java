@@ -48,6 +48,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
     private static final String TARGET_WAKEUP = "com.suda.yzune.wakeupschedule";
     private static final String TARGET_SHIGUANG = "com.xingheyuzhuan.shiguangschedule";
+    private static final String TARGET_SHIGUANG_DEV = "com.xingheyuzhuan.shiguangschedule.dev";
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";
     private static final String TARGET_SYSTEMUI = "com.android.systemui";
     private static final String TARGET_SYSTEMUI_PLUGIN = "miui.systemui.plugin";
@@ -204,10 +205,26 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         if ("shiguang".equalsIgnoreCase(source)) {
+            if (hasAnyShiguangScope()) {
+                if (onApproved != null) onApproved.run();
+                return;
+            }
             ensureScopeForTarget(TARGET_SHIGUANG, onApproved);
             return;
         }
         if (onApproved != null) onApproved.run();
+    }
+
+    private boolean hasAnyShiguangScope() {
+        XposedService service = IslandNotifyApp.currentService();
+        if (service == null) return false;
+        try {
+            Set<String> current = new HashSet<>(service.getScope());
+            return current.contains(TARGET_SHIGUANG) || current.contains(TARGET_SHIGUANG_DEV);
+        } catch (Throwable t) {
+            Log.w("IslandNotify", "hasAnyShiguangScope failed: " + t.getMessage());
+            return false;
+        }
     }
 
     void uiEnsureScopeForWakeupEnable(Runnable onApproved) {

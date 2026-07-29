@@ -37,6 +37,7 @@ public class ShiguangHook {
 
     private static final String TAG = "IslandNotifyShiguang";
     private static final String TARGET_PACKAGE = "com.xingheyuzhuan.shiguangschedule";
+    private static final String TARGET_PACKAGE_DEV = "com.xingheyuzhuan.shiguangschedule.dev";
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
     private static final String DB_NAME = "main_app_database";
     private static final String DATASTORE_NAME = "app_settings.preferences_pb";
@@ -51,12 +52,16 @@ public class ShiguangHook {
     private volatile int mLastPushedHash = 0;
 
     public void handleLoadPackage(String packageName, String processName, ClassLoader classLoader) {
-        if (!TARGET_PACKAGE.equals(packageName)) return;
-        if (!TARGET_PACKAGE.equals(processName)) return;
+        if (!isTargetPackage(packageName)) return;
+        if (!isTargetPackage(processName)) return;
         if (System.getProperty(HOOKED_KEY) != null) return;
         System.setProperty(HOOKED_KEY, "1");
         hookApplicationOnCreate(classLoader);
         XposedBridge.log(TAG + ": 已注入目标进程 → " + TARGET_PACKAGE);
+    }
+
+    private static boolean isTargetPackage(String packageName) {
+        return TARGET_PACKAGE.equals(packageName) || TARGET_PACKAGE_DEV.equals(packageName);
     }
 
     private void hookApplicationOnCreate(ClassLoader classLoader) {

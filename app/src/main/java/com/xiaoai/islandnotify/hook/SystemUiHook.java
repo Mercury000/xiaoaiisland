@@ -24,6 +24,8 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.json.JSONObject;
 
 import static com.xiaoai.islandnotify.modernhook.XposedHelpers.findAndHookMethod;
@@ -124,6 +126,12 @@ public class SystemUiHook {
             java.util.Collections.synchronizedMap(new WeakHashMap<ClassLoader, Boolean>());
     private static volatile boolean sBaseDexCtorHooked = false;
     private static volatile boolean sLoadClassHooked = false;
+    private static final ExecutorService sHookInstallerExecutor =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "IslandNotify-hook-installer");
+                t.setDaemon(true);
+                return t;
+            });
 
     static {
         TARGET_PACKAGES.add("com.android.systemui");
@@ -142,8 +150,10 @@ public class SystemUiHook {
 
     private void installHooksForClassLoader(ClassLoader classLoader) {
         if (classLoader == null) return;
-        if (sInstalledHookLoaders.containsKey(classLoader)) return;
-        sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
+        synchronized (sInstalledHookLoaders) {
+            if (sInstalledHookLoaders.containsKey(classLoader)) return;
+            sInstalledHookLoaders.put(classLoader, Boolean.TRUE);
+        }
         hookDynamicIslandShaderFeature(classLoader);
         hookBigIslandAnimationState(classLoader);
         hookGlowEffectStartColor(classLoader);
@@ -152,6 +162,15 @@ public class SystemUiHook {
         hookIslandExpandedView(classLoader);
         hookSameWidthDigitSuffixStyle(classLoader);
         hookSameWidthDigitContentColor(classLoader);
+    }
+
+    private void scheduleInstallHooksForClassLoader(ClassLoader classLoader) {
+        if (classLoader == null) return;
+        try {
+            sHookInstallerExecutor.execute(() -> installHooksForClassLoader(classLoader));
+        } catch (Throwable t) {
+            installHooksForClassLoader(classLoader);
+        }
     }
 
     private void hookFocusDynamicIslandExtrasBridge(ClassLoader classLoader) {
@@ -592,7 +611,7 @@ public class SystemUiHook {
                                         String name = (String) nameObj;
                                         ClassLoader hit = (ClassLoader) param.thisObject;
                                         if (!isFocusModuleClassName(name)) return;
-                                        installHooksForClassLoader(hit);
+                                        scheduleInstallHooksForClassLoader(hit);
                                     }
                                 });
                         sLoadClassHooked = true;
@@ -615,7 +634,7 @@ public class SystemUiHook {
                                     if (!(param.thisObject instanceof ClassLoader)) return;
                                     ClassLoader cl = (ClassLoader) param.thisObject;
                                     if (!isLikelyPluginClassLoader(cl)) return;
-                                    installHooksForClassLoader(cl);
+                                    scheduleInstallHooksForClassLoader(cl);
                                 }
                             });
                         }

@@ -926,7 +926,11 @@ public class MainHook {
                 || ACTION_DO_DND_ON.equals(action)
                 || ACTION_DO_DND_OFF.equals(action)
                 || ACTION_RESCHEDULE_DAILY.equals(action)
-                || ACTION_NOTIF_CANCEL.equals(action);
+                || ACTION_NOTIF_CANCEL.equals(action)
+                // 镜像同步也走这条路：第三方课表用 startService 把本进程拉起来后，
+                // 由此转成包内广播，避免进程已被杀时推送静默丢失。
+                || ACTION_WAKEUP_COURSE_SYNC.equals(action)
+                || ACTION_SHIGUANG_COURSE_SYNC.equals(action);
     }
 
     /**

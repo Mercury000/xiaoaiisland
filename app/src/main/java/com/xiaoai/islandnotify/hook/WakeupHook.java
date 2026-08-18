@@ -27,6 +27,10 @@ public class WakeupHook {
     private static final String TARGET_PACKAGE = "com.suda.yzune.wakeupschedule";
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
     private static final String WAKEUP_DB_NAME = "wakeup";
+    /** WakeUp 全局配置 SP：老版本的当前课表 ID 存于其中的 show_table_id */
+    private static final String WAKEUP_MAIN_PREFS = "config";
+    /** 旧存储结构分界：versionCode ≤ 263（即 6.0.23，Room schema v11），TableBean 无 updateTime 列 */
+    private static final long LEGACY_VERSION_CODE_MAX = 263L;
     private static final String HOOKED_KEY = "xiaoai.island.wakeup.hooked";
 
     private android.os.FileObserver mDbObserver;
@@ -34,6 +38,8 @@ public class WakeupHook {
     private android.os.Handler mHandler;
     private final Object mSyncToken = new Object();
     private volatile int mLastPushedHash = 0;
+    private volatile Long mVersionCode;
+    private volatile Boolean mLegacyMode;
 
     public void handleLoadPackage(String packageName, String processName, ClassLoader classLoader) {
         if (!TARGET_PACKAGE.equals(packageName)) return;
@@ -98,6 +104,11 @@ public class WakeupHook {
                 if (path == null) return;
                 if (path.startsWith("table") && path.endsWith("_config.xml")) {
                     postSync(ctx, 400L, "prefs_changed:" + path);
+                    return;
+                }
+                // 老版本（≤6.0.23）切换课表只改写 config.xml 的 show_table_id
+                if ((WAKEUP_MAIN_PREFS + ".xml").equals(path)) {
+                    postSync(ctx, 400L, "prefs_changed:" + path);
                 }
             }
         };
@@ -138,6 +149,32 @@ public class WakeupHook {
         }
     }
 
+    /** 读取宿主（WakeUp）versionCode；读取失败返回 Long.MAX_VALUE（按新版处理，由 SQL 降级兜底） */
+    private long getWakeupVersionCode(Context ctx) {
+        Long cached = mVersionCode;
+        if (cached != null) return cached;
+        long code = Long.MAX_VALUE;
+        try {
+            code = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0).getLongVersionCode();
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取宿主版本失败 -> " + t.getMessage());
+        }
+        mVersionCode = code;
+        return code;
+    }
+
+    /**
+     * 是否为旧存储结构（versionCode ≤ 263，即 6.0.23，Room schema v11）：
+     * TableBean 无 updateTime 列，选表需用 config.xml 的 show_table_id。
+     */
+    private boolean isLegacyVersion(Context ctx) {
+        Boolean cached = mLegacyMode;
+        if (cached != null) return cached;
+        boolean legacy = getWakeupVersionCode(ctx) <= LEGACY_VERSION_CODE_MAX;
+        mLegacyMode = legacy;
+        return legacy;
+    }
+
     private String buildWeekCourseBeanFromWakeup(Context ctx) throws Exception {
         File db = ctx.getDatabasePath(WAKEUP_DB_NAME);
         if (db == null || !db.exists()) return null;
@@ -146,18 +183,37 @@ public class WakeupHook {
         try {
             sqLiteDb = SQLiteDatabase.openDatabase(db.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY);
 
+            boolean legacy = isLegacyVersion(ctx);
+            boolean downgraded = false;
             long tableId = -1L;
             long timeTableId = -1L;
-            c = sqLiteDb.rawQuery(
-                    "SELECT id, timeTable FROM TableBean ORDER BY CAST(updateTime AS INTEGER) DESC, id DESC LIMIT 1",
-                    null);
-            if (c.moveToFirst()) {
-                tableId = c.getLong(0);
-                timeTableId = c.getLong(1);
+            if (!legacy) {
+                // 新版（>6.0.23）：TableBean 含 updateTime，取最近更新的课表
+                try {
+                    c = sqLiteDb.rawQuery(
+                            "SELECT id, timeTable FROM TableBean ORDER BY CAST(updateTime AS INTEGER) DESC, id DESC LIMIT 1",
+                            null);
+                    if (c.moveToFirst()) {
+                        tableId = c.getLong(0);
+                        timeTableId = c.getLong(1);
+                    }
+                    c.close();
+                    c = null;
+                } catch (Throwable t) {
+                    // 旧库无 updateTime 列时降级到 show_table_id 选表
+                    downgraded = true;
+                    XposedBridge.log(TAG + ": 新版选表失败，降级旧版方式 -> " + t.getMessage());
+                }
             }
-            c.close();
-            c = null;
-
+            if (tableId <= 0L) {
+                // 旧版（≤6.0.23）：TableBean 无 updateTime，当前课表存于 config.xml 的 show_table_id
+                try {
+                    long shownId = ctx.getSharedPreferences(WAKEUP_MAIN_PREFS, Context.MODE_PRIVATE)
+                            .getInt("show_table_id", -1);
+                    if (shownId > 0L) tableId = shownId;
+                } catch (Throwable ignored) {
+                }
+            }
             if (tableId <= 0L) {
                 c = sqLiteDb.rawQuery("SELECT MAX(tableId) FROM CourseDetailBean", null);
                 if (c.moveToFirst()) tableId = c.getLong(0);
@@ -171,6 +227,9 @@ public class WakeupHook {
                 c.close();
                 c = null;
             }
+            XposedBridge.log(TAG + ": 选表 tableId=" + tableId + " timeTable=" + timeTableId
+                    + " versionCode=" + getWakeupVersionCode(ctx)
+                    + " mode=" + (legacy ? "legacy" : "modern") + (downgraded ? "(降级)" : ""));
 
             JSONArray sectionTimes = new JSONArray();
             if (timeTableId > 0L) {

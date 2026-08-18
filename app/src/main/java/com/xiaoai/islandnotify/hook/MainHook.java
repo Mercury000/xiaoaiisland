@@ -1118,10 +1118,17 @@ public class MainHook {
             }
 
             int totalWeek = parsed.totalWeek;
-            if (totalWeek > 0 && currentWeek > totalWeek) {
-                XposedBridge.log(TAG + ": 当前第" + currentWeek + " 周，已超过学期总周数 "
-                        + totalWeek + "，跳过调度");
-                return;
+            // 学期外（已结束 / 未开始）不提前返回：越界周在 CourseSlot.isInWeek 中天然不匹配
+            // 任何课程，继续走完流程才能持久化 totalWeek 并清理残留通知。
+            // 同时丢弃调休的周数覆盖，否则学期结束后残留的调休配置会把周数拉回学期内。
+            if (parsed.isTermEnded()) {
+                XposedBridge.log(TAG + ": 当前第" + parsed.presentWeek + " 周，已超过学期总周数 "
+                        + totalWeek + "，学期已结束，不再调度课程提醒");
+                currentWeek = parsed.presentWeek;
+            } else if (parsed.isTermNotStarted()) {
+                XposedBridge.log(TAG + ": 学期尚未开始（推算第" + parsed.presentWeek
+                        + " 周），不调度课程提醒");
+                currentWeek = parsed.presentWeek;
             }
 
             SharedPreferences prefs = getConfigPrefs(ctx);
@@ -1150,7 +1157,8 @@ public class MainHook {
 
             mConsecutiveAnchors.clear();
             int scheduledCount = 0;
-            int prevLoopAlarmId = -1;
+            int prevSlotAlarmId = -1;
+            boolean prevSlotSkipped = false;
             for (int si = 0; si < todaySlots.size(); si++) {
                 TodayCourseSlot slot = todaySlots.get(si);
                 CourseScheduleParser.CourseSlot course = slot.slot;
@@ -1168,7 +1176,16 @@ public class MainHook {
                 int alarmId = buildCourseNotificationId(
                         courseName, startTime, endTime, classroom, sectionRange, teacher);
                 validAlarmIds.add(alarmId);
-                if (isAutomationSkippedToday(ctx, alarmId)) {
+                boolean skipped = isAutomationSkippedToday(ctx, alarmId);
+
+                // 先取上一节的记录，再把本节写进去：必须在任何 continue 之前完成，
+                // 否则被逃课跳过的课不会更新记录，锚点会错标到更前面那节。
+                int prevAlarmId = prevSlotAlarmId;
+                boolean prevSkipped = prevSlotSkipped;
+                prevSlotAlarmId = alarmId;
+                prevSlotSkipped = skipped;
+
+                if (skipped) {
                     XposedBridge.log(TAG + ": [逃课] 跳过该课提醒/补发 alarmId=" + alarmId
                             + " " + courseName + "@" + startTime);
                     continue;
@@ -1183,13 +1200,15 @@ public class MainHook {
                     if (breakMs >= 0 && breakMs <= reminderMs) {
                         triggerMs = prevEndMs;
                         isConsecutive = true;
-                        if (prevLoopAlarmId != -1) mConsecutiveAnchors.add(prevLoopAlarmId);
+                        // 上一节被逃课跳过时没有通知需要保护，不设锚点
+                        if (prevAlarmId != -1 && !prevSkipped) {
+                            mConsecutiveAnchors.add(prevAlarmId);
+                        }
                         XposedBridge.log(TAG + ": [连续课程] " + courseName
                                 + " 课间=" + (breakMs / 60_000) + "min <= 提醒"
                                 + reminderMinutes + "min，将在上节下课时触发");
                     }
                 }
-                prevLoopAlarmId = alarmId;
 
                 if (triggerMs <= nowMs) {
                     if (nowMs < endMs && !skipRepost && sRepostEnabled) {
@@ -1604,7 +1623,9 @@ public class MainHook {
 
             CourseScheduleParser.ParsedSchedule parsed = CourseScheduleParser.parse(beanJson);
             int baseWeek = parsed.presentWeek;
-            final int currentWeek = (workSwap != null && workSwap.followWeek > 0)
+            // 学期外忽略调休的周数覆盖：越界周不匹配任何课程，自然不会排静音/勿扰闹钟
+            boolean outOfTerm = parsed.isTermEnded() || parsed.isTermNotStarted();
+            final int currentWeek = (!outOfTerm && workSwap != null && workSwap.followWeek > 0)
                     ? workSwap.followWeek : baseWeek;
 
             int muteMinsBefore = readConfigInt(prefs, KEY_MUTE_MINS_BEFORE, DEFAULT_MUTE_MINS_BEFORE);

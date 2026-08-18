@@ -27,7 +27,7 @@ public class WakeupHook {
     private static final String TARGET_PACKAGE = "com.suda.yzune.wakeupschedule";
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
     private static final String WAKEUP_DB_NAME = "wakeup";
-    /** WakeUp 全局配置 SP：老版本的当前课表 ID 存于其中的 show_table_id */
+    /** WakeUp 全局配置 SP：当前显示的课表 ID 存于其中的 show_table_id */
     private static final String WAKEUP_MAIN_PREFS = "config";
     /** 旧存储结构分界：versionCode ≤ 263（即 6.0.23，Room schema v11），TableBean 无 updateTime 列 */
     private static final long LEGACY_VERSION_CODE_MAX = 263L;
@@ -187,8 +187,26 @@ public class WakeupHook {
             boolean downgraded = false;
             long tableId = -1L;
             long timeTableId = -1L;
-            if (!legacy) {
-                // 新版（>6.0.23）：TableBean 含 updateTime，取最近更新的课表
+            String pickedBy = "none";
+
+            // 优先 config.xml 的 show_table_id —— 这才是 WakeUp 当前显示的那张课表。
+            // 不能只按 updateTime 取最新：多课表用户编辑过归档课表后会选错表，
+            // startDate / maxWeek 跟着错，算出来的周数与 App 里显示的对不上。
+            long shownId = readShownTableId(ctx);
+            if (shownId > 0L) {
+                long[] found = queryTableById(sqLiteDb, shownId);
+                if (found != null) {
+                    tableId = found[0];
+                    timeTableId = found[1];
+                    pickedBy = "show_table_id";
+                } else {
+                    XposedBridge.log(TAG + ": show_table_id=" + shownId
+                            + " 在 TableBean 中不存在，改用其他方式选表");
+                }
+            }
+
+            if (tableId <= 0L && !legacy) {
+                // 新版（>6.0.23）：TableBean 含 updateTime，退回取最近更新的课表
                 try {
                     c = sqLiteDb.rawQuery(
                             "SELECT id, timeTable FROM TableBean ORDER BY CAST(updateTime AS INTEGER) DESC, id DESC LIMIT 1",
@@ -196,27 +214,22 @@ public class WakeupHook {
                     if (c.moveToFirst()) {
                         tableId = c.getLong(0);
                         timeTableId = c.getLong(1);
+                        pickedBy = "updateTime";
                     }
                     c.close();
                     c = null;
                 } catch (Throwable t) {
-                    // 旧库无 updateTime 列时降级到 show_table_id 选表
+                    // 旧库无 updateTime 列
                     downgraded = true;
-                    XposedBridge.log(TAG + ": 新版选表失败，降级旧版方式 -> " + t.getMessage());
-                }
-            }
-            if (tableId <= 0L) {
-                // 旧版（≤6.0.23）：TableBean 无 updateTime，当前课表存于 config.xml 的 show_table_id
-                try {
-                    long shownId = ctx.getSharedPreferences(WAKEUP_MAIN_PREFS, Context.MODE_PRIVATE)
-                            .getInt("show_table_id", -1);
-                    if (shownId > 0L) tableId = shownId;
-                } catch (Throwable ignored) {
+                    XposedBridge.log(TAG + ": 新版选表失败 -> " + t.getMessage());
                 }
             }
             if (tableId <= 0L) {
                 c = sqLiteDb.rawQuery("SELECT MAX(tableId) FROM CourseDetailBean", null);
-                if (c.moveToFirst()) tableId = c.getLong(0);
+                if (c.moveToFirst()) {
+                    tableId = c.getLong(0);
+                    if (tableId > 0L) pickedBy = "max_tableId";
+                }
                 c.close();
                 c = null;
             }
@@ -228,10 +241,12 @@ public class WakeupHook {
                 c = null;
             }
             XposedBridge.log(TAG + ": 选表 tableId=" + tableId + " timeTable=" + timeTableId
+                    + " by=" + pickedBy
                     + " versionCode=" + getWakeupVersionCode(ctx)
                     + " mode=" + (legacy ? "legacy" : "modern") + (downgraded ? "(降级)" : ""));
 
             JSONArray sectionTimes = new JSONArray();
+            java.util.Set<Integer> sectionNodes = new java.util.HashSet<>();
             if (timeTableId > 0L) {
                 c = sqLiteDb.rawQuery(
                         "SELECT node, startTime, endTime FROM TimeDetailBean WHERE timeTable = ? ORDER BY node ASC",
@@ -245,6 +260,7 @@ public class WakeupHook {
                     st.put("s", start);
                     st.put("e", end);
                     sectionTimes.put(st);
+                    sectionNodes.add(c.getInt(0));
                 }
                 c.close();
                 c = null;
@@ -288,9 +304,15 @@ public class WakeupHook {
                 course.put("weeks", weeks);
                 // WakeUp 自定义时间存于 CourseDetailBean.startTime/endTime（ownTime=1）。
                 // 写入镜像后由解析器优先采用，避免被节次默认时间覆盖。
-                if (ownTime == 1 && !isInvalidSectionTime(customStartTime, customEndTime)) {
+                boolean hasOwnTime = ownTime == 1 && !isInvalidSectionTime(customStartTime, customEndTime);
+                if (hasOwnTime) {
                     course.put("startTime", customStartTime);
                     course.put("endTime", customEndTime);
+                } else if (!sectionNodes.contains(startNode) || !sectionNodes.contains(endNode)) {
+                    // 既无自定义时间、节次又不在时间表内 → 解析器解析不出上下课时间会丢弃这门课
+                    XposedBridge.log(TAG + ": 课程时间无法解析，将被丢弃 course=" + courseName
+                            + " day=" + day + " 节次=" + startNode + "-" + endNode
+                            + " 时间表节次=" + sectionNodes.size() + " 个 timeTable=" + timeTableId);
                 }
                 courses.put(course);
                 if (endWeek > maxEndWeek) maxEndWeek = endWeek;
@@ -301,7 +323,7 @@ public class WakeupHook {
             TermConfig termConfig = loadTermConfig(ctx, tableId);
             int totalWeek = termConfig.maxWeek > 0 ? termConfig.maxWeek
                     : (maxEndWeek > 0 ? maxEndWeek : 30);
-            int presentWeek = computePresentWeek(termConfig.startDate, totalWeek, termConfig.sundayFirst);
+            int presentWeek = computePresentWeek(termConfig.startDate, termConfig.sundayFirst);
 
             JSONObject setting = new JSONObject();
             setting.put("presentWeek", presentWeek);
@@ -322,6 +344,44 @@ public class WakeupHook {
             if (c != null) c.close();
             if (sqLiteDb != null) sqLiteDb.close();
         }
+    }
+
+    /** 读取 WakeUp 当前显示的课表 ID（config.xml / show_table_id），缺失或异常返回 -1。 */
+    private long readShownTableId(Context ctx) {
+        try {
+            android.content.SharedPreferences sp =
+                    ctx.getSharedPreferences(WAKEUP_MAIN_PREFS, Context.MODE_PRIVATE);
+            try {
+                return sp.getInt("show_table_id", -1);
+            } catch (ClassCastException e) {
+                return sp.getLong("show_table_id", -1L);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取 show_table_id 失败 -> " + t.getMessage());
+            return -1L;
+        }
+    }
+
+    /**
+     * 校验课表是否真实存在并取出它的时间表 ID。
+     * show_table_id 可能指向已被删除的课表，直接采用会镜像出一份空课表。
+     *
+     * @return {tableId, timeTableId}，不存在时返回 null
+     */
+    private long[] queryTableById(SQLiteDatabase db, long tableId) {
+        Cursor cursor = null;
+        try {
+            cursor = db.rawQuery("SELECT id, timeTable FROM TableBean WHERE id = ?",
+                    new String[]{String.valueOf(tableId)});
+            if (cursor.moveToFirst()) {
+                return new long[]{cursor.getLong(0), cursor.getLong(1)};
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 校验 tableId=" + tableId + " 失败 -> " + t.getMessage());
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return null;
     }
 
     private static String buildWeeks(int startWeek, int endWeek, int type) {
@@ -358,7 +418,12 @@ public class WakeupHook {
         return new TermConfig(startDate, maxWeek, sundayFirst);
     }
 
-    private int computePresentWeek(String startDate, int totalWeek, boolean sundayFirst) {
+    /**
+     * 按学期开始日期推算当前周序号，不做夹取：学期未开始时 ≤ 0，学期结束后大于总周数，
+     * 由消费侧（CourseScheduleParser / MainHook）据此判断学期状态。
+     * startDate 缺失时无从推算，退回第 1 周以免误判成学期已结束而停掉所有提醒。
+     */
+    private int computePresentWeek(String startDate, boolean sundayFirst) {
         if (startDate == null || startDate.isEmpty()) return 1;
         int[] ymd = parseYmd(startDate);
         if (ymd == null) return 1;
@@ -377,10 +442,7 @@ public class WakeupHook {
         alignToWeekStart(today, weekStartDay);
 
         long diffDays = (today.getTimeInMillis() - start.getTimeInMillis()) / 86_400_000L;
-        int week = (int) Math.floor(diffDays / 7.0d) + 1;
-        if (week < 1) week = 1;
-        if (totalWeek > 0 && week > totalWeek) week = totalWeek;
-        return week;
+        return (int) Math.floor(diffDays / 7.0d) + 1;
     }
 
     private static void clearClock(Calendar c) {

@@ -99,11 +99,10 @@ public class DeskClockHook {
         List<Long> createdIds = new ArrayList<>();
 
         try {
-            org.json.JSONObject root    = new org.json.JSONObject(beanJson);
-            org.json.JSONObject data    = root.getJSONObject("data");
-            org.json.JSONObject setting = data.getJSONObject("setting");
-            int currentWeek = setting.optInt("presentWeek", 0);
-            org.json.JSONArray courses  = data.getJSONArray("courses");
+            // 统一走 CourseScheduleParser：presentWeek 由它按 startDate 现算，
+            // 不用镜像里存的那个值（用户长期不打开课表 App 时会过期）。
+            CourseScheduleParser.ParsedSchedule parsed = CourseScheduleParser.parse(beanJson);
+            int currentWeek = parsed.presentWeek;
 
             // 今天是星期几（1=周一…7=周日，与课表字段 day 一致）
             java.util.Calendar cal = java.util.Calendar.getInstance();
@@ -112,7 +111,14 @@ public class DeskClockHook {
             // 若 MainHook 已处理节假日/调休，使用传入的覆盖值
             int todayDay    = intent.getIntExtra("today_day_override",    calTodayDay);
             int weekOvr     = intent.getIntExtra("current_week_override", -1);
-            if (weekOvr > 0) currentWeek = weekOvr;
+            // 学期外（已结束 / 未开始）忽略调休的周数覆盖，越界周不匹配任何课程，
+            // 下面的循环自然找不到首节课，不会创建任何闹钟。
+            boolean outOfTerm = parsed.isTermEnded() || parsed.isTermNotStarted();
+            if (weekOvr > 0 && !outOfTerm) currentWeek = weekOvr;
+            if (outOfTerm) {
+                XposedBridge.log(TAG + ": 学期外（推算第" + currentWeek + " 周 / 共 "
+                        + parsed.totalWeek + " 周），不创建叫醒闹钟");
+            }
 
             boolean morningEnabled   = intent.getBooleanExtra("morning_enabled",   false);
             boolean afternoonEnabled = intent.getBooleanExtra("afternoon_enabled", false);
@@ -123,21 +129,12 @@ public class DeskClockHook {
             int    firstMorningSec   = Integer.MAX_VALUE; String morningName   = "";
             int    firstAfternoonSec = Integer.MAX_VALUE; String afternoonName = "";
 
-            for (int i = 0; i < courses.length(); i++) {
-                org.json.JSONObject course = courses.getJSONObject(i);
-                if (course.getInt("day") != todayDay) continue;
-                boolean inWeek = false;
-                for (String w : course.optString("weeks", "").split(",")) {
-                    try { if (Integer.parseInt(w.trim()) == currentWeek) { inWeek = true; break; } }
-                    catch (NumberFormatException ignored) {}
-                }
-                if (!inWeek) continue;
-                String[] secs = course.optString("sections", "").split(",");
-                if (secs.length == 0 || secs[0].trim().isEmpty()) continue;
-                int firstSec;
-                try { firstSec = Integer.parseInt(secs[0].trim()); }
-                catch (NumberFormatException e) { continue; }
-                String courseName = course.optString("name", "");
+            for (CourseScheduleParser.CourseSlot course : parsed.courses) {
+                if (course.day != todayDay) continue;
+                if (!course.isInWeek(currentWeek)) continue;
+                int firstSec = course.firstSection;
+                if (firstSec <= 0) continue;
+                String courseName = course.courseName;
                 // 上午：找所有 sections[0] ≤ morningLastSec 中最小的
                 if (morningEnabled && firstSec <= morningLastSec && firstSec < firstMorningSec) {
                     firstMorningSec = firstSec;

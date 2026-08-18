@@ -38,6 +38,9 @@ public class ShiguangHook {
     private static final String TAG = "IslandNotifyShiguang";
     private static final String TARGET_PACKAGE = "com.xingheyuzhuan.shiguangschedule";
     private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
+    /** voiceassist 侧被 MainHook hook 了 onStartCommand 的 Service，用于把已被杀的进程拉起来 */
+    private static final String VOICEASSIST_UPLOAD_SERVICE =
+            "com.xiaomi.voiceassistant.UploadStateService";
     private static final String DB_NAME = "main_app_database";
     private static final String DATASTORE_NAME = "app_settings.preferences_pb";
     private static final String HOOKED_KEY = "xiaoai.island.shiguang.hooked";
@@ -49,6 +52,8 @@ public class ShiguangHook {
     private android.os.Handler mHandler;
     private final Object mSyncToken = new Object();
     private volatile int mLastPushedHash = 0;
+    /** 自身读库产生的文件事件在此时间前一律忽略，避免「读 → 改 -shm/-wal → 再读」自激循环 */
+    private volatile long mSelfReadUntilMs = 0L;
 
     public void handleLoadPackage(String packageName, String processName, ClassLoader classLoader) {
         if (!TARGET_PACKAGE.equals(packageName)) return;
@@ -100,6 +105,10 @@ public class ShiguangHook {
             @Override
             public void onEvent(int event, String path) {
                 if (path == null || !path.startsWith(DB_NAME)) return;
+                // -shm 只是 WAL 的读端索引：只读打开数据库也会写它，
+                // 据此触发同步会形成「读 → 改 -shm → 再读」的自激循环。
+                if (path.endsWith("-shm")) return;
+                if (System.currentTimeMillis() < mSelfReadUntilMs) return;
                 postSync(ctx, 650L, "db_changed:" + path);
             }
         };
@@ -144,7 +153,10 @@ public class ShiguangHook {
             if (beanJson == null || beanJson.isEmpty()) return;
             int hash = CourseScheduleParser.stableHash(beanJson);
             if (hash == mLastPushedHash) return;
-            mLastPushedHash = hash;
+
+            // 先用 startService 把可能已被杀的 voiceassist 拉起来（MainHook 的 Service hook
+            // 会把它转成包内广播）；广播只能进到运行中的动态接收器，进程不在时会静默丢失。
+            boolean started = startVoiceassistService(ctx, beanJson, hash);
 
             Intent sync = new Intent(ACTION_SHIGUANG_COURSE_SYNC);
             sync.setPackage(TARGET_VOICEASSIST);
@@ -152,9 +164,28 @@ public class ShiguangHook {
             sync.putExtra("bean_json", beanJson);
             sync.putExtra("hash", hash);
             ctx.sendBroadcast(sync);
-            XposedBridge.log(TAG + ": 已推送拾光课程镜像 -> voiceassist reason=" + reason + " hash=" + hash);
+
+            // 只有 startService 成功才算确定送达；否则不记账，留给下次事件重试，
+            // 避免推送丢失后镜像永久停留在旧数据上。
+            if (started) mLastPushedHash = hash;
+            XposedBridge.log(TAG + ": 已推送拾光课程镜像 -> voiceassist reason=" + reason
+                    + " hash=" + hash + " service=" + started);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": syncAndPush 失败 -> " + t.getMessage());
+        }
+    }
+
+    /** 通过 startService 投递并顺带拉起 voiceassist 进程，成功返回 true。 */
+    private boolean startVoiceassistService(Context ctx, String beanJson, int hash) {
+        try {
+            Intent svc = new Intent(ACTION_SHIGUANG_COURSE_SYNC);
+            svc.setClassName(TARGET_VOICEASSIST, VOICEASSIST_UPLOAD_SERVICE);
+            svc.putExtra("bean_json", beanJson);
+            svc.putExtra("hash", hash);
+            return ctx.startService(svc) != null;
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": startService 拉起 voiceassist 失败 -> " + t.getMessage());
+            return false;
         }
     }
 
@@ -312,6 +343,8 @@ public class ShiguangHook {
         } finally {
             if (c != null) c.close();
             if (sqLiteDb != null) sqLiteDb.close();
+            // 关库可能触发 WAL checkpoint，写回主库与 -wal 会再次唤起 FileObserver
+            mSelfReadUntilMs = System.currentTimeMillis() + 800L;
         }
     }
 

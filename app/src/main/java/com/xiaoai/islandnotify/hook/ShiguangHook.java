@@ -233,24 +233,36 @@ public class ShiguangHook {
                 if (weeksSpec.isEmpty()) continue;
 
                 String sectionsSpec;
+                String customStart = "";
+                String customEnd = "";
                 if (isCustom) {
-                    String cs = safeStr(c.getString(8));
-                    String ce = safeStr(c.getString(9));
-                    if (isInvalidSectionTime(cs, ce)) continue;
-                    String slotKey = cs + "|" + ce;
-                    Integer secIdx = customTimeToSec.get(slotKey);
-                    if (secIdx == null) {
-                        while (seenSections.contains(syntheticSec)) syntheticSec++;
-                        secIdx = syntheticSec++;
-                        customTimeToSec.put(slotKey, secIdx);
-                        JSONObject st = new JSONObject();
-                        st.put("i", secIdx);
-                        st.put("s", cs);
-                        st.put("e", ce);
-                        sectionTimes.put(st);
-                        seenSections.add(secIdx);
+                    customStart = safeStr(c.getString(8));
+                    customEnd = safeStr(c.getString(9));
+                    if (isInvalidSectionTime(customStart, customEnd)) continue;
+                    // 优先落到时间上覆盖它的真实节次：自动叫醒的规则是按真实节次配置的，
+                    // 合成节次号查不到任何规则，这类课就永远参与不了叫醒。
+                    int matchedSec = matchSectionByTime(normalSlots, customStart);
+                    if (matchedSec > 0) {
+                        sectionsSpec = String.valueOf(matchedSec);
+                    } else {
+                        String slotKey = customStart + "|" + customEnd;
+                        Integer secIdx = customTimeToSec.get(slotKey);
+                        if (secIdx == null) {
+                            while (seenSections.contains(syntheticSec)) syntheticSec++;
+                            secIdx = syntheticSec++;
+                            customTimeToSec.put(slotKey, secIdx);
+                            JSONObject st = new JSONObject();
+                            st.put("i", secIdx);
+                            st.put("s", customStart);
+                            st.put("e", customEnd);
+                            sectionTimes.put(st);
+                            seenSections.add(secIdx);
+                        }
+                        sectionsSpec = String.valueOf(secIdx);
+                        XposedBridge.log(TAG + ": 自定义时间 " + customStart + "-" + customEnd
+                                + " 不落在任何节次区间内，使用合成节次 " + secIdx
+                                + "（该课不参与自动叫醒）course=" + name);
                     }
-                    sectionsSpec = String.valueOf(secIdx);
                 } else {
                     if (c.isNull(5) || c.isNull(6)) continue;
                     int startSec = c.getInt(5);
@@ -269,13 +281,18 @@ public class ShiguangHook {
                 course.put("position", position);
                 course.put("sections", sectionsSpec);
                 course.put("weeks", weeksSpec);
+                // 自定义时间显式写入：解析器优先采用它，映射到真实节次后也不会被该节次的默认时间覆盖。
+                if (isCustom) {
+                    course.put("startTime", customStart);
+                    course.put("endTime", customEnd);
+                }
                 courses.put(course);
             }
             c.close();
             c = null;
 
             int totalWeek = config.semesterTotalWeeks > 0 ? config.semesterTotalWeeks : (maxWeek > 0 ? maxWeek : 30);
-            int presentWeek = computePresentWeek(config.semesterStartDate, totalWeek, config.sundayFirst);
+            int presentWeek = computePresentWeek(config.semesterStartDate, config.sundayFirst);
 
             JSONObject setting = new JSONObject();
             setting.put("presentWeek", presentWeek);
@@ -379,6 +396,38 @@ public class ShiguangHook {
         return slots;
     }
 
+    /**
+     * 找出时间上覆盖 startTime 的真实节次编号（节次开始 ≤ startTime &lt; 节次结束），找不到返回 -1。
+     * 多个节次同时覆盖时取编号最小的。
+     */
+    private static int matchSectionByTime(Map<Integer, String[]> slots, String startTime) {
+        int target = toMinutes(startTime);
+        if (target < 0 || slots == null) return -1;
+        int best = -1;
+        for (Map.Entry<Integer, String[]> e : slots.entrySet()) {
+            int slotStart = toMinutes(e.getValue()[0]);
+            int slotEnd = toMinutes(e.getValue()[1]);
+            if (slotStart < 0 || slotEnd <= slotStart) continue;
+            if (target < slotStart || target >= slotEnd) continue;
+            int sec = e.getKey();
+            if (best < 0 || sec < best) best = sec;
+        }
+        return best;
+    }
+
+    /** "HH:mm" → 当日分钟数，格式非法返回 -1。 */
+    private static int toMinutes(String hhmm) {
+        if (hhmm == null || hhmm.length() != 5 || hhmm.charAt(2) != ':') return -1;
+        try {
+            int h = Integer.parseInt(hhmm.substring(0, 2));
+            int m = Integer.parseInt(hhmm.substring(3, 5));
+            if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+            return h * 60 + m;
+        } catch (Throwable ignored) {
+            return -1;
+        }
+    }
+
     private static String toWeeksSpec(List<Integer> weeks) {
         if (weeks == null || weeks.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
@@ -389,7 +438,12 @@ public class ShiguangHook {
         return sb.toString();
     }
 
-    private int computePresentWeek(String startDate, int totalWeek, boolean sundayFirst) {
+    /**
+     * 按学期开始日期推算当前周序号，不做夹取：学期未开始时 ≤ 0，学期结束后大于总周数，
+     * 由消费侧（CourseScheduleParser / MainHook）据此判断学期状态。
+     * startDate 缺失时无从推算，退回第 1 周以免误判成学期已结束而停掉所有提醒。
+     */
+    private int computePresentWeek(String startDate, boolean sundayFirst) {
         if (startDate == null || startDate.isEmpty()) return 1;
         int[] ymd = parseYmd(startDate);
         if (ymd == null) return 1;
@@ -408,10 +462,7 @@ public class ShiguangHook {
         alignToWeekStart(today, weekStartDay);
 
         long diffDays = (today.getTimeInMillis() - start.getTimeInMillis()) / 86_400_000L;
-        int week = (int) Math.floor(diffDays / 7.0d) + 1;
-        if (week < 1) week = 1;
-        if (totalWeek > 0 && week > totalWeek) week = totalWeek;
-        return week;
+        return (int) Math.floor(diffDays / 7.0d) + 1;
     }
 
     private static void clearClock(Calendar c) {

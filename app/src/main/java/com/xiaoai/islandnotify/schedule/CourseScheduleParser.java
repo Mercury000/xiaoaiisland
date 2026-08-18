@@ -12,6 +12,10 @@ final class CourseScheduleParser {
     private CourseScheduleParser() {}
 
     static final class ParsedSchedule {
+        /**
+         * 学期真实周序号，不做上下夹取：学期未开始时 ≤ 0，学期结束后 &gt; totalWeek。
+         * 课程匹配可直接使用，越界周在 {@link CourseSlot#isInWeek(int)} 中天然不匹配任何课程。
+         */
         final int presentWeek;
         final int totalWeek;
         final List<CourseSlot> courses;
@@ -20,6 +24,14 @@ final class CourseScheduleParser {
             this.presentWeek = presentWeek;
             this.totalWeek = totalWeek;
             this.courses = courses == null ? Collections.emptyList() : courses;
+        }
+
+        boolean isTermNotStarted() {
+            return presentWeek < 1;
+        }
+
+        boolean isTermEnded() {
+            return totalWeek > 0 && presentWeek > totalWeek;
         }
     }
 
@@ -31,10 +43,13 @@ final class CourseScheduleParser {
         final String classroom;
         final String sectionRange;
         final String teacher;
+        /** 起始节次，无法解析出节次时为 -1 */
+        final int firstSection;
         private final WeekMatcher weekMatcher;
 
         CourseSlot(int day, String courseName, String startTime, String endTime,
-                   String classroom, String sectionRange, String teacher, WeekMatcher weekMatcher) {
+                   String classroom, String sectionRange, String teacher,
+                   int firstSection, WeekMatcher weekMatcher) {
             this.day = day;
             this.courseName = safeStr(courseName);
             this.startTime = safeStr(startTime);
@@ -42,6 +57,7 @@ final class CourseScheduleParser {
             this.classroom = safeStr(classroom);
             this.sectionRange = safeStr(sectionRange);
             this.teacher = safeStr(teacher);
+            this.firstSection = firstSection;
             this.weekMatcher = weekMatcher == null ? WeekMatcher.empty() : weekMatcher;
         }
 
@@ -63,7 +79,7 @@ final class CourseScheduleParser {
         String startDate = setting.optString("startDate", "");
         boolean sundayFirst = setting.optBoolean("sundayFirst", false);
         if (!startDate.isEmpty()) {
-            presentWeek = computePresentWeek(startDate, presentWeek, totalWeek, sundayFirst);
+            presentWeek = computePresentWeek(startDate, presentWeek, sundayFirst);
         }
 
         JSONArray sectionTimesArray = parseSectionTimesArray(setting);
@@ -92,7 +108,7 @@ final class CourseScheduleParser {
             String startDate = setting.optString("startDate", "");
             boolean sundayFirst = setting.optBoolean("sundayFirst", false);
             if (!startDate.isEmpty()) {
-                presentWeek = computePresentWeek(startDate, presentWeek, setting.optInt("totalWeek", 0), sundayFirst);
+                presentWeek = computePresentWeek(startDate, presentWeek, sundayFirst);
             }
 
             String stable = String.valueOf(data.optJSONArray("courses"))
@@ -188,7 +204,7 @@ final class CourseScheduleParser {
                 : (firstSection + "-" + lastSection);
         String teacher = extractTeacher(course);
         return new CourseSlot(day, courseName, resolvedStartTime, resolvedEndTime,
-                classroom, sectionRange, teacher, weekMatcher);
+                classroom, sectionRange, teacher, firstSection, weekMatcher);
     }
 
     private static boolean isValidTimeRange(String start, String end) {
@@ -338,7 +354,12 @@ final class CourseScheduleParser {
         }
     }
 
-    private static int computePresentWeek(String startDate, int currentWeek, int totalWeek, boolean sundayFirst) {
+    /**
+     * 按学期开始日期推算当前周序号。返回值不做夹取：今天早于 startDate 时 ≤ 0，
+     * 超出学期总周数时大于总周数，供调用方据此判断学期未开始 / 已结束。
+     * startDate 缺失或非法时无法推算，原样返回 currentWeek。
+     */
+    private static int computePresentWeek(String startDate, int currentWeek, boolean sundayFirst) {
         if (startDate == null || startDate.isEmpty()) return currentWeek;
         int[] ymd = parseYmd(startDate);
         if (ymd == null) return currentWeek;
@@ -357,10 +378,7 @@ final class CourseScheduleParser {
         alignToWeekStart(today, weekStartDay);
 
         long diffDays = (today.getTimeInMillis() - start.getTimeInMillis()) / 86_400_000L;
-        int week = (int) Math.floor(diffDays / 7.0d) + 1;
-        if (week < 1) week = 1;
-        if (totalWeek > 0 && week > totalWeek) week = totalWeek;
-        return week;
+        return (int) Math.floor(diffDays / 7.0d) + 1;
     }
 
     private static void clearClock(java.util.Calendar c) {

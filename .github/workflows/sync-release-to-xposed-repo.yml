@@ -13,16 +13,6 @@ on:
         required: false
         default: ""
         type: string
-      notify_enabled:
-        description: "是否推送到 Bot"
-        required: false
-        default: true
-        type: boolean
-      mention_all:
-        description: "是否艾特全体成员"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -30,10 +20,6 @@ permissions:
 jobs:
   sync-release:
     runs-on: ubuntu-latest
-    outputs:
-      notify_title: ${{ steps.meta.outputs.target_name }}
-      notify_content: ${{ steps.notify_body.outputs.notify_content }}
-      notify_url: ${{ steps.notify_url.outputs.notify_url }}
     env:
       SOURCE_REPO: ${{ github.repository }}
       TARGET_REPO: Xposed-Modules-Repo/com.xiaoai.islandnotify
@@ -174,59 +160,7 @@ jobs:
           tag='${{ steps.meta.outputs.target_tag }}'
           gh release upload "$tag" release-assets/* -R "$TARGET_REPO" --clobber
 
-      - name: Export notify body
-        id: notify_body
-        shell: bash
-        run: |
-          set -euo pipefail
-          body_file='${{ steps.meta.outputs.body_file }}'
-          {
-            echo "notify_content<<__BODY__"
-            cat "$body_file"
-            echo "__BODY__"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Build notify url (no validation)
-        id: notify_url
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag='${{ steps.meta.outputs.target_tag }}'
-          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -printf '%f\n' | sort)
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "No assets found in release-assets directory."
-            exit 1
-          fi
-
-          pick=""
-          for f in "${assets[@]}"; do
-            shopt -s nocasematch
-            if [[ "$f" == *.apk ]]; then
-              pick="$f"
-              shopt -u nocasematch
-              break
-            fi
-            shopt -u nocasematch
-          done
-          if [ -z "$pick" ]; then
-            pick="${assets[0]}"
-          fi
-
-          url="https://github.com/${TARGET_REPO}/releases/download/${tag}-${tag}/${pick}"
-          echo "notify_url=${url}" >> "$GITHUB_OUTPUT"
-
       - name: Summary
         shell: bash
         run: |
           echo "Synced ${SOURCE_REPO}@${{ steps.meta.outputs.source_tag }} -> ${TARGET_REPO}@${{ steps.meta.outputs.target_tag }}"
-
-  notify-bot:
-    needs: sync-release
-    uses: ./.github/workflows/notify-bot-update.yml
-    with:
-      title: ${{ needs.sync-release.outputs.notify_title }}
-      content: ${{ needs.sync-release.outputs.notify_content }}
-      url: ${{ needs.sync-release.outputs.notify_url }}
-      notify_enabled: ${{ inputs.notify_enabled }}
-      mention_all: ${{ inputs.mention_all }}
-    secrets: inherit

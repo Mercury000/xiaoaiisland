@@ -120,6 +120,10 @@ public class SystemUiHook {
             java.util.Collections.synchronizedMap(new WeakHashMap<TextView, Boolean>());
     private static final Map<Object, String> sFocusContentKeyMap =
             java.util.Collections.synchronizedMap(new WeakHashMap<Object, String>());
+    // bind(Template, StatusBarNotification) 时按 sbn 记录 holder 归属，
+    // 供 notifyDataChanged/setViewWidth 等无 sbn 参数的 hook 查询。
+    private static final Map<Object, Boolean> sHolderOwned =
+            java.util.Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
     private static final ConcurrentMap<String, CachedTexts> sFullTextByKey = new ConcurrentHashMap<>();
     private static final Set<String> sOwnedNotifyKeys = ConcurrentHashMap.newKeySet();
     private static final Map<ClassLoader, Boolean> sInstalledHookLoaders =
@@ -158,6 +162,8 @@ public class SystemUiHook {
         hookBigIslandAnimationState(classLoader);
         hookGlowEffectStartColor(classLoader);
         hookFocusDynamicIslandExtrasBridge(classLoader);
+        hookBaseModuleHolderBind(classLoader);
+        hookBaseIslandModuleHolderBind(classLoader);
         hookExactFirstLimitPoints(classLoader);
         hookIslandExpandedView(classLoader);
         hookSameWidthDigitSuffixStyle(classLoader);
@@ -321,6 +327,7 @@ public class SystemUiHook {
                             boolean isDeleted = isDeletedIslandStateTag(stateObj);
                             boolean isExpand = isExpandIslandStateTag(stateObj);
                             Object dataObj = extractDynamicDataFromAnimationState(stateObj);
+                            markOwnedKeyFromDynamicIslandData(dataObj);
                             updateRecentOwnedGlowState(dataObj, resolveStrictGlowMode(isBig, isExpand));
                             if (!hasVoiceAssistBigGlowRequest(dataObj)) return;
                             Object bigView = invokeNoArg(stateObj, "getBigIslandView");
@@ -947,6 +954,55 @@ public class SystemUiHook {
         hookFinalTitleMarqueePoints(classLoader);
     }
 
+    private void hookBaseModuleHolderBind(ClassLoader classLoader) {
+        // 所有 moduleV3 holder 的 bind(Template, StatusBarNotification) 都先调
+        // super.bind()，在此按 sbn 记录 holder 归属，供无 sbn 参数的下游 hook 查询。
+        try {
+            Class<?> cls = Class.forName("miui.systemui.notification.focus.moduleV3.ModuleViewHolder", false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"bind".equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts == null || pts.length != 2) continue;
+                if (!"miui.systemui.notification.focus.model.Template".equals(pts[0].getName())) continue;
+                if (!StatusBarNotification.class.equals(pts[1])) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        markHolderOwnership(param.thisObject, param.args);
+                    }
+                });
+                return;
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
+    private void hookBaseIslandModuleHolderBind(ClassLoader classLoader) {
+        // dynamicisland.module 一支的 bind(IslandTemplate, DynamicIslandData) 都先调
+        // super.bind()，归属信号是 DynamicIslandData.getExtras() 里的 owner 标记。
+        try {
+            Class<?> cls = Class.forName(BASE_ISLAND_MODULE_VIEW_HOLDER_CLASS, false, classLoader);
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"bind".equals(m.getName())) continue;
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts == null || pts.length != 2) continue;
+                if (!DYNAMIC_ISLAND_DATA_CLASS.equals(pts[1].getName())) continue;
+                m.setAccessible(true);
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        markIslandHolderOwnership(param.thisObject, param.args);
+                    }
+                });
+                return;
+            }
+        } catch (Throwable t) {
+            swallowOptionalHookFailure(t);
+        }
+    }
+
     private void hookFinalTitleMarqueePoints(ClassLoader classLoader) {
         hookNotifyDataChangedMarquee(classLoader, MODULE_TEXT_BUTTON_VIEW_HOLDER_CLASS);
         hookNotifyDataChangedMarquee(classLoader, MODULE_TINY_TEXT_BUTTON_VIEW_HOLDER_CLASS);
@@ -963,7 +1019,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
-                        if (!isInOurIslandBind()) return;
+                        if (!isHolderOwned(param.thisObject)) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         Object digitObj = getFieldValue(self, "sameWidthDigit");
@@ -1039,7 +1095,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
-                        if (!isInOurIslandBind()) return;
+                        if (!isHolderOwned(param.thisObject)) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         if (!ISLAND_SAME_WIDTH_DIGIT_VIEW_HOLDER_CLASS.equals(self.getClass().getName())) return;
@@ -1174,7 +1230,7 @@ public class SystemUiHook {
             XposedBridge.hookMethod(m, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
-                    if (!isInOurIslandBind()) return;
+                    if (!isHolderOwned(param.thisObject)) return;
                     Object self = param.thisObject;
                     if (self == null) return;
                     applyMarqueeForFieldTextView(self, "focusSmallTitle");
@@ -1211,6 +1267,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         Object r = param.getResult();
                         if (!(r instanceof Number)) return;
                         int old = ((Number) r).intValue();
@@ -1321,6 +1378,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isHolderOwned(param.thisObject)) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         Object tpl = (param.args != null && param.args.length > 0) ? param.args[0] : null;
@@ -1349,6 +1407,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
+                        if (!isHolderOwned(param.thisObject)) return;
                         if (param.args == null || param.args.length < 3) return;
                         Object tvObj = param.args[0];
                         if (!(tvObj instanceof TextView)) return;
@@ -1379,6 +1438,7 @@ public class SystemUiHook {
 
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isHolderOwned(param.thisObject)) return;
                         if (param.args == null || param.args.length < 1) return;
                         Object tvObj = param.args[0];
                         if (!(tvObj instanceof TextView)) return;
@@ -1447,6 +1507,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        if (!isHolderOwned(param.thisObject)) return;
                         Object self = param.thisObject;
                         if (self == null) return;
                         // hintInfo.type=2(按钮组件2): subTitle -> focusSmallSubtitleView
@@ -1691,6 +1752,7 @@ public class SystemUiHook {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
+                        if (!isInOurIslandBind()) return;
                         if (param.args == null || param.args.length == 0) return;
                         for (int i = 0; i < param.args.length; i++) {
                             Object arg = param.args[i];
@@ -1729,6 +1791,7 @@ public class SystemUiHook {
                     "setIslandExpandedView", View.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
+                            if (!resolveOwnedForFocusContent(param.thisObject)) return;
                             View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
                                     ? (View) param.args[0] : null;
                             tuneIslandViewTree(root);
@@ -1743,6 +1806,7 @@ public class SystemUiHook {
                     "setIslandExpandedViewFake", View.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
+                            if (!resolveOwnedForFocusContent(param.thisObject)) return;
                             View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
                                     ? (View) param.args[0] : null;
                             tuneIslandViewTree(root);
@@ -1771,6 +1835,9 @@ public class SystemUiHook {
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
+                            // Ensure runtime island content hooks are installed so
+                            // owned-bind gating (isInOurIslandBind) can work correctly.
+                            installRuntimeIslandContentHook(param.thisObject);
                             // 不再改写岛A/B文本，避免未展开态宽度异常挤压状态栏图标。
                         }
                     });
@@ -1784,15 +1851,42 @@ public class SystemUiHook {
             findAndHookMethod(FOCUS_CONTENT_CLASS, classLoader,
                     methodName, View.class, new XC_MethodHook() {
                         @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            enterIslandBind();
+                            boolean owned = resolveOwnedForFocusContent(param.thisObject);
+                            sCurrentBindOwned.set(owned);
+                        }
+
+                        @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
-                                    ? (View) param.args[0] : null;
-                            if (!isActiveRoot(root)) return;
+                            try {
+                                View root = (param.args != null && param.args.length > 0 && param.args[0] instanceof View)
+                                        ? (View) param.args[0] : null;
+                                if (!isActiveRoot(root)) return;
+                            } finally {
+                                sCurrentBindOwned.set(Boolean.FALSE);
+                                exitIslandBind();
+                            }
                         }
                     });
         } catch (Throwable t) {
             swallowOptionalHookFailure(t);
         }
+    }
+
+    private boolean resolveOwnedForFocusContent(Object focusContentObj) {
+        if (focusContentObj == null) return false;
+        String key = sFocusContentKeyMap.get(focusContentObj);
+        if (TextUtils.isEmpty(key)) {
+            Object keyObj = invokeNoArg(focusContentObj, "getKey");
+            if (keyObj instanceof String) {
+                key = (String) keyObj;
+                if (!TextUtils.isEmpty(key)) {
+                    sFocusContentKeyMap.put(focusContentObj, key);
+                }
+            }
+        }
+        return isOwnedNotifyKey(key);
     }
 
     private void hookFocusViewMapSetter(ClassLoader classLoader) {
@@ -2297,6 +2391,40 @@ public class SystemUiHook {
 
     private static boolean isInOurIslandBind() {
         return isInIslandBind() && Boolean.TRUE.equals(sCurrentBindOwned.get());
+    }
+
+    private boolean isOwnedStatusBarNotification(Object sbnObj) {
+        if (!(sbnObj instanceof StatusBarNotification)) return false;
+        StatusBarNotification sbn = (StatusBarNotification) sbnObj;
+        if (EXTRA_OWNER_VALUE.equals(sbn.getPackageName())) return true;
+        Notification n = sbn.getNotification();
+        return n != null && n.extras != null
+                && EXTRA_OWNER_VALUE.equals(n.extras.getString(EXTRA_OWNER_KEY, ""));
+    }
+
+    private void markHolderOwnership(Object holder, Object[] args) {
+        boolean owned = args != null && args.length > 1 && isOwnedStatusBarNotification(args[1]);
+        if (holder == null) return;
+        if (owned) {
+            sHolderOwned.put(holder, Boolean.TRUE);
+        } else {
+            sHolderOwned.remove(holder);
+        }
+    }
+
+    private void markIslandHolderOwnership(Object holder, Object[] args) {
+        boolean owned = args != null && args.length > 1
+                && isOwnedDynamicIslandData(args[1]);
+        if (holder == null) return;
+        if (owned) {
+            sHolderOwned.put(holder, Boolean.TRUE);
+        } else {
+            sHolderOwned.remove(holder);
+        }
+    }
+
+    private static boolean isHolderOwned(Object holder) {
+        return holder != null && Boolean.TRUE.equals(sHolderOwned.get(holder));
     }
 
     private static String safeIdName(View view, int id) {

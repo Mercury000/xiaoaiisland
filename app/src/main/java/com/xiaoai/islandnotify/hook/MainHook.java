@@ -298,6 +298,10 @@ public class MainHook {
     /** 通知 id → 当前持有该通知的课程名，防止旧课程的陈旧 STATE_FINISHED 广播在新课更新后覆写岛 */
     private final java.util.Map<Integer, String> mNotifCourseOwner =
             new java.util.concurrent.ConcurrentHashMap<>();
+    /** 展示通知 id → 该岛绑定的规范 alarmId。连续课程换发后展示 id（派生 id）≠ 规范 id，
+     *  残留清理/补发去重凭此映射把在线的派生岛归位到今日合法课程，避免因 id 对不上误删/补发重复。 */
+    private final java.util.Map<Integer, Integer> mNotifAutomationById =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 获取（或创建）防抖 Handler，保证在主 Looper 就绪后才初始化。 */
     private android.os.Handler getRescheduleHandler() {
@@ -372,6 +376,7 @@ public class MainHook {
                             String channelId  = safeStr(intent.getStringExtra("channel_id"));
                             String tag        = intent.getStringExtra("notif_tag");
                             int id            = intent.getIntExtra("notif_id", 0);
+                            int automationAlarmId = intent.getIntExtra("automation_alarm_id", id);
                             android.app.NotificationManager nm =
                                     context.getSystemService(android.app.NotificationManager.class);
                             // 找到当前活跃通知以复用其图标和 intent
@@ -395,7 +400,8 @@ public class MainHook {
                                 return;
                             }
                             SharedPreferences prefs = getConfigPrefs(context);
-                            sendIslandUpdate(info, state, context, channelId, src, nm, tag, id, prefs);
+                            sendIslandUpdate(info, state, context, channelId, src, nm, tag, id,
+                                    automationAlarmId, prefs);
                         } else if (ACTION_TEST_NOTIFY.equals(action)) {
                             // 由模块 APP 触发，在目标进程内构造并发送测试通知
                             String tCourseName = intent.getStringExtra("course_name");
@@ -466,6 +472,7 @@ public class MainHook {
                                 } else {
                                     tnm.cancel(sLastTestNotifId);
                                 }
+                                mNotifAutomationById.remove(sLastTestNotifId);
                                 XposedBridge.log(TAG + ": 已取消上一条测试通知 tag=" + sLastTestNotifTag
                                         + " id=" + sLastTestNotifId);
                             }
@@ -594,8 +601,9 @@ public class MainHook {
                                     jumpNotif.extras.putString("xiaoai.test.classroom",   crRoom);
 
                                     // 必须更换 ID 才能让系统认为这是一个全新的重要通知，从而触发下推和灵动岛展开
-                                    int newId = Math.abs((crName + crStart + crEnd + crRoom).hashCode());
-                                    applyIslandParams(context, jumpNotif, newInfo, newId, prevTag);
+                                    int newId = buildConsecutiveNotifId(crName, crStart, crEnd, crRoom);
+                                    // 展示用 newId；自动化/逃课按规范 crId 登记（与调度/静音闹钟一致）
+                                    applyIslandParams(context, jumpNotif, newInfo, newId, prevTag, crId);
                                     
                                     // 取消旧的通知，发送新的
                                     if (prevTag != null) {
@@ -605,6 +613,8 @@ public class MainHook {
                                         crnm.cancel(prevId);
                                         crnm.notify(newId, jumpNotif);
                                     }
+                                    // 正常情况 prevId≠newId；防御重复广播极端情形下二者相等时误删刚写的新映射
+                                    if (prevId != newId) mNotifAutomationById.remove(prevId);
                                     // 为新课程调度 STATE_ELAPSED / STATE_FINISHED
                                     // reqCode 使用 newId
                                     long crStartMs = computeClassStartMs(crStart);
@@ -613,25 +623,25 @@ public class MainHook {
                                     if (crStartMs > nowCr) {
                                         // 还没上课，调度 alarm
                                         MainHook.this.scheduleIslandAlarm(context, newInfo,
-                                                STATE_ELAPSED, CR_CH, prevTag, newId, crStartMs);
+                                                STATE_ELAPSED, CR_CH, prevTag, newId, crStartMs, crId);
                                     } else {
                                         // 0 间隔连续课程：trigger 触发时已到上课时间，立即刷为"上课中"
                                         XposedBridge.log(TAG + ": [连续课程] crStartMs 已过，立即刷 STATE_ELAPSED");
                                         sendIslandUpdate(newInfo, STATE_ELAPSED, context,
                                                 CR_CH,
                                                 jumpNotif, crnm,
-                                                prevTag, newId, crPrefs);
+                                                prevTag, newId, crId, crPrefs);
                                     }
                                     if (crEndMs > nowCr) {
                                         MainHook.this.scheduleIslandAlarm(context, newInfo,
-                                                STATE_FINISHED, CR_CH, prevTag, newId, crEndMs);
+                                                STATE_FINISHED, CR_CH, prevTag, newId, crEndMs, crId);
                                     } else {
                                         // 下课时间也已过（极端情况，补发 STATE_FINISHED）
                                         XposedBridge.log(TAG + ": [连续课程] crEndMs 已过，立即刷 STATE_FINISHED");
                                         sendIslandUpdate(newInfo, STATE_FINISHED, context,
                                                 CR_CH,
                                                 jumpNotif, crnm,
-                                                prevTag, newId, crPrefs);
+                                                prevTag, newId, crId, crPrefs);
                                     }
                                     scheduleNotifCancelAlarms(context, crPrefs, prevTag, newId,
                                             nowCr, crStartMs, crEndMs);
@@ -844,6 +854,7 @@ public class MainHook {
             if (cancelTag != null) nm.cancel(cancelTag, cancelId);
             else                   nm.cancel(cancelId);
             mNotifCourseOwner.remove(cancelId);
+            mNotifAutomationById.remove(cancelId);
             XposedBridge.log(TAG + ": notif-cancel [" + phase + "] id=" + cancelId);
             return true;
         }
@@ -871,6 +882,7 @@ public class MainHook {
                 if (tag != null) nm.cancel(tag, id);
                 else nm.cancel(id);
                 mNotifCourseOwner.remove(id);
+                mNotifAutomationById.remove(id);
                 count++;
             }
         } catch (Throwable t) {
@@ -888,6 +900,7 @@ public class MainHook {
             if (notifTag != null && !notifTag.isEmpty()) nm.cancel(notifTag, notifId);
             else nm.cancel(notifId);
             mNotifCourseOwner.remove(notifId);
+            mNotifAutomationById.remove(notifId);
             return 1;
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": cancelTargetIslandNotification 失败 -> " + t.getMessage());
@@ -1214,15 +1227,29 @@ public class MainHook {
                     }
                 }
 
+                // 连续课程的岛被换发后，实际展示通知用的是派生 id（与 ACTION_COURSE_REMINDER 连续分支一致），
+                // 必须一并纳入有效集合，否则会被 cancelStaleNotifications 当作"残留"误删刚发的提醒。
+                if (isConsecutive) {
+                    validAlarmIds.add(buildConsecutiveNotifId(courseName, startTime, endTime, classroom));
+                }
+
                 if (triggerMs <= nowMs) {
                     if (nowMs < endMs && !skipRepost && sRepostEnabled) {
                         android.app.NotificationManager repostNm =
                                 ctx.getSystemService(android.app.NotificationManager.class);
                         boolean alreadyPosted = false;
                         if (repostNm != null) {
+                            // 连续课程的岛会被换发到派生 id，补发去重须同时识别：规范 id / 派生 id /
+                            // 运行时映射（覆盖发岛后课程字段再漂移、派生 id 与当前字段对不上的情形），
+                            // 否则在线岛会被误判为"未发"再补发一条，造成同课双岛。
+                            final int derivedId = buildConsecutiveNotifId(
+                                    courseName, startTime, endTime, classroom);
                             for (android.service.notification.StatusBarNotification sbn
                                     : repostNm.getActiveNotifications()) {
-                                if (sbn.getId() == alarmId) {
+                                int sid = sbn.getId();
+                                Integer autoId = mNotifAutomationById.get(sid);
+                                if (sid == alarmId || sid == derivedId
+                                        || (autoId != null && autoId.intValue() == alarmId)) {
                                     alreadyPosted = true;
                                     break;
                                 }
@@ -1350,9 +1377,15 @@ public class MainHook {
                 if (isOurs) {
                     if (isManualTest) continue;
                     int id = sbn.getId();
-                    if (!validIds.contains(id)) {
+                    // 展示 id 可能是连续课程换发的派生 id，凭映射归位到规范 alarmId 判定是否仍属今日合法课程，
+                    // 避免把刚换发的在岛通知当作残留误删（也覆盖课程数据变化后该课不再判定为"连续"的情形）。
+                    Integer autoId = mNotifAutomationById.get(id);
+                    boolean stillValid = validIds.contains(id)
+                            || (autoId != null && validIds.contains(autoId));
+                    if (!stillValid) {
                         nm.cancel(sbn.getTag(), id);
                         mNotifCourseOwner.remove(id);
+                        mNotifAutomationById.remove(id);
                         count++;
                     }
                 }
@@ -2026,10 +2059,19 @@ public class MainHook {
      */
     private void applyIslandParams(Context ctx, Notification notif,
             CourseInfo info, int notifId, String notifTag) {
+        applyIslandParams(ctx, notif, info, notifId, notifTag, notifId);
+    }
+
+    /**
+     * @param automationAlarmId 供"逃课/自动化取消"识别的规范 alarmId（调度与静音闹钟都以此为键）。
+     *                          展示 id（notifId）在连续课程换发后可能与它不同，必须区分传递。
+     */
+    private void applyIslandParams(Context ctx, Notification notif,
+            CourseInfo info, int notifId, String notifTag, int automationAlarmId) {
         try {
             if (notif.extras == null) notif.extras = new Bundle();
             SharedPreferences prefs = getConfigPrefs(ctx);
-            
+
             long startMs = computeClassStartMs(info.startTime);
             long endMs   = computeClassStartMs(info.endTime);
             long now     = System.currentTimeMillis();
@@ -2042,10 +2084,10 @@ public class MainHook {
                 state = STATE_ELAPSED;
             }
 
-            int automationAlarmId = notifId;
             notif.extras.putAll(buildIslandExtras(
                     info, state, prefs, ctx, notif, notifId, notifTag, automationAlarmId));
             mNotifCourseOwner.put(notifId, info.courseName);
+            mNotifAutomationById.put(notifId, automationAlarmId);
             try {
                 Intent tableIntent = buildCourseOpenIntent(ctx, prefs);
                 notif.contentIntent = PendingIntent.getActivity(ctx, 1, tableIntent,
@@ -2056,12 +2098,12 @@ public class MainHook {
 
             String chId  = safeStr(notif.getChannelId());
             if (startMs > now && (startMs - now) <= 6 * 3600 * 1000L)
-                scheduleIslandAlarm(ctx, info, STATE_ELAPSED,  chId, notifTag, notifId, startMs);
+                scheduleIslandAlarm(ctx, info, STATE_ELAPSED,  chId, notifTag, notifId, startMs, automationAlarmId);
             if (!info.endTime.isEmpty() && endMs > now && (endMs - now) <= 6 * 3600 * 1000L) {
                 // 锚点课程（有连续后续课程）：STATE_FINISHED 延迟 1 秒，确保连续触发 alarm 能先 cancel 它，
                 // 避免"已下课"与"下节倒计时"在相同毫秒 competition 导致短暂闪烁。
                 long finishedTrigger = mConsecutiveAnchors.contains(notifId) ? endMs + 1000 : endMs;
-                scheduleIslandAlarm(ctx, info, STATE_FINISHED, chId, notifTag, notifId, finishedTrigger);
+                scheduleIslandAlarm(ctx, info, STATE_FINISHED, chId, notifTag, notifId, finishedTrigger, automationAlarmId);
             }
             if (!mConsecutiveAnchors.contains(notifId))
                 scheduleNotifCancelAlarms(ctx, prefs, notifTag, notifId, now, startMs, endMs);
@@ -2101,9 +2143,12 @@ public class MainHook {
     /**
      * 利用 AlarmManager.setExactAndAllowWhileIdle 在指定时刻发送岛状态更新广播。
      * 运行在 voiceassist 进程内，借用其 SCHEDULE_EXACT_ALARM 权限，精确唤醒 Doze。
+     *
+     * @param automationAlarmId 供"逃课/自动化取消"识别的规范 alarmId，随闹钟持久化，
+     *                          进程重启后仍能保持一致（展示 id 可能被连续课程换发成 newId）。
      */
     private void scheduleIslandAlarm(Context ctx, CourseInfo info, int state,
-            String channelId, String tag, int id, long triggerMs) {
+            String channelId, String tag, int id, long triggerMs, int automationAlarmId) {
         long delayMs = triggerMs - System.currentTimeMillis();
         if (delayMs <= 0) return;
 
@@ -2121,6 +2166,7 @@ public class MainHook {
                 intent.putExtra("channel_id",  channelId);
                 intent.putExtra("notif_tag",   tag);
                 intent.putExtra("notif_id",    id);
+                intent.putExtra("automation_alarm_id", automationAlarmId);
                 int reqCode = id * 10 + state;
                 boolean scheduled = AlarmScheduler.scheduleAlarmClock(
                         ctx, intent, reqCode,
@@ -2149,7 +2195,8 @@ public class MainHook {
                 }
                 if (src == null) return;
                 SharedPreferences prefs = getConfigPrefs(fc);
-                sendIslandUpdate(fi, state, fc, channelId, src.getNotification(), nm, tag, id, prefs);
+                sendIslandUpdate(fi, state, fc, channelId, src.getNotification(), nm, tag, id,
+                        automationAlarmId, prefs);
             }, delayMs);
             XposedBridge.log(TAG + ": Handler 已设定 state=" + state + " in " + (delayMs / 1000) + "s");
         }
@@ -2206,10 +2253,14 @@ public class MainHook {
      */
     private static final String ISLAND_UPDATE_CHANNEL = "xiaoai_island_update_silent";
 
+    /**
+     * @param automationAlarmId 供"逃课/自动化取消"识别的规范 alarmId，随 ACTION_ISLAND_UPDATE
+     *                          闹钟持久化传入；展示 id 被连续课程换发成 newId 后仍保持一致。
+     */
     private void sendIslandUpdate(CourseInfo info, int state,
             Context ctx, String channelId, Notification src,
             android.app.NotificationManager nm, String tag, int id,
-            android.content.SharedPreferences prefs) {
+            int automationAlarmId, android.content.SharedPreferences prefs) {
         try {
             // 确保静音更新渠道存在（IMPORTANCE_LOW = 无声无震，不受 voiceassist 原渠道影响）
             if (nm.getNotificationChannel(ISLAND_UPDATE_CHANNEL) == null) {
@@ -2230,9 +2281,9 @@ public class MainHook {
                     .setOnlyAlertOnce(true)   // 双重保险
                     .build();
             if (n.extras == null) n.extras = new Bundle();
-            int automationAlarmId = id;
             n.extras.putAll(buildIslandExtras(
                     info, state, prefs, ctx, n, id, tag, automationAlarmId));
+            mNotifAutomationById.put(id, automationAlarmId);
             n.contentIntent = src.contentIntent;
             if (tag != null) nm.notify(tag, id, n);
             else             nm.notify(id, n);
@@ -2288,6 +2339,19 @@ public class MainHook {
                 + safeStr(classroom)
                 + safeStr(sectionRange)
                 + safeStr(teacher)).hashCode()) & 0x00FFFFFF;
+    }
+
+    /**
+     * 连续课程"换发"后实际展示通知使用的派生 id。
+     * 必须与 ACTION_COURSE_REMINDER 连续分支保持一致，否则调度侧的残留清理
+     * (cancelStaleNotifications) 会因 id 对不上而误删刚换发的岛通知。
+     */
+    private static int buildConsecutiveNotifId(
+            String courseName, String startTime, String endTime, String classroom) {
+        return Math.abs((safeStr(courseName)
+                + safeStr(startTime)
+                + safeStr(endTime)
+                + safeStr(classroom)).hashCode());
     }
 
 

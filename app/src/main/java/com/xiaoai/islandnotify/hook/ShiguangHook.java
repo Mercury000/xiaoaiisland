@@ -54,7 +54,6 @@ public class ShiguangHook {
     /** v6 起：time_slots.timeTableId + course_time_bindings 间接层 */
     private static final int SCHEMA_BINDING = 2;
 
-    private static final String BINDING_TYPE_SINGLE = "SINGLE";
     private static final String BINDING_TYPE_COMBO = "COMBO";
 
     private android.os.FileObserver mDbObserver;
@@ -535,7 +534,7 @@ public class ShiguangHook {
             return querySlotsByTimeTableId(db, courseTableId);
         }
         if (BINDING_TYPE_COMBO.equalsIgnoreCase(binding.targetType)) {
-            return loadComboBaseSlots(db, courseTableId, binding.targetId);
+            return loadComboEffectiveSlots(db, courseTableId, binding.targetId, todayDateString());
         }
         String targetId = binding.targetId.isEmpty() ? courseTableId : binding.targetId;
         Map<Integer, String[]> slots = querySlotsByTimeTableId(db, targetId);
@@ -545,13 +544,79 @@ public class ShiguangHook {
     }
 
     /**
-     * 组合方案：以基准作息为骨架。基准为空代表「动态专属作息」，此时基准就是该课表自己的专属作息。
-     * 本步先只取基准骨架，规则命中后的按日期改写见 combo 生效作息解析。
+     * 组合方案生效节次：以基准作息为骨架，按「今天」命中的规则把目标作息的时间对齐过来。
+     * 与拾光 TimeScheduleRepository.getEffectiveTimeSlotsOnce 的 COMBO 分支逐条对应。
      */
-    private Map<Integer, String[]> loadComboBaseSlots(SQLiteDatabase db, String courseTableId, String comboId) {
+    private Map<Integer, String[]> loadComboEffectiveSlots(SQLiteDatabase db, String courseTableId,
+                                                           String comboId, String dateStr) {
         String baseTableId = loadComboBaseTableId(db, comboId);
+        // baseTimeTableId 为空 = 拾光文档里的「动态专属作息」，骨架就是该课表自己的专属作息
         if (baseTableId == null || baseTableId.isEmpty()) baseTableId = courseTableId;
-        return querySlotsByTimeTableId(db, baseTableId);
+        Map<Integer, String[]> baseSlots = querySlotsByTimeTableId(db, baseTableId);
+
+        String matchedTargetId = matchComboTargetTableId(db, comboId, dateStr);
+        if (matchedTargetId == null || matchedTargetId.isEmpty() || matchedTargetId.equals(baseTableId)) {
+            XposedBridge.log(TAG + ": [schema] 组合作息 " + comboId + " 在 " + dateStr
+                    + " 未命中规则，取基准作息 " + baseTableId + " 的 " + baseSlots.size() + " 条节次");
+            return baseSlots;
+        }
+        Map<Integer, String[]> targetSlots = querySlotsByTimeTableId(db, matchedTargetId);
+        Map<Integer, String[]> aligned = alignTimeSlots(baseSlots, targetSlots);
+        XposedBridge.log(TAG + ": [schema] 组合作息 " + comboId + " 在 " + dateStr + " 命中 "
+                + matchedTargetId + "：基准 " + baseSlots.size() + " 条，生效 " + aligned.size() + " 条");
+        return aligned;
+    }
+
+    /**
+     * 匹配日期对应的组合作息规则，无命中返回 null（注意：无命中不等于空作息，调用方会回退基准骨架）。
+     * 日期是 "yyyy-MM-dd" 定长串，逐字符比较即日期比较且端点包含，与拾光的
+     * `currentDateStr in it.startDate..it.endDate` 等价；rowid 序 = 插入序 = UI 展示序，
+     * 与拾光 DAO 无 ORDER BY 时的返回序一致。
+     */
+    private String matchComboTargetTableId(SQLiteDatabase db, String comboId, String dateStr) {
+        if (comboId == null || comboId.isEmpty()) return null;
+        if (dateStr == null || dateStr.isEmpty()) return null;
+        Cursor c = null;
+        try {
+            c = db.rawQuery("SELECT targetTimeTableId, startDate, endDate FROM time_table_combo_rules "
+                    + "WHERE comboId = ? ORDER BY rowid ASC", new String[]{comboId});
+            while (c.moveToNext()) {
+                String targetId = safeStr(c.getString(0));
+                String start = normalizeStartDate(safeStr(c.getString(1)));
+                String end = normalizeStartDate(safeStr(c.getString(2)));
+                if (targetId.isEmpty()) continue;
+                // 反向区间（start > end）在拾光里永远是死规则，这里同样匹配不到，保持行为一致
+                if (start.compareTo(dateStr) <= 0 && dateStr.compareTo(end) <= 0) return targetId;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [schema] 读取组合作息规则失败 combo=" + comboId
+                    + "，本次退回基准作息 -> " + t);
+        } finally {
+            if (c != null) c.close();
+        }
+        return null;
+    }
+
+    /**
+     * 节次对齐：以 baseSlots 的结构为骨架。两边都有的节次取目标作息的时间；
+     * 只在基准里的节次保留基准原时间（不补号、也不伪造时间）；只在目标里的节次被丢弃。
+     * 与拾光 alignTimeSlots 语义一致 —— 基准里的空洞是 v6 的合法状态，不能在这里填平。
+     */
+    private static Map<Integer, String[]> alignTimeSlots(Map<Integer, String[]> baseSlots,
+                                                         Map<Integer, String[]> targetSlots) {
+        if (baseSlots.isEmpty()) return targetSlots;
+        if (targetSlots.isEmpty()) return baseSlots;
+        Map<Integer, String[]> aligned = new HashMap<>();
+        for (Map.Entry<Integer, String[]> e : baseSlots.entrySet()) {
+            String[] target = targetSlots.get(e.getKey());
+            aligned.put(e.getKey(), target != null ? target : e.getValue());
+        }
+        return aligned;
+    }
+
+    /** 生效作息的解析口径是「今天」（与拾光 UI 一致），COMBO 规则按这个日期匹配。 */
+    private static String todayDateString() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new java.util.Date());
     }
 
     private String loadComboBaseTableId(SQLiteDatabase db, String comboId) {

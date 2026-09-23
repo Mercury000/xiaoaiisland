@@ -41,6 +41,15 @@ public class DeskClockHook {
     /** 存储创建的闹钟 ID 列表的 SP 键 */
     private static final String KEY_ALARM_IDS = "created_alarm_ids";
 
+    /**
+     * 本模块创建的叫醒闹钟统一使用的前缀。
+     *
+     * <p>创建（{@code createAlarm} 调用点）与按标签清理（{@code deleteAlarmsByLabel}）
+     * 必须共用同一个常量：这两处原本各写一份字面量、且不一致（创建用「课程提醒：」，
+     * 清理用「课表提醒：」），导致按标签清理永远匹配不到自己创建的闹钟。
+     */
+    private static final String ALARM_LABEL_PREFIX = "课程提醒：";
+
     // ─────────────────────────────────────────────────────────────────────────
     // Xposed 入口
     // ─────────────────────────────────────────────────────────────────────────
@@ -176,7 +185,7 @@ public class DeskClockHook {
                                 ac.set(java.util.Calendar.SECOND,      0);
                                 ac.set(java.util.Calendar.MILLISECOND, 0);
                                 if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + morningName);
+                                    long id = createAlarm(ctx, cl, hour, minute, ALARM_LABEL_PREFIX + morningName);
                                     if (id > 0) createdIds.add(id);
                                 } else {
                                     XposedBridge.log(TAG + ": 上午叫醒时间已过 " + hour + ":" +
@@ -207,7 +216,7 @@ public class DeskClockHook {
                                 ac.set(java.util.Calendar.SECOND,      0);
                                 ac.set(java.util.Calendar.MILLISECOND, 0);
                                 if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + afternoonName);
+                                    long id = createAlarm(ctx, cl, hour, minute, ALARM_LABEL_PREFIX + afternoonName);
                                     if (id > 0) createdIds.add(id);
                                 } else {
                                     XposedBridge.log(TAG + ": 下午叫醒时间已过 " + hour + ":" +
@@ -392,7 +401,7 @@ public class DeskClockHook {
                         int idxMsg = c.getColumnIndex("message");
                         if (idxMsg >= 0 && !c.isNull(idxMsg)) lbl = c.getString(idxMsg);
                     }
-                    if (lbl.startsWith("课表提醒：")) toDelete.add(rowId);
+                    if (lbl.startsWith(ALARM_LABEL_PREFIX)) toDelete.add(rowId);
                 }
             } finally { c.close(); }
             for (long id : toDelete) deleteAlarmById(ctx, cl, id);

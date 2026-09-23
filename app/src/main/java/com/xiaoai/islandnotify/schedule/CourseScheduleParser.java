@@ -1,5 +1,7 @@
 package com.xiaoai.islandnotify;
 
+import com.xiaoai.islandnotify.modernhook.XposedBridge;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -8,6 +10,12 @@ import java.util.Collections;
 import java.util.List;
 
 final class CourseScheduleParser {
+
+    /**
+     * 独立的日志 TAG：本解析器被 MainHook / DeskClockHook / ShiguangHook / WakeupHook 共用，
+     * 共用一个来源 TAG 会分不清丢弃发生在哪条数据通路上。
+     */
+    private static final String TAG = "IslandNotifyParser";
 
     private CourseScheduleParser() {}
 
@@ -165,6 +173,9 @@ final class CourseScheduleParser {
         int[] sectionBounds = parseSectionBounds(course.optString("sections", ""));
         int firstSection = sectionBounds == null ? -1 : sectionBounds[0];
         int lastSection = sectionBounds == null ? -1 : sectionBounds[1];
+        String courseNameForLog = firstNonEmpty(
+                course.optString("name", ""),
+                course.optString("courseName", ""));
 
         String directStartTime = firstNonEmpty(
                 course.optString("startTime", ""),
@@ -184,10 +195,19 @@ final class CourseScheduleParser {
             resolvedStartTime = directStartTime;
             resolvedEndTime = directEndTime;
         } else {
-            if (sectionBounds == null) return null;
+            // 下面两处 return null 是 v6 的合法语义（生效作息可能真的缺号，不能补号或伪造时间），
+            // 但过去完全无日志，导致「课程静默消失」无从定位。只加日志，行为不变。
+            if (sectionBounds == null) {
+                XposedBridge.log(TAG + ": 课程 " + courseNameForLog + " 没有节次号且没有自带时间，丢弃");
+                return null;
+            }
             SectionTime startSection = sectionTimes.get(firstSection);
             SectionTime endSection = sectionTimes.get(lastSection);
-            if (startSection == null || endSection == null) return null;
+            if (startSection == null || endSection == null) {
+                XposedBridge.log(TAG + ": 课程 " + courseNameForLog + " 的节次 " + firstSection + "-"
+                        + lastSection + " 不在节次表（" + sectionTimes.size() + " 条）中，丢弃");
+                return null;
+            }
             resolvedStartTime = startSection.startTime;
             resolvedEndTime = endSection.endTime;
         }

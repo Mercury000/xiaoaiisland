@@ -25,10 +25,9 @@ public class WakeupHook {
 
     private static final String TAG = "IslandNotifyWakeup";
     private static final String TARGET_PACKAGE = "com.suda.yzune.wakeupschedule";
-    private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
+    private static final String TARGET_VOICEASSIST = ModuleConstants.VOICEASSIST_PKG;
     /** voiceassist 侧被 MainHook hook 了 onStartCommand 的 Service，用于把已被杀的进程拉起来 */
-    private static final String VOICEASSIST_UPLOAD_SERVICE =
-            "com.xiaomi.voiceassistant.UploadStateService";
+    private static final String VOICEASSIST_UPLOAD_SERVICE = ModuleConstants.VOICEASSIST_UPLOAD_SERVICE;
     private static final String WAKEUP_DB_NAME = "wakeup";
     /** WakeUp 全局配置 SP：当前显示的课表 ID 存于其中的 show_table_id */
     private static final String WAKEUP_MAIN_PREFS = "config";

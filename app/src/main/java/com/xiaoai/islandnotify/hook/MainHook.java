@@ -33,7 +33,7 @@ public class MainHook {
     private static final String TAG = "IslandNotifyHook";
 
     /** 目标应用包名（小爱同学） */
-    private static final String TARGET_PACKAGE = "com.miui.voiceassist";
+    private static final String TARGET_PACKAGE = ModuleConstants.VOICEASSIST_PKG;
 
     /** AlarmManager 触发上课静音（发给 voiceassist 自身，不受 MIUI 电池限制） */
     private static final String ACTION_DO_MUTE   = "com.xiaoai.islandnotify.DO_MUTE";
@@ -50,7 +50,7 @@ public class MainHook {
     /** 超级岛按钮手动触发：我要逃课（取消通知，必要时回滚模块已执行的静音/勿扰） */
     private static final String ACTION_MANUAL_SKIP_CLASS = "com.xiaoai.islandnotify.MANUAL_SKIP_CLASS";
     /** 每日 00:01 跨日重调广播 Action（链式保证次日课程 alarm 不丢失） */
-    private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
+    private static final String ACTION_RESCHEDULE_DAILY = ModuleConstants.ACTION_RESCHEDULE_DAILY;
     /** WakeUp 数据源同步到超级小爱进程 */
     private static final String ACTION_WAKEUP_COURSE_SYNC = WakeupHook.ACTION_WAKEUP_COURSE_SYNC;
     /** 拾光数据源同步到超级小爱进程 */
@@ -62,7 +62,7 @@ public class MainHook {
     /** 测试通知专用标记：用于避免被“旧课表残留精确清理”误删 */
     private static final String KEY_TEST_NOTIF_MARKER = "xiaoai.test.manual_notification";
     /** voiceassist Manifest 中已声明的 Service，用于 AlarmManager 在进程死后强制拉起 */
-    private static final String UPLOAD_STATE_SERVICE = "com.xiaomi.voiceassistant.UploadStateService";
+    private static final String UPLOAD_STATE_SERVICE = ModuleConstants.VOICEASSIST_UPLOAD_SERVICE;
 
     /** 点击课程卡片整体 → 跳转课表页的 Intent URI */
     private static final String COURSE_TABLE_INTENT =
@@ -84,7 +84,7 @@ public class MainHook {
     /** AlarmManager 闹钟触发岛状态更新的广播 Action */
     private static final String ACTION_ISLAND_UPDATE = "com.xiaoai.islandnotify.ACTION_ISLAND_UPDATE";
     /** 触发目标应用发送测试通知的广播 Action */
-    private static final String ACTION_TEST_NOTIFY = "com.xiaoai.islandnotify.ACTION_TEST_NOTIFY";
+    private static final String ACTION_TEST_NOTIFY = ModuleConstants.ACTION_TEST_NOTIFY;
     /** 定时触发课前提醒通知的广播 Action */
     private static final String ACTION_COURSE_REMINDER = "com.xiaoai.islandnotify.ACTION_COURSE_REMINDER";
     /** CourseData SharedPreferences 名称（voiceassist 自身） */
@@ -98,7 +98,7 @@ public class MainHook {
     /** WakeUp 包名（作为通知点击目标） */
     private static final String PKG_WAKEUP = "com.suda.yzune.wakeupschedule";
     /** 拾光包名（作为通知点击目标） */
-    private static final String PKG_SHIGUANG = "com.xingheyuzhuan.shiguangschedule";
+    private static final String PKG_SHIGUANG = ModuleConstants.SHIGUANG_PKG;
     /** 配置项：课程数据源 */
     private static final String KEY_COURSE_DATA_SOURCE = "course_data_source";
     /** WakeUp 镜像存储键（写入 voiceassist 自身 island_runtime） */
@@ -123,6 +123,13 @@ public class MainHook {
     private volatile boolean mUploadStateServiceHooked = false;
     /** 上次成功调度时 weekCourseBean 的 hashCode；FileObserver 触发时若内容未变则跳过重调度，避免补发重复通知 */
     private volatile int mLastCourseDataHash = 0;
+    /**
+     * 已经提示过的「拾光库结构不认识」文案。
+     *
+     * <p>拾光侧每次推送都会带上同一条提示，只在文案变化时提示一次；
+     * 已经提示过的内容不再重复打扰用户。
+     */
+    private volatile String mLastSchemaWarning = null;
     /** 测试通知时间戳去重：记录上一次毫秒值 */
     private static volatile long sLastTestNotifEpochMs = 0L;
     /** 测试通知时间戳去重：同毫秒内自增序号 */
@@ -807,6 +814,9 @@ public class MainHook {
             return true;
         }
         if (ACTION_SHIGUANG_COURSE_SYNC.equals(action)) {
+            // ★ 必须在 hash 去重之前处理：这一条提示可能恰好跟着「hash 未变」的推送到达，
+            // 放到下面 (hash == oldHash) 早退之后就会被永远丢掉。
+            warnIfShiguangSchemaUnknown(context, intent.getStringExtra("schema_warning"));
             String beanJson = intent.getStringExtra("bean_json");
             if (beanJson == null || beanJson.isEmpty()) return true;
             int hash = stableCourseHash(beanJson);
@@ -838,8 +848,16 @@ public class MainHook {
             refreshRuntimeSwitchesFromPrefs(prefs);
             clearSkippedAutomationTokens(context);
             markDailyRescheduleRun(context);
+            // 跨日重调本身只拿镜像 bean 重算闹钟，不回头读拾光库；镜像 bean 是推送那一刻的快照。
+            // 当前数据源是拾光时，顺手请拾光侧重新读库推一次，否则第二天岛上的周次/节次停在昨天。
+            if (isShiguangDataSource(prefs)) {
+                requestShiguangResync(context, "island_reschedule_daily");
+            }
             safeReschedule(context, "island_reschedule_daily", true);
             if (fromSourceChange && newSource != null) {
+                if (SOURCE_SHIGUANG.equalsIgnoreCase(newSource)) {
+                    requestShiguangResync(context, "source_change");
+                }
                 checkMirrorAndNotify(context, newSource);
             }
             return true;
@@ -1761,6 +1779,7 @@ public class MainHook {
      */
     private void scheduleTodayWakeupAlarms(Context ctx) {
         if (!sWakeupMorningEnabled && !sWakeupAfternoonEnabled) {
+            XposedBridge.log(TAG + ": 叫醒：上午/下午均未开启，清除叫醒闹钟");
             sendClearClockAlarms(ctx);
             return;
         }
@@ -1779,6 +1798,9 @@ public class MainHook {
             SharedPreferences sourcePrefs = getConfigPrefs(ctx);
             String beanJson = readActiveCourseBeanJson(ctx, sourcePrefs);
             if (beanJson == null || beanJson.isEmpty()) {
+                // 注意：这里清掉叫醒是「有意的」——前提是触发它的数据源确实没有课表数据。
+                // 镜像为空时保留旧闹钟会产生「叫醒一个已不存在的课」的错误叫醒，更糟。
+                XposedBridge.log(TAG + ": 叫醒：课程镜像为空（数据源=" + readCourseSource(sourcePrefs) + "），清除叫醒闹钟");
                 sendClearClockAlarms(ctx);
                 return;
             }
@@ -2721,6 +2743,58 @@ public class MainHook {
     /** 首次同步成功时提示用户后续自动同步不再提醒。 */
     private void showFirstSyncToast(Context ctx) {
         showToast(ctx, "课程数据已同步成功，后续更改将自动同步，不再提醒");
+    }
+
+    /**
+     * 请拾光侧重新读库并推送一次课程镜像。
+     *
+     * <p>镜像 bean 是「推送那一刻」的快照：周次由推送时的日期算出，生效节次也按推送当日解析
+     * （COMBO 组合方案会随日期命中不同作息）。而跨日重调（{@code ACTION_RESCHEDULE_DAILY}）
+     * 与数据源切换这两条路径，都只拿现成的镜像 bean 重算闹钟、不回头读拾光库——
+     * 没有这个生产者时，第二天岛上的周次和节次就会停在昨天。
+     *
+     * <p>本方法补的正是这个缺失的生产者：在此之前 {@code ACTION_REQUEST_SHIGUANG_SYNC}
+     * 全仓只有 ShiguangHook 自己注册的接收器，没有任何发送方，拾光侧的 manual_request 通路
+     * 从加入起就是死代码。
+     *
+     * <p>局限（如实说明）：拾光侧是<em>动态注册</em>的接收器，只有拾光进程存活时才会收到——
+     * 模块跑在 voiceassist 进程里，读不到拾光的私有目录，也无法拉起它的组件。
+     * 拾光进程不在时由 ShiguangHook 自身的跨天监听（DATE_CHANGED / TIME_TICK）兜底，
+     * 两者互补，谁先到算谁。
+     */
+    private void requestShiguangResync(Context ctx, String reason) {
+        try {
+            Intent req = new Intent(ShiguangHook.ACTION_REQUEST_SHIGUANG_SYNC);
+            req.setPackage(PKG_SHIGUANG);
+            req.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
+            ctx.sendBroadcast(req);
+            XposedBridge.log(TAG + ": 已请求拾光重新同步课程镜像 reason=" + reason);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 请求拾光重新同步失败 reason=" + reason + " -> " + t.getMessage());
+        }
+    }
+
+    /**
+     * 处理 ShiguangHook 捎带来的「拾光库结构不认识」提示。
+     *
+     * <p>布置原因：hook 侧读的是拾光的私有数据库，是只读连接、也没有自己的 UI——
+     * 一旦拾光再改一次 {@code time_slots} 的分组语义，hook 只能静默拿到空节次表，
+     * 用户看到的现象是「同步成功但课程全没了」，和 2026-09-08 那次 v6 变更一模一样。
+     * 现在由 ShiguangHook 把这条提示挂在推送 extras 上送到本进程，在这里弹给用户，
+     * 至少让「模块读不懂拾光的库」这件事不再完全无声。
+     *
+     * <p>只在文案变化时提示一次：拾光侧每次推送都会带上同一条提示，不去重会反复打扰。
+     */
+    private void warnIfShiguangSchemaUnknown(Context ctx, String warning) {
+        if (warning == null || warning.isEmpty()) return;
+        // 只在用户真的选了拾光数据源时才打扰他：hook 侧读库是独立进行的，
+        // 用 xiaoai / WakeUp 的用户不该为一条与己无关的提示分心。
+        // 这里不记账，等他切到拾光数据源后（切源会请求一次重新同步）再提示。
+        if (!isShiguangDataSource(getConfigPrefs(ctx))) return;
+        if (warning.equals(mLastSchemaWarning)) return;
+        mLastSchemaWarning = warning;
+        XposedBridge.log(TAG + ": [schema] 拾光库结构不认识，已提示用户 -> " + warning);
+        showToast(ctx, warning);
     }
 
     private void showToast(Context ctx, String msg) {

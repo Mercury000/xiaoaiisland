@@ -41,6 +41,15 @@ public class DeskClockHook {
     /** 存储创建的闹钟 ID 列表的 SP 键 */
     private static final String KEY_ALARM_IDS = "created_alarm_ids";
 
+    /**
+     * 本模块创建的叫醒闹钟统一使用的前缀。
+     *
+     * <p>创建（{@code createAlarm} 调用点）与按标签清理（{@code deleteAlarmsByLabel}）
+     * 必须共用同一个常量：这两处原本各写一份字面量、且不一致（创建用「课程提醒：」，
+     * 清理用「课表提醒：」），导致按标签清理永远匹配不到自己创建的闹钟。
+     */
+    private static final String ALARM_LABEL_PREFIX = "课程提醒：";
+
     // ─────────────────────────────────────────────────────────────────────────
     // Xposed 入口
     // ─────────────────────────────────────────────────────────────────────────
@@ -82,21 +91,27 @@ public class DeskClockHook {
     // ─────────────────────────────────────────────────────────────────────────
 
     private void handleSchedule(Context ctx, Intent intent, ClassLoader cl) {
-        // 1. 无论任何情况先删除旧闹钟
-        deletePreviousAlarms(ctx, cl);
-
+        // 注意：不能一进来就删旧闹钟（原实现是「无论任何情况先删除」）。
+        // 删除不可逆，而本方法有多条分支会在「一个闹钟都不建」的情况下返回 ——
+        // 先清后判空会把用户已经排好的叫醒静默抹掉，且没有任何提示。
+        // 改为：确认拿到可用的课程数据、真的要清旧建新时，才删（见下方 parse 成功之后）。
         if (intent.getBooleanExtra("clear_only", false)) {
+            deletePreviousAlarms(ctx, cl);
             XposedBridge.log(TAG + ": 叫醒闹钟已全部清除（clear_only）");
             return;
         }
 
         String beanJson = intent.getStringExtra("bean_json");
         if (beanJson == null || beanJson.isEmpty()) {
-            XposedBridge.log(TAG + ": 无课程数据，跳过叫醒调度");
+            // 无数据不等于「今天没课」：数据缺失时保留旧闹钟，宁可留旧也不要无闹钟。
+            // 真正的「清空」由调用方用 clear_only 显式表达（MainHook.sendClearClockAlarms）。
+            XposedBridge.log(TAG + ": 无课程数据，跳过叫醒调度（保留旧闹钟）");
             return;
         }
 
         List<Long> createdIds = new ArrayList<>();
+        // 是否已进入「清旧 + 重建」流程：只有走到那里才允许覆盖已记录的闹钟 ID。
+        boolean rebuilding = false;
 
         try {
             // 统一走 CourseScheduleParser：presentWeek 由它按 startDate 现算，
@@ -149,6 +164,11 @@ public class DeskClockHook {
 
             long nowMs = System.currentTimeMillis();
 
+            // 数据已经解析成功，确认「今天该有闹钟」这件事是可判断的，
+            // 到这里才允许清掉旧闹钟再重建（原实现把这一步放在方法开头，见上方说明）。
+            deletePreviousAlarms(ctx, cl);
+            rebuilding = true;
+
             // 2. 上午：用 firstMorningSec 在规则列表里查时间
             if (morningEnabled && firstMorningSec != Integer.MAX_VALUE) {
                 String rulesJson = intent.getStringExtra("morning_rules_json");
@@ -165,7 +185,7 @@ public class DeskClockHook {
                                 ac.set(java.util.Calendar.SECOND,      0);
                                 ac.set(java.util.Calendar.MILLISECOND, 0);
                                 if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + morningName);
+                                    long id = createAlarm(ctx, cl, hour, minute, ALARM_LABEL_PREFIX + morningName);
                                     if (id > 0) createdIds.add(id);
                                 } else {
                                     XposedBridge.log(TAG + ": 上午叫醒时间已过 " + hour + ":" +
@@ -196,7 +216,7 @@ public class DeskClockHook {
                                 ac.set(java.util.Calendar.SECOND,      0);
                                 ac.set(java.util.Calendar.MILLISECOND, 0);
                                 if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + afternoonName);
+                                    long id = createAlarm(ctx, cl, hour, minute, ALARM_LABEL_PREFIX + afternoonName);
                                     if (id > 0) createdIds.add(id);
                                 } else {
                                     XposedBridge.log(TAG + ": 下午叫醒时间已过 " + hour + ":" +
@@ -212,7 +232,14 @@ public class DeskClockHook {
             }
 
         } catch (Throwable e) {
-            XposedBridge.log(TAG + ": handleSchedule 课程解析失败 → " + e);
+            XposedBridge.log(TAG + ": handleSchedule 课程解析失败，保留旧闹钟 → " + e);
+        }
+
+        if (!rebuilding) {
+            // 没走到「清旧重建」那一步（解析失败等），旧闹钟原封不动，
+            // 这里若照旧覆盖 ID 列表，会把仍在生效的闹钟记录抹掉（标签兜底删除仍可用，但没必要自伤）。
+            XposedBridge.log(TAG + ": 未进入重建流程，保留已记录的闹钟 ID（" + loadAlarmIds(ctx).size() + " 个）");
+            return;
         }
 
         storeAlarmIds(ctx, createdIds);
@@ -374,7 +401,7 @@ public class DeskClockHook {
                         int idxMsg = c.getColumnIndex("message");
                         if (idxMsg >= 0 && !c.isNull(idxMsg)) lbl = c.getString(idxMsg);
                     }
-                    if (lbl.startsWith("课表提醒：")) toDelete.add(rowId);
+                    if (lbl.startsWith(ALARM_LABEL_PREFIX)) toDelete.add(rowId);
                 }
             } finally { c.close(); }
             for (long id : toDelete) deleteAlarmById(ctx, cl, id);

@@ -36,11 +36,10 @@ public class ShiguangHook {
             "com.xiaoai.islandnotify.ACTION_REQUEST_SHIGUANG_SYNC";
 
     private static final String TAG = "IslandNotifyShiguang";
-    private static final String TARGET_PACKAGE = "com.xingheyuzhuan.shiguangschedule";
-    private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
+    private static final String TARGET_PACKAGE = ModuleConstants.SHIGUANG_PKG;
+    private static final String TARGET_VOICEASSIST = ModuleConstants.VOICEASSIST_PKG;
     /** voiceassist 侧被 MainHook hook 了 onStartCommand 的 Service，用于把已被杀的进程拉起来 */
-    private static final String VOICEASSIST_UPLOAD_SERVICE =
-            "com.xiaomi.voiceassistant.UploadStateService";
+    private static final String VOICEASSIST_UPLOAD_SERVICE = ModuleConstants.VOICEASSIST_UPLOAD_SERVICE;
     private static final String DB_NAME = "main_app_database";
     private static final String DATASTORE_NAME = "app_settings.preferences_pb";
     private static final String HOOKED_KEY = "xiaoai.island.shiguang.hooked";

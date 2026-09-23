@@ -33,7 +33,7 @@ public class MainHook {
     private static final String TAG = "IslandNotifyHook";
 
     /** 目标应用包名（小爱同学） */
-    private static final String TARGET_PACKAGE = "com.miui.voiceassist";
+    private static final String TARGET_PACKAGE = ModuleConstants.VOICEASSIST_PKG;
 
     /** AlarmManager 触发上课静音（发给 voiceassist 自身，不受 MIUI 电池限制） */
     private static final String ACTION_DO_MUTE   = "com.xiaoai.islandnotify.DO_MUTE";
@@ -50,7 +50,7 @@ public class MainHook {
     /** 超级岛按钮手动触发：我要逃课（取消通知，必要时回滚模块已执行的静音/勿扰） */
     private static final String ACTION_MANUAL_SKIP_CLASS = "com.xiaoai.islandnotify.MANUAL_SKIP_CLASS";
     /** 每日 00:01 跨日重调广播 Action（链式保证次日课程 alarm 不丢失） */
-    private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
+    private static final String ACTION_RESCHEDULE_DAILY = ModuleConstants.ACTION_RESCHEDULE_DAILY;
     /** WakeUp 数据源同步到超级小爱进程 */
     private static final String ACTION_WAKEUP_COURSE_SYNC = WakeupHook.ACTION_WAKEUP_COURSE_SYNC;
     /** 拾光数据源同步到超级小爱进程 */
@@ -62,7 +62,7 @@ public class MainHook {
     /** 测试通知专用标记：用于避免被“旧课表残留精确清理”误删 */
     private static final String KEY_TEST_NOTIF_MARKER = "xiaoai.test.manual_notification";
     /** voiceassist Manifest 中已声明的 Service，用于 AlarmManager 在进程死后强制拉起 */
-    private static final String UPLOAD_STATE_SERVICE = "com.xiaomi.voiceassistant.UploadStateService";
+    private static final String UPLOAD_STATE_SERVICE = ModuleConstants.VOICEASSIST_UPLOAD_SERVICE;
 
     /** 点击课程卡片整体 → 跳转课表页的 Intent URI */
     private static final String COURSE_TABLE_INTENT =
@@ -84,7 +84,7 @@ public class MainHook {
     /** AlarmManager 闹钟触发岛状态更新的广播 Action */
     private static final String ACTION_ISLAND_UPDATE = "com.xiaoai.islandnotify.ACTION_ISLAND_UPDATE";
     /** 触发目标应用发送测试通知的广播 Action */
-    private static final String ACTION_TEST_NOTIFY = "com.xiaoai.islandnotify.ACTION_TEST_NOTIFY";
+    private static final String ACTION_TEST_NOTIFY = ModuleConstants.ACTION_TEST_NOTIFY;
     /** 定时触发课前提醒通知的广播 Action */
     private static final String ACTION_COURSE_REMINDER = "com.xiaoai.islandnotify.ACTION_COURSE_REMINDER";
     /** CourseData SharedPreferences 名称（voiceassist 自身） */
@@ -98,7 +98,7 @@ public class MainHook {
     /** WakeUp 包名（作为通知点击目标） */
     private static final String PKG_WAKEUP = "com.suda.yzune.wakeupschedule";
     /** 拾光包名（作为通知点击目标） */
-    private static final String PKG_SHIGUANG = "com.xingheyuzhuan.shiguangschedule";
+    private static final String PKG_SHIGUANG = ModuleConstants.SHIGUANG_PKG;
     /** 配置项：课程数据源 */
     private static final String KEY_COURSE_DATA_SOURCE = "course_data_source";
     /** WakeUp 镜像存储键（写入 voiceassist 自身 island_runtime） */

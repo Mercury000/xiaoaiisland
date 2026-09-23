@@ -45,13 +45,13 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS_UI_NAME = "island_ui";
     private static final String KEY_UI_MONET_ENABLED = "ui_monet_enabled";
     private static final String KEY_UI_PREDICTIVE_BACK_ENABLED = "ui_predictive_back_enabled";
-    private static final String TARGET_VOICEASSIST = "com.miui.voiceassist";
+    private static final String TARGET_VOICEASSIST = ModuleConstants.VOICEASSIST_PKG;
     private static final String TARGET_WAKEUP = "com.suda.yzune.wakeupschedule";
-    private static final String TARGET_SHIGUANG = "com.xingheyuzhuan.shiguangschedule";
+    private static final String TARGET_SHIGUANG = ModuleConstants.SHIGUANG_PKG;
     private static final String TARGET_DESKCLOCK = "com.android.deskclock";
     private static final String TARGET_SYSTEMUI = "com.android.systemui";
     private static final String TARGET_SYSTEMUI_PLUGIN = "miui.systemui.plugin";
-    private static final String ACTION_RESCHEDULE_DAILY = "com.xiaoai.islandnotify.ACTION_RESCHEDULE_DAILY";
+    private static final String ACTION_RESCHEDULE_DAILY = ModuleConstants.ACTION_RESCHEDULE_DAILY;
     private static final String ALIAS = "com.xiaoai.islandnotify.MainActivityAlias";
     private static final String HINT_KEY_PREFIX = "hint_";
     private static final String BACKUP_SCHEMA = "com.xiaoai.islandnotify.config_backup";
@@ -666,7 +666,7 @@ public class MainActivity extends AppCompatActivity {
         boolean unDndEnabled = readConfigBool("undnd_enabled", ConfigDefaults.SWITCH_DISABLED);
         int unDndAfter = readConfigInt("undnd_mins_after", ConfigDefaults.MINUTES_OFFSET);
 
-        Intent intent = new Intent("com.xiaoai.islandnotify.ACTION_TEST_NOTIFY");
+        Intent intent = new Intent(ModuleConstants.ACTION_TEST_NOTIFY);
         intent.setPackage(TARGET_VOICEASSIST);
         // 同 uiOnCourseDataSourceChanged：目标进程 stopped 时广播会被系统丢弃，
         // 用户点「测试通知」会毫无反应。

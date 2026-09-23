@@ -162,6 +162,12 @@ public class ShiguangHook {
         try {
             String beanJson = buildWeekCourseBeanFromShiguang(ctx);
             if (beanJson == null || beanJson.isEmpty()) return;
+            // 内省：bean 非空却一门课都没有，说明丢弃发生在读库阶段（下面每次丢弃都有日志）。
+            // ★ 只记日志、绝不提前 return —— 空课表用户正需要这次推送把岛上的残影清空。
+            int courseCount = countCoursesInBean(beanJson);
+            if (courseCount == 0) {
+                XposedBridge.log(TAG + ": 构建出的镜像不含任何课程，请查上面的课程丢弃日志 reason=" + reason);
+            }
             int hash = CourseScheduleParser.stableHash(beanJson);
             if (hash == mLastPushedHash) return;
 
@@ -180,9 +186,19 @@ public class ShiguangHook {
             // 避免推送丢失后镜像永久停留在旧数据上。
             if (started) mLastPushedHash = hash;
             XposedBridge.log(TAG + ": 已推送拾光课程镜像 -> voiceassist reason=" + reason
-                    + " hash=" + hash + " service=" + started);
+                    + " hash=" + hash + " service=" + started + " courses=" + courseCount);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": syncAndPush 失败 -> " + t.getMessage());
+            XposedBridge.log(TAG + ": syncAndPush 失败 -> " + t);
+        }
+    }
+
+    /** 统计镜像里的课程数，仅用于诊断日志；解析失败返回 -1（不干扰推送决策）。 */
+    private static int countCoursesInBean(String beanJson) {
+        try {
+            JSONArray courses = new JSONObject(beanJson).optJSONObject("data").optJSONArray("courses");
+            return courses == null ? 0 : courses.length();
+        } catch (Throwable ignored) {
+            return -1;
         }
     }
 
@@ -238,11 +254,15 @@ public class ShiguangHook {
 
             JSONArray sectionTimes = new JSONArray();
             Set<Integer> seenSections = new HashSet<>();
+            int droppedSlots = 0;
             for (Map.Entry<Integer, String[]> e : normalSlots.entrySet()) {
                 int sec = e.getKey();
                 String start = e.getValue()[0];
                 String end = e.getValue()[1];
-                if (isInvalidSectionTime(start, end)) continue;
+                if (isInvalidSectionTime(start, end)) {
+                    droppedSlots++;
+                    continue;
+                }
                 JSONObject st = new JSONObject();
                 st.put("i", sec);
                 st.put("s", start);
@@ -250,8 +270,20 @@ public class ShiguangHook {
                 sectionTimes.put(st);
                 seenSections.add(sec);
             }
+            // 节次表是整个节次解析的地基：为空就等于所有普通课都会被丢弃，所以无条件记录。
+            XposedBridge.log(TAG + ": 生效节次 读取 " + normalSlots.size() + " 条，可用 "
+                    + seenSections.size() + " 条，时间非法丢弃 " + droppedSlots + " 条（课表 "
+                    + currentTableId + "）");
+            if (normalSlots.isEmpty()) {
+                XposedBridge.log(TAG + ": 生效节次为空，所有普通课程都会被跳过；"
+                        + "若拾光里作息正常，请检查上面的 [schema] 日志");
+            }
 
             int syntheticSec = 1000;
+            int droppedInvalid = 0;
+            int droppedNoWeek = 0;
+            int droppedNoSlot = 0;
+            int keptCourses = 0;
             Map<String, Integer> customTimeToSec = new HashMap<>();
             JSONArray courses = new JSONArray();
 
@@ -267,12 +299,25 @@ public class ShiguangHook {
                 String position = safeStr(c.getString(3));
                 int day = c.getInt(4);
                 boolean isCustom = c.getInt(7) == 1;
-                if (name.isEmpty() || day < 1 || day > 7) continue;
+                if (name.isEmpty() || day < 1 || day > 7) {
+                    droppedInvalid++;
+                    XposedBridge.log(TAG + ": 课程记录字段非法（name=\"" + name + "\" day=" + day
+                            + "），丢弃该课");
+                    continue;
+                }
 
                 List<Integer> weeks = weeksByCourse.get(courseId);
-                if (weeks == null || weeks.isEmpty()) continue;
+                if (weeks == null || weeks.isEmpty()) {
+                    droppedNoWeek++;
+                    XposedBridge.log(TAG + ": 课程 " + name + " 没有任何周次记录，丢弃该课");
+                    continue;
+                }
                 String weeksSpec = toWeeksSpec(weeks);
-                if (weeksSpec.isEmpty()) continue;
+                if (weeksSpec.isEmpty()) {
+                    droppedNoWeek++;
+                    XposedBridge.log(TAG + ": 课程 " + name + " 的周次文本为空，丢弃该课");
+                    continue;
+                }
 
                 String sectionsSpec;
                 String customStart = "";
@@ -280,7 +325,12 @@ public class ShiguangHook {
                 if (isCustom) {
                     customStart = safeStr(c.getString(8));
                     customEnd = safeStr(c.getString(9));
-                    if (isInvalidSectionTime(customStart, customEnd)) continue;
+                    if (isInvalidSectionTime(customStart, customEnd)) {
+                        droppedNoSlot++;
+                        XposedBridge.log(TAG + ": 课程 " + name + " 的自定义时间 \""
+                                + customStart + "-" + customEnd + "\" 非法，丢弃该课");
+                        continue;
+                    }
                     // 优先落到时间上覆盖它的真实节次：自动叫醒的规则是按真实节次配置的，
                     // 合成节次号查不到任何规则，这类课就永远参与不了叫醒。
                     int matchedSec = matchSectionByTime(normalSlots, customStart);
@@ -306,13 +356,23 @@ public class ShiguangHook {
                                 + "（该课不参与自动叫醒）course=" + name);
                     }
                 } else {
-                    if (c.isNull(5) || c.isNull(6)) continue;
+                    if (c.isNull(5) || c.isNull(6) || c.getInt(5) <= 0 || c.getInt(6) <= 0) {
+                        droppedNoSlot++;
+                        XposedBridge.log(TAG + ": 课程 " + name + " 没有有效节次号，丢弃该课"
+                                + "（startSection/endSection 为空或非正）");
+                        continue;
+                    }
                     int startSec = c.getInt(5);
                     int endSec = c.getInt(6);
-                    if (startSec <= 0 || endSec <= 0) continue;
                     int minSec = Math.min(startSec, endSec);
                     int maxSec = Math.max(startSec, endSec);
-                    if (!normalSlots.containsKey(minSec) || !normalSlots.containsKey(maxSec)) continue;
+                    if (!normalSlots.containsKey(minSec) || !normalSlots.containsKey(maxSec)) {
+                        droppedNoSlot++;
+                        // 本次故障的放大器：节次表拿不到时，普通课会在这里被整批静默丢弃。
+                        XposedBridge.log(TAG + ": 课程 " + name + " 的节次 " + minSec + "-" + maxSec
+                                + " 不在生效节次表（" + normalSlots.size() + " 条）中，丢弃该课");
+                        continue;
+                    }
                     sectionsSpec = minSec == maxSec ? String.valueOf(minSec) : (minSec + "-" + maxSec);
                 }
 
@@ -329,9 +389,15 @@ public class ShiguangHook {
                     course.put("endTime", customEnd);
                 }
                 courses.put(course);
+                keptCourses++;
             }
             c.close();
             c = null;
+
+            XposedBridge.log(TAG + ": 课程 读取 " + (keptCourses + droppedInvalid + droppedNoWeek + droppedNoSlot)
+                    + " 门，保留 " + keptCourses + " 门，丢弃 " + (droppedInvalid + droppedNoWeek + droppedNoSlot)
+                    + " 门（字段非法 " + droppedInvalid + " / 无周次 " + droppedNoWeek
+                    + " / 节次缺失 " + droppedNoSlot + "）");
 
             int totalWeek = config.semesterTotalWeeks > 0 ? config.semesterTotalWeeks : (maxWeek > 0 ? maxWeek : 30);
             int presentWeek = computePresentWeek(config.semesterStartDate, config.sundayFirst);
@@ -365,8 +431,14 @@ public class ShiguangHook {
         Cursor c = null;
         try {
             c = db.rawQuery("SELECT id FROM course_tables ORDER BY createdAt DESC LIMIT 1", null);
-            if (c.moveToFirst()) return safeStr(c.getString(0));
-        } catch (Throwable ignored) {
+            if (c.moveToFirst()) {
+                String fallback = safeStr(c.getString(0));
+                XposedBridge.log(TAG + ": DataStore 未取到当前课表，退回「最近创建」的课表 " + fallback
+                        + "（可能与用户在拾光里选中的课表不一致）");
+                return fallback;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取当前课表失败（DataStore 与 course_tables 都不可用）-> " + t);
         } finally {
             if (c != null) c.close();
         }
@@ -375,25 +447,40 @@ public class ShiguangHook {
 
     private String readCurrentTableIdFromDataStore(Context ctx) {
         File file = new File(ctx.getFilesDir(), "datastore/" + DATASTORE_NAME);
-        if (!file.exists()) return null;
+        if (!file.exists()) {
+            XposedBridge.log(TAG + ": DataStore 文件不存在 " + file.getAbsolutePath()
+                    + "，将退回最近创建的课表");
+            return null;
+        }
         FileInputStream fis = null;
         try {
             byte[] buf = new byte[(int) Math.min(file.length(), 64 * 1024L)];
             fis = new FileInputStream(file);
             int read = fis.read(buf);
-            if (read <= 0) return null;
+            if (read <= 0) {
+                XposedBridge.log(TAG + ": DataStore 文件为空，将退回最近创建的课表");
+                return null;
+            }
             String raw = new String(buf, 0, read, StandardCharsets.ISO_8859_1);
             int idx = raw.indexOf("current_course_table_id");
             String scope = idx >= 0 ? raw.substring(idx, Math.min(raw.length(), idx + 200)) : raw;
             Matcher m = UUID_PATTERN.matcher(scope);
             if (m.find()) return m.group();
             m = UUID_PATTERN.matcher(raw);
-            if (m.find()) return m.group();
-        } catch (Throwable ignored) {
+            if (m.find()) {
+                // 明文启发式：窗口内没找到 key，退而取全文第一个 UUID，可能不是用户选中的课表。
+                XposedBridge.log(TAG + ": DataStore 里未定位到 current_course_table_id，"
+                        + "退取全文首个 UUID " + m.group() + "（可能选错课表）");
+                return m.group();
+            }
+            XposedBridge.log(TAG + ": DataStore 里没有任何 UUID 可用，将退回最近创建的课表");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 解析 DataStore 失败，将退回最近创建的课表 -> " + t);
         } finally {
             try {
                 if (fis != null) fis.close();
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": 关闭 DataStore 流失败 -> " + t);
             }
         }
         return null;
@@ -411,9 +498,16 @@ public class ShiguangHook {
                 int totalWeeks = c.getInt(1);
                 int firstDay = c.getInt(2);
                 boolean sundayFirst = (firstDay == 0 || firstDay == 7);
+                if (startDate.isEmpty()) {
+                    XposedBridge.log(TAG + ": 课表 " + tableId + " 没有学期开始日期，"
+                            + "当前周将按第 1 周处理，周次判断可能不准");
+                }
                 return new TableConfig(startDate, totalWeeks, sundayFirst);
             }
-        } catch (Throwable ignored) {
+            XposedBridge.log(TAG + ": course_table_config 里没有课表 " + tableId
+                    + " 的配置行，总周数将退回课程最大周，周次判断可能不准");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取课表配置失败 tableId=" + tableId + " -> " + t);
         } finally {
             if (c != null) c.close();
         }
@@ -486,7 +580,8 @@ public class ShiguangHook {
         try {
             c = db.rawQuery("PRAGMA user_version", null);
             if (c.moveToFirst()) return c.getInt(0);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [schema] 读取 user_version 失败 -> " + t);
         } finally {
             if (c != null) c.close();
         }
@@ -702,7 +797,11 @@ public class ShiguangHook {
     private int computePresentWeek(String startDate, boolean sundayFirst) {
         if (startDate == null || startDate.isEmpty()) return 1;
         int[] ymd = parseYmd(startDate);
-        if (ymd == null) return 1;
+        if (ymd == null) {
+            XposedBridge.log(TAG + ": 学期开始日期 \"" + startDate
+                    + "\" 无法解析，当前周退回第 1 周；提醒可能按错误的周次调度");
+            return 1;
+        }
 
         Calendar start = Calendar.getInstance(Locale.US);
         start.set(Calendar.YEAR, ymd[0]);

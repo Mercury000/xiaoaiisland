@@ -191,6 +191,10 @@ public class MainActivity extends AppCompatActivity {
         try {
             Intent reschedule = new Intent(ACTION_RESCHEDULE_DAILY);
             reschedule.setPackage(TARGET_VOICEASSIST);
+            // 目标进程可能处于 stopped 状态（被强停、或本次开机后尚未启动）：
+            // Android 3.1 起默认 EXCLUDE_STOPPED_PACKAGES，不加这个 flag 广播会被系统直接丢弃，
+            // 用户切换数据源后看不到任何即时反应。与 MainHook/ShiguangHook 侧发送广播的写法保持一致。
+            reschedule.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
             reschedule.putExtra("from_source_change", true);
             reschedule.putExtra("new_source", source);
             sendBroadcast(reschedule);
@@ -664,6 +668,9 @@ public class MainActivity extends AppCompatActivity {
 
         Intent intent = new Intent("com.xiaoai.islandnotify.ACTION_TEST_NOTIFY");
         intent.setPackage(TARGET_VOICEASSIST);
+        // 同 uiOnCourseDataSourceChanged：目标进程 stopped 时广播会被系统丢弃，
+        // 用户点「测试通知」会毫无反应。
+        intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
         intent.putExtra("course_name", courseName);
         intent.putExtra("start_time", startTime);
         intent.putExtra("end_time", endTime);
@@ -702,6 +709,7 @@ public class MainActivity extends AppCompatActivity {
             if (covers) {
                 Intent reschedule = new Intent(ACTION_RESCHEDULE_DAILY);
                 reschedule.setPackage(TARGET_VOICEASSIST);
+                reschedule.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
                 sendBroadcast(reschedule);
             }
         } catch (Exception ignored) {

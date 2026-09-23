@@ -56,9 +56,13 @@ public class ShiguangHook {
 
     private static final String BINDING_TYPE_COMBO = "COMBO";
 
+    /** 目录监听重试上限：目录一直不存在说明用户还没打开过拾光，再等也没用 */
+    private static final int MAX_OBSERVER_RETRY = 15;
+
     private android.os.FileObserver mDbObserver;
     private android.os.FileObserver mStoreObserver;
     private android.os.Handler mHandler;
+    private int mObserverRetryCount = 0;
     private final Object mSyncToken = new Object();
     private volatile int mLastPushedHash = 0;
     /** 上一次打印过的 time_slots 形态，避免每次推送都重复刷同一条日志 */
@@ -82,11 +86,43 @@ public class ShiguangHook {
                     protected void afterHookedMethod(MethodHookParam param) {
                         Context appCtx = (Application) param.thisObject;
                         registerSyncRequestReceiver(appCtx);
-                        registerDbObserver(appCtx);
-                        registerDataStoreObserver(appCtx);
+                        tryRegisterObservers(appCtx);
                         postSync(appCtx, 350L, "startup");
                     }
                 });
+    }
+
+    /**
+     * 注册数据库与 DataStore 的文件监听，失败则退避重试。
+     *
+     * <p>原实现是「目录不存在就 return」，而 hook 注入发生在拾光进程刚创建时，
+     * 数据库目录往往还没建（用户还没打开过拾光、或首次安装）。这种一次性尝试一旦
+     * 落在目录创建之前，本次进程生命周期内就再也没有任何变更通知，
+     * 只能等下一条无关的 startup 事件——表现为「改了课表但岛不动」，且全程无日志。
+     */
+    private void tryRegisterObservers(Context ctx) {
+        registerDbObserver(ctx);
+        registerDataStoreObserver(ctx);
+        if (mDbObserver != null && mStoreObserver != null) {
+            XposedBridge.log(TAG + ": 数据库与 DataStore 监听已建立"
+                    + (mObserverRetryCount > 0 ? "（重试 " + mObserverRetryCount + " 次后成功）" : ""));
+            // 重试期间可能正好完成了建库/换课表，而那时的变更事件没人监听，补一次同步。
+            if (mObserverRetryCount > 0) postSync(ctx, 650L, "observers_ready");
+            return;
+        }
+        if (mObserverRetryCount >= MAX_OBSERVER_RETRY) {
+            XposedBridge.log(TAG + ": 文件监听注册失败且已达重试上限 " + MAX_OBSERVER_RETRY
+                    + " 次（db=" + (mDbObserver != null) + " datastore=" + (mStoreObserver != null)
+                    + "），本次进程内将依赖手动/启动同步，不再重试");
+            return;
+        }
+        mObserverRetryCount++;
+        // 首次 2s，之后线性放大：文件监听只是「及时性」优化，读库路径本身不依赖它。
+        long delayMs = 2000L * mObserverRetryCount;
+        XposedBridge.log(TAG + ": 文件监听未就绪（db=" + (mDbObserver != null)
+                + " datastore=" + (mStoreObserver != null) + "），第 " + mObserverRetryCount
+                + " 次重试将在 " + delayMs + "ms 后");
+        getHandler().postDelayed(() -> tryRegisterObservers(ctx), delayMs);
     }
 
     private void registerSyncRequestReceiver(Context ctx) {
@@ -107,6 +143,7 @@ public class ShiguangHook {
         if (mDbObserver != null) return;
         File dbFile = ctx.getDatabasePath(DB_NAME);
         File dbDir = dbFile == null ? null : dbFile.getParentFile();
+        // 目录不存在时不放弃：进程启动早于拾光建库是常态，由 tryRegisterObservers 后台重试。
         if (dbDir == null || !dbDir.exists()) return;
         mDbObserver = new android.os.FileObserver(
                 dbDir.getAbsolutePath(),
@@ -130,6 +167,7 @@ public class ShiguangHook {
         if (mStoreObserver != null) return;
         File store = new File(ctx.getFilesDir(), "datastore/" + DATASTORE_NAME);
         File dir = store.getParentFile();
+        // 同上：目录不存在交由 tryRegisterObservers 重试，这里不再早退即永久放弃。
         if (dir == null || !dir.exists()) return;
         mStoreObserver = new android.os.FileObserver(
                 dir.getAbsolutePath(),

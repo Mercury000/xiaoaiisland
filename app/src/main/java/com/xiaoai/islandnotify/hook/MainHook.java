@@ -1769,6 +1769,7 @@ public class MainHook {
      */
     private void scheduleTodayWakeupAlarms(Context ctx) {
         if (!sWakeupMorningEnabled && !sWakeupAfternoonEnabled) {
+            XposedBridge.log(TAG + ": 叫醒：上午/下午均未开启，清除叫醒闹钟");
             sendClearClockAlarms(ctx);
             return;
         }
@@ -1787,6 +1788,9 @@ public class MainHook {
             SharedPreferences sourcePrefs = getConfigPrefs(ctx);
             String beanJson = readActiveCourseBeanJson(ctx, sourcePrefs);
             if (beanJson == null || beanJson.isEmpty()) {
+                // 注意：这里清掉叫醒是「有意的」——前提是触发它的数据源确实没有课表数据。
+                // 镜像为空时保留旧闹钟会产生「叫醒一个已不存在的课」的错误叫醒，更糟。
+                XposedBridge.log(TAG + ": 叫醒：课程镜像为空（数据源=" + readCourseSource(sourcePrefs) + "），清除叫醒闹钟");
                 sendClearClockAlarms(ctx);
                 return;
             }

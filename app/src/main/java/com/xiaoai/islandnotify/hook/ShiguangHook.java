@@ -47,11 +47,23 @@ public class ShiguangHook {
     private static final Pattern UUID_PATTERN =
             Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
+    // time_slots 分组列的三种形态（探测见 detectSchemaForm）
+    private static final int SCHEMA_UNKNOWN = 0;
+    /** v5 及以前：time_slots.courseTableId 直接就是课表 ID */
+    private static final int SCHEMA_LEGACY = 1;
+    /** v6 起：time_slots.timeTableId + course_time_bindings 间接层 */
+    private static final int SCHEMA_BINDING = 2;
+
+    private static final String BINDING_TYPE_SINGLE = "SINGLE";
+    private static final String BINDING_TYPE_COMBO = "COMBO";
+
     private android.os.FileObserver mDbObserver;
     private android.os.FileObserver mStoreObserver;
     private android.os.Handler mHandler;
     private final Object mSyncToken = new Object();
     private volatile int mLastPushedHash = 0;
+    /** 上一次打印过的 time_slots 形态，避免每次推送都重复刷同一条日志 */
+    private volatile int mLastLoggedSchemaForm = Integer.MIN_VALUE;
     /** 自身读库产生的文件事件在此时间前一律忽略，避免「读 → 改 -shm/-wal → 再读」自激循环 */
     private volatile long mSelfReadUntilMs = 0L;
 
@@ -409,24 +421,170 @@ public class ShiguangHook {
         return new TableConfig("", 0, false);
     }
 
-    private Map<Integer, String[]> loadTimeSlots(SQLiteDatabase db, String tableId) {
+    /**
+     * 读取「该课表当前生效」的作息节次。
+     *
+     * <p>v5 及以前：time_slots.courseTableId 就是课表 ID，直连即可。
+     * v6 起（拾光 2.0.1 / versionCode 35）：time_slots 改按 timeTableId 分组，课表与作息之间
+     * 多了 course_time_bindings 间接层（专属作息 / 公共作息 SINGLE / 组合方案 COMBO），
+     * 必须按绑定解析才能拿到生效值 —— 直接把 courseTableId 当 timeTableId 用会读到残留的专属作息，
+     * 得到「不为空、不报错、但时间是错的」结果。
+     *
+     * <p>未知形态不抛异常也不静默返回残缺数据，而是返回空表并留下日志。
+     */
+    private Map<Integer, String[]> loadTimeSlots(SQLiteDatabase db, String courseTableId) {
+        int form = detectSchemaForm(db);
+        if (form != mLastLoggedSchemaForm) {
+            mLastLoggedSchemaForm = form;
+            XposedBridge.log(TAG + ": [schema] time_slots 形态=" + schemaFormName(form)
+                    + " user_version=" + readUserVersion(db));
+        }
+        if (form == SCHEMA_LEGACY) return querySlotsByLegacyColumn(db, courseTableId);
+        if (form == SCHEMA_BINDING) return loadBoundTimeSlots(db, courseTableId);
+        XposedBridge.log(TAG + ": [schema] time_slots 既没有 courseTableId 也没有 timeTableId 列，"
+                + "无法解析生效作息：本次推送不含任何普通节次，相关课程会被跳过");
+        return new HashMap<>();
+    }
+
+    private static String schemaFormName(int form) {
+        if (form == SCHEMA_LEGACY) return "v5-and-earlier(courseTableId)";
+        if (form == SCHEMA_BINDING) return "v6+(timeTableId+course_time_bindings)";
+        return "unknown";
+    }
+
+    /**
+     * 探测 time_slots 的分组列形态。用 PRAGMA table_info（各版本 SQLite 都支持）而不是
+     * pragma_table_info 表值函数（需 3.16+），也不用 room_master_table.identity_hash
+     * —— 迁移库的 identity_hash 仍是 v5 的值，只有 user_version 会更新到 6。
+     */
+    private int detectSchemaForm(SQLiteDatabase db) {
+        boolean legacyColumn = hasColumn(db, "time_slots", "courseTableId");
+        boolean bindingColumn = hasColumn(db, "time_slots", "timeTableId");
+        if (bindingColumn && !legacyColumn) return SCHEMA_BINDING;
+        if (legacyColumn) return SCHEMA_LEGACY;
+        return SCHEMA_UNKNOWN;
+    }
+
+    private boolean hasColumn(SQLiteDatabase db, String table, String column) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery("PRAGMA table_info(" + table + ")", null);
+            int nameIdx = c.getColumnIndex("name");
+            if (nameIdx < 0) return false;
+            while (c.moveToNext()) {
+                if (column.equalsIgnoreCase(safeStr(c.getString(nameIdx)))) return true;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [schema] 探测 " + table + "." + column + " 失败 -> " + t);
+        } finally {
+            if (c != null) c.close();
+        }
+        return false;
+    }
+
+    private int readUserVersion(SQLiteDatabase db) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery("PRAGMA user_version", null);
+            if (c.moveToFirst()) return c.getInt(0);
+        } catch (Throwable ignored) {
+        } finally {
+            if (c != null) c.close();
+        }
+        return -1;
+    }
+
+    private Map<Integer, String[]> querySlotsByLegacyColumn(SQLiteDatabase db, String courseTableId) {
+        return querySlots(db,
+                "SELECT number, startTime, endTime FROM time_slots WHERE courseTableId = ? ORDER BY number ASC",
+                new String[]{courseTableId});
+    }
+
+    private Map<Integer, String[]> querySlotsByTimeTableId(SQLiteDatabase db, String timeTableId) {
+        return querySlots(db,
+                "SELECT number, startTime, endTime FROM time_slots WHERE timeTableId = ? ORDER BY number ASC",
+                new String[]{timeTableId});
+    }
+
+    private Map<Integer, String[]> querySlots(SQLiteDatabase db, String sql, String[] args) {
         Map<Integer, String[]> slots = new HashMap<>();
         Cursor c = null;
         try {
-            c = db.rawQuery(
-                    "SELECT number, startTime, endTime FROM time_slots WHERE courseTableId = ? ORDER BY number ASC",
-                    new String[]{tableId});
+            c = db.rawQuery(sql, args);
             while (c.moveToNext()) {
                 int number = c.getInt(0);
                 String start = safeStr(c.getString(1));
                 String end = safeStr(c.getString(2));
                 slots.put(number, new String[]{start, end});
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            // 这里曾经是 catch (Throwable ignored)：v6 改名后查询必然失败，异常被吞掉，
+            // 上层只看到「节次表为空」，于是把所有普通课程静默丢弃且日志一片空白。
+            XposedBridge.log(TAG + ": [schema] 查询作息节次失败，本次将缺少普通节次 -> " + t);
         } finally {
             if (c != null) c.close();
         }
         return slots;
+    }
+
+    /** v6：先看课表绑定到哪个作息，再读那个作息的节次。 */
+    private Map<Integer, String[]> loadBoundTimeSlots(SQLiteDatabase db, String courseTableId) {
+        Binding binding = loadBinding(db, courseTableId);
+        if (binding == null) {
+            // 无绑定是正常态：新建课表与迁移时都会为课表写入专属作息，其 ID 就等于课表 ID。
+            return querySlotsByTimeTableId(db, courseTableId);
+        }
+        if (BINDING_TYPE_COMBO.equalsIgnoreCase(binding.targetType)) {
+            return loadComboBaseSlots(db, courseTableId, binding.targetId);
+        }
+        String targetId = binding.targetId.isEmpty() ? courseTableId : binding.targetId;
+        Map<Integer, String[]> slots = querySlotsByTimeTableId(db, targetId);
+        XposedBridge.log(TAG + ": [schema] 课表 " + courseTableId + " 绑定 "
+                + binding.targetType + " 作息 " + targetId + "，生效节次 " + slots.size() + " 条");
+        return slots;
+    }
+
+    /**
+     * 组合方案：以基准作息为骨架。基准为空代表「动态专属作息」，此时基准就是该课表自己的专属作息。
+     * 本步先只取基准骨架，规则命中后的按日期改写见 combo 生效作息解析。
+     */
+    private Map<Integer, String[]> loadComboBaseSlots(SQLiteDatabase db, String courseTableId, String comboId) {
+        String baseTableId = loadComboBaseTableId(db, comboId);
+        if (baseTableId == null || baseTableId.isEmpty()) baseTableId = courseTableId;
+        return querySlotsByTimeTableId(db, baseTableId);
+    }
+
+    private String loadComboBaseTableId(SQLiteDatabase db, String comboId) {
+        if (comboId == null || comboId.isEmpty()) return null;
+        Cursor c = null;
+        try {
+            c = db.rawQuery("SELECT baseTimeTableId FROM time_table_combos WHERE id = ? LIMIT 1",
+                    new String[]{comboId});
+            if (c.moveToFirst() && !c.isNull(0)) return safeStr(c.getString(0));
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [schema] 读取组合作息基准作息失败 combo=" + comboId + " -> " + t);
+        } finally {
+            if (c != null) c.close();
+        }
+        return null;
+    }
+
+    private Binding loadBinding(SQLiteDatabase db, String courseTableId) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery(
+                    "SELECT targetType, targetId FROM course_time_bindings WHERE courseTableId = ? LIMIT 1",
+                    new String[]{courseTableId});
+            if (c.moveToFirst()) {
+                return new Binding(safeStr(c.getString(0)), safeStr(c.getString(1)));
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [schema] 读取课表作息绑定失败 courseTableId=" + courseTableId
+                    + "，本次退回专属作息 -> " + t);
+        } finally {
+            if (c != null) c.close();
+        }
+        return null;
     }
 
     /**
@@ -541,6 +699,16 @@ public class ShiguangHook {
 
     private static String safeStr(String value) {
         return value == null ? "" : value;
+    }
+
+    private static final class Binding {
+        final String targetType;
+        final String targetId;
+
+        Binding(String targetType, String targetId) {
+            this.targetType = targetType == null ? "" : targetType;
+            this.targetId = targetId == null ? "" : targetId;
+        }
     }
 
     private static final class TableConfig {

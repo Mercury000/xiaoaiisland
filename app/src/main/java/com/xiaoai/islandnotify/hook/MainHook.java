@@ -123,6 +123,13 @@ public class MainHook {
     private volatile boolean mUploadStateServiceHooked = false;
     /** 上次成功调度时 weekCourseBean 的 hashCode；FileObserver 触发时若内容未变则跳过重调度，避免补发重复通知 */
     private volatile int mLastCourseDataHash = 0;
+    /**
+     * 已经提示过的「拾光库结构不认识」文案。
+     *
+     * <p>拾光侧每次推送都会带上同一条提示，只在文案变化时提示一次；
+     * 已经提示过的内容不再重复打扰用户。
+     */
+    private volatile String mLastSchemaWarning = null;
     /** 测试通知时间戳去重：记录上一次毫秒值 */
     private static volatile long sLastTestNotifEpochMs = 0L;
     /** 测试通知时间戳去重：同毫秒内自增序号 */
@@ -807,6 +814,9 @@ public class MainHook {
             return true;
         }
         if (ACTION_SHIGUANG_COURSE_SYNC.equals(action)) {
+            // ★ 必须在 hash 去重之前处理：这一条提示可能恰好跟着「hash 未变」的推送到达，
+            // 放到下面 (hash == oldHash) 早退之后就会被永远丢掉。
+            warnIfShiguangSchemaUnknown(context, intent.getStringExtra("schema_warning"));
             String beanJson = intent.getStringExtra("bean_json");
             if (beanJson == null || beanJson.isEmpty()) return true;
             int hash = stableCourseHash(beanJson);
@@ -2762,6 +2772,29 @@ public class MainHook {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": 请求拾光重新同步失败 reason=" + reason + " -> " + t.getMessage());
         }
+    }
+
+    /**
+     * 处理 ShiguangHook 捎带来的「拾光库结构不认识」提示。
+     *
+     * <p>布置原因：hook 侧读的是拾光的私有数据库，是只读连接、也没有自己的 UI——
+     * 一旦拾光再改一次 {@code time_slots} 的分组语义，hook 只能静默拿到空节次表，
+     * 用户看到的现象是「同步成功但课程全没了」，和 2026-09-08 那次 v6 变更一模一样。
+     * 现在由 ShiguangHook 把这条提示挂在推送 extras 上送到本进程，在这里弹给用户，
+     * 至少让「模块读不懂拾光的库」这件事不再完全无声。
+     *
+     * <p>只在文案变化时提示一次：拾光侧每次推送都会带上同一条提示，不去重会反复打扰。
+     */
+    private void warnIfShiguangSchemaUnknown(Context ctx, String warning) {
+        if (warning == null || warning.isEmpty()) return;
+        // 只在用户真的选了拾光数据源时才打扰他：hook 侧读库是独立进行的，
+        // 用 xiaoai / WakeUp 的用户不该为一条与己无关的提示分心。
+        // 这里不记账，等他切到拾光数据源后（切源会请求一次重新同步）再提示。
+        if (!isShiguangDataSource(getConfigPrefs(ctx))) return;
+        if (warning.equals(mLastSchemaWarning)) return;
+        mLastSchemaWarning = warning;
+        XposedBridge.log(TAG + ": [schema] 拾光库结构不认识，已提示用户 -> " + warning);
+        showToast(ctx, warning);
     }
 
     private void showToast(Context ctx, String msg) {

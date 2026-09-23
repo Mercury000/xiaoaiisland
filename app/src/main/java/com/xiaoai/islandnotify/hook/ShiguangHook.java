@@ -69,6 +69,16 @@ public class ShiguangHook {
     private volatile int mLastPushedHash = 0;
     /** 上一次打印过的 time_slots 形态，避免每次推送都重复刷同一条日志 */
     private volatile int mLastLoggedSchemaForm = Integer.MIN_VALUE;
+    /**
+     * 需要告诉用户的「库结构不认识」提示；null 表示当前形态可解析。
+     *
+     * <p>这是本模块与拾光之间唯一的一处「契约」检查：拾光再改一次 time_slots 的分组列
+     * （或把课表与作息之间再插一层），这里就会落进 SCHEMA_UNKNOWN。原实现的后果是
+     * 静默返回空节次表 → 普通课全部被丢弃 → 岛上只剩自定义时间的课，用户和 2026-09-08
+     * 那次 v6 变更一样只能看到「同步成功但课程没了」，而模块自己什么也不说。
+     * 现在把这个事实带到用户面前（经 voiceassist 进程弹提示）。
+     */
+    private volatile String mSchemaWarning = null;
     /** 自身读库产生的文件事件在此时间前一律忽略，避免「读 → 改 -shm/-wal → 再读」自激循环 */
     private volatile long mSelfReadUntilMs = 0L;
 
@@ -252,6 +262,7 @@ public class ShiguangHook {
 
     private void syncAndPush(Context ctx, String reason) {
         try {
+            mSchemaWarning = null;
             String beanJson = buildWeekCourseBeanFromShiguang(ctx);
             if (beanJson == null || beanJson.isEmpty()) return;
             // 内省：bean 非空却一门课都没有，说明丢弃发生在读库阶段（下面每次丢弃都有日志）。
@@ -261,7 +272,12 @@ public class ShiguangHook {
                 XposedBridge.log(TAG + ": 构建出的镜像不含任何课程，请查上面的课程丢弃日志 reason=" + reason);
             }
             int hash = CourseScheduleParser.stableHash(beanJson);
-            if (hash == mLastPushedHash) return;
+            // 正常情况下 hash 没变就不重复推送。但这条例外必须放行：库结构不认识时，
+            // 如果该课表只含自定义时间的课程（这类课不走生效节次表、画面完全没变），
+            // hash 会和上一次推送逐字节相同 —— 若跟着早退，用户就永远收不到提示，
+            // 又回到「模块什么也不说」的老样子。多推一次的代价极小（同一份 bean，
+            // 下游还会按文案去重），换的是这条提示一定能送达。
+            if (hash == mLastPushedHash && mSchemaWarning == null) return;
 
             // 先用 startService 把可能已被杀的 voiceassist 拉起来（MainHook 的 Service hook
             // 会把它转成包内广播）；广播只能进到运行中的动态接收器，进程不在时会静默丢失。
@@ -272,6 +288,10 @@ public class ShiguangHook {
             sync.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
             sync.putExtra("bean_json", beanJson);
             sync.putExtra("hash", hash);
+            // 库结构不认识时顺带把原因交给 voiceassist 进程：hook 侧是只读的
+            // （XSharedPreferences.edit() 直接抛异常），也没有 Toast 通道，
+            // 只能在这次必然会发生的推送里捎带一条提示。
+            if (mSchemaWarning != null) sync.putExtra("schema_warning", mSchemaWarning);
             ctx.sendBroadcast(sync);
 
             // 只有 startService 成功才算确定送达；否则不记账，留给下次事件重试，
@@ -301,6 +321,9 @@ public class ShiguangHook {
             svc.setClassName(TARGET_VOICEASSIST, VOICEASSIST_UPLOAD_SERVICE);
             svc.putExtra("bean_json", beanJson);
             svc.putExtra("hash", hash);
+            // 这条才是「进程被杀也能送达」的可靠通路（MainHook 的 Service hook 会把全部
+            // extras 原样转成包内广播），提示同样要跟着走。
+            if (mSchemaWarning != null) svc.putExtra("schema_warning", mSchemaWarning);
             return ctx.startService(svc) != null;
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": startService 拉起 voiceassist 失败 -> " + t.getMessage());
@@ -624,10 +647,20 @@ public class ShiguangHook {
             XposedBridge.log(TAG + ": [schema] time_slots 形态=" + schemaFormName(form)
                     + " user_version=" + readUserVersion(db));
         }
-        if (form == SCHEMA_LEGACY) return querySlotsByLegacyColumn(db, courseTableId);
-        if (form == SCHEMA_BINDING) return loadBoundTimeSlots(db, courseTableId);
+        if (form == SCHEMA_LEGACY) {
+            mSchemaWarning = null;
+            return querySlotsByLegacyColumn(db, courseTableId);
+        }
+        if (form == SCHEMA_BINDING) {
+            mSchemaWarning = null;
+            return loadBoundTimeSlots(db, courseTableId);
+        }
         XposedBridge.log(TAG + ": [schema] time_slots 既没有 courseTableId 也没有 timeTableId 列，"
                 + "无法解析生效作息：本次推送不含任何普通节次，相关课程会被跳过");
+        // 唯一「模块读不懂拾光的库」的情况：原实现到此为止只有一行日志，用户在岛上
+        // 看到的是课程凭空消失。把原因带出去，由 voiceassist 进程提示用户。
+        mSchemaWarning = "拾光课程表的数据库结构已变更，本模块暂时无法读取作息时间"
+                + "（会缺少普通课程）。请等待模块更新。";
         return new HashMap<>();
     }
 

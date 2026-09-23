@@ -838,8 +838,16 @@ public class MainHook {
             refreshRuntimeSwitchesFromPrefs(prefs);
             clearSkippedAutomationTokens(context);
             markDailyRescheduleRun(context);
+            // 跨日重调本身只拿镜像 bean 重算闹钟，不回头读拾光库；镜像 bean 是推送那一刻的快照。
+            // 当前数据源是拾光时，顺手请拾光侧重新读库推一次，否则第二天岛上的周次/节次停在昨天。
+            if (isShiguangDataSource(prefs)) {
+                requestShiguangResync(context, "island_reschedule_daily");
+            }
             safeReschedule(context, "island_reschedule_daily", true);
             if (fromSourceChange && newSource != null) {
+                if (SOURCE_SHIGUANG.equalsIgnoreCase(newSource)) {
+                    requestShiguangResync(context, "source_change");
+                }
                 checkMirrorAndNotify(context, newSource);
             }
             return true;
@@ -2721,6 +2729,35 @@ public class MainHook {
     /** 首次同步成功时提示用户后续自动同步不再提醒。 */
     private void showFirstSyncToast(Context ctx) {
         showToast(ctx, "课程数据已同步成功，后续更改将自动同步，不再提醒");
+    }
+
+    /**
+     * 请拾光侧重新读库并推送一次课程镜像。
+     *
+     * <p>镜像 bean 是「推送那一刻」的快照：周次由推送时的日期算出，生效节次也按推送当日解析
+     * （COMBO 组合方案会随日期命中不同作息）。而跨日重调（{@code ACTION_RESCHEDULE_DAILY}）
+     * 与数据源切换这两条路径，都只拿现成的镜像 bean 重算闹钟、不回头读拾光库——
+     * 没有这个生产者时，第二天岛上的周次和节次就会停在昨天。
+     *
+     * <p>本方法补的正是这个缺失的生产者：在此之前 {@code ACTION_REQUEST_SHIGUANG_SYNC}
+     * 全仓只有 ShiguangHook 自己注册的接收器，没有任何发送方，拾光侧的 manual_request 通路
+     * 从加入起就是死代码。
+     *
+     * <p>局限（如实说明）：拾光侧是<em>动态注册</em>的接收器，只有拾光进程存活时才会收到——
+     * 模块跑在 voiceassist 进程里，读不到拾光的私有目录，也无法拉起它的组件。
+     * 拾光进程不在时由 ShiguangHook 自身的跨天监听（DATE_CHANGED / TIME_TICK）兜底，
+     * 两者互补，谁先到算谁。
+     */
+    private void requestShiguangResync(Context ctx, String reason) {
+        try {
+            Intent req = new Intent(ShiguangHook.ACTION_REQUEST_SHIGUANG_SYNC);
+            req.setPackage(PKG_SHIGUANG);
+            req.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
+            ctx.sendBroadcast(req);
+            XposedBridge.log(TAG + ": 已请求拾光重新同步课程镜像 reason=" + reason);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 请求拾光重新同步失败 reason=" + reason + " -> " + t.getMessage());
+        }
     }
 
     private void showToast(Context ctx, String msg) {

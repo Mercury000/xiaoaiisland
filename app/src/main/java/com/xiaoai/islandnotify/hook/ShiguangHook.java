@@ -63,6 +63,8 @@ public class ShiguangHook {
     private android.os.FileObserver mStoreObserver;
     private android.os.Handler mHandler;
     private int mObserverRetryCount = 0;
+    /** 最近一次观察到的日期（yyyy-MM-dd）：跨天检测的基准，跨天事件与每分钟兜底共用 */
+    private volatile String mLastSeenDate = "";
     private final Object mSyncToken = new Object();
     private volatile int mLastPushedHash = 0;
     /** 上一次打印过的 time_slots 形态，避免每次推送都重复刷同一条日志 */
@@ -86,6 +88,7 @@ public class ShiguangHook {
                     protected void afterHookedMethod(MethodHookParam param) {
                         Context appCtx = (Application) param.thisObject;
                         registerSyncRequestReceiver(appCtx);
+                        registerDateChangeReceiver(appCtx);
                         tryRegisterObservers(appCtx);
                         postSync(appCtx, 350L, "startup");
                     }
@@ -137,6 +140,57 @@ public class ShiguangHook {
         };
         androidx.core.content.ContextCompat.registerReceiver(
                 ctx, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_EXPORTED);
+    }
+
+    /**
+     * 跨天重算通道。
+     *
+     * <p>镜像 bean 是「一次性快照」：presentWeek 在推送那一刻算好（computePresentWeek），
+     * 生效节次也按推送当日解析（COMBO 组合方案按日期命中不同作息）。原实现只有
+     * startup / db_changed / datastore_changed / manual_request 四个同步触发点，
+     * 没有任何跨天信号——用户在拾光里不改任何东西，第二天岛上的周次和节次就都是昨天的，
+     * 且 hash 不变、推送被去重，连「重新推一次」都不会发生。
+     *
+     * <p>这里补两类信号，任一先到都会触发重算：
+     * <ul>
+     *   <li>系统跨天/改时间广播：DATE_CHANGED、TIME_SET、TIMEZONE_CHANGED；</li>
+     *   <li>ACTION_TIME_TICK（每分钟一次）作为兜底，覆盖广播被 ROM 拦截的情况。</li>
+     * </ul>
+     * 两者都只在「日期字符串真的变了」时才推送，所以一天最多触发一次。
+     */
+    private void registerDateChangeReceiver(Context ctx) {
+        android.content.IntentFilter filter = new android.content.IntentFilter();
+        filter.addAction(Intent.ACTION_DATE_CHANGED);
+        filter.addAction(Intent.ACTION_TIME_CHANGED);
+        filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+        filter.addAction(Intent.ACTION_TIME_TICK);
+        android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent == null ? null : intent.getAction();
+                checkDateRollover(context, action == null ? "time_signal" : action);
+            }
+        };
+        // 只收系统广播，不对外开放；导出标志在 API 33+ 必填。
+        androidx.core.content.ContextCompat.registerReceiver(
+                ctx, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+        mLastSeenDate = todayDateString();
+        XposedBridge.log(TAG + ": 已注册跨天重算监听（date/time/timezone/tick），当前日期 " + mLastSeenDate);
+    }
+
+    /**
+     * 日期变了就强制重算一次；同样的日期不做任何事。
+     * 只有「已知旧日期」才算跨天，否则进程刚起来时会把首次校准误判成跨天。
+     */
+    private void checkDateRollover(Context ctx, String reason) {
+        String today = todayDateString();
+        String last = mLastSeenDate;
+        if (today.equals(last)) return;
+        mLastSeenDate = today;
+        if (last == null || last.isEmpty()) return;
+        XposedBridge.log(TAG + ": 检测到跨天 " + last + " -> " + today + "（信号 " + reason
+                + "），强制重算周次与生效作息");
+        postSync(ctx, 500L, "date_rollover:" + today);
     }
 
     private void registerDbObserver(Context ctx) {

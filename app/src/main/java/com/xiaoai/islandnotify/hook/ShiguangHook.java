@@ -46,6 +46,10 @@ public class ShiguangHook {
     private static final String HOOKED_KEY = "xiaoai.island.shiguang.hooked";
     private static final Pattern UUID_PATTERN =
             Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    /** 拾光主库 user_version >= 6 起 time_slots 由 courseTableId 改挂 timeTableId，并引入作息绑定/组合作息 */
+    private static final int DB_VER_TIME_TABLE = 6;
+    private static final String COL_TIME_TABLE_ID = "timeTableId";     // v6+
+    private static final String COL_COURSE_TABLE_ID = "courseTableId"; // v5 及以前
 
     private android.os.FileObserver mDbObserver;
     private android.os.FileObserver mStoreObserver;
@@ -201,7 +205,8 @@ public class ShiguangHook {
             if (currentTableId == null || currentTableId.isEmpty()) return null;
 
             TableConfig config = loadTableConfig(sqLiteDb, currentTableId);
-            Map<Integer, String[]> normalSlots = loadTimeSlots(sqLiteDb, currentTableId);
+            TimeSlotResolution slotRes = loadTimeSlots(sqLiteDb, currentTableId);
+            Map<Integer, String[]> normalSlots = slotRes.baseSlots;
 
             Map<String, List<Integer>> weeksByCourse = new HashMap<>();
             c = sqLiteDb.rawQuery(
@@ -238,6 +243,13 @@ public class ShiguangHook {
                 st.put("e", end);
                 sectionTimes.put(st);
                 seenSections.add(sec);
+            }
+
+            // 课程节次可解析性以「基准 ∪ 各规则」为准：组合作息某节次可能只在规则区间里有时间，
+            // 具体某天能否解析交由消费侧按当天判断，这里放行以免误删。
+            Set<Integer> resolvableSections = new HashSet<>(seenSections);
+            for (ComboRuleSlots rule : slotRes.rules) {
+                resolvableSections.addAll(rule.slots.keySet());
             }
 
             int syntheticSec = 1000;
@@ -301,7 +313,7 @@ public class ShiguangHook {
                     if (startSec <= 0 || endSec <= 0) continue;
                     int minSec = Math.min(startSec, endSec);
                     int maxSec = Math.max(startSec, endSec);
-                    if (!normalSlots.containsKey(minSec) || !normalSlots.containsKey(maxSec)) continue;
+                    if (!resolvableSections.contains(minSec) || !resolvableSections.contains(maxSec)) continue;
                     sectionsSpec = minSec == maxSec ? String.valueOf(minSec) : (minSec + "-" + maxSec);
                 }
 
@@ -325,11 +337,21 @@ public class ShiguangHook {
             int totalWeek = config.semesterTotalWeeks > 0 ? config.semesterTotalWeeks : (maxWeek > 0 ? maxWeek : 30);
             int presentWeek = computePresentWeek(config.semesterStartDate, config.sundayFirst);
 
+            if (courses.length() == 0) {
+                XposedBridge.log(TAG + ": 镜像构建得到 0 门课程（节次数=" + sectionTimes.length()
+                        + "，周次记录=" + weeksByCourse.size() + "），请检查 time_slots/course_weeks 读取");
+            }
+
             JSONObject setting = new JSONObject();
             setting.put("presentWeek", presentWeek);
             setting.put("totalWeek", totalWeek);
             setting.put("weekStart", 1);
             setting.put("sectionTimes", sectionTimes);
+            // 组合作息：把各日期区间对齐后的节次时间随镜像带出，消费侧按当天覆盖 sectionTimes。
+            JSONArray sectionTimeRules = buildSectionTimeRules(slotRes.rules);
+            if (sectionTimeRules.length() > 0) {
+                setting.put("sectionTimeRules", sectionTimeRules);
+            }
             setting.put("startDate", config.semesterStartDate);
             setting.put("sundayFirst", config.sundayFirst);
 
@@ -409,24 +431,159 @@ public class ShiguangHook {
         return new TableConfig("", 0, false);
     }
 
-    private Map<Integer, String[]> loadTimeSlots(SQLiteDatabase db, String tableId) {
+    /**
+     * 读取课表节次时间。按主库版本号（PRAGMA user_version）选择读取路径：
+     * v6 起 time_slots 挂 timeTableId，并有 course_time_bindings（SINGLE/COMBO）与组合作息规则表；
+     * v5 及以前 time_slots 直接挂 courseTableId。
+     * 组合作息不在此按当天求值，而是把基准作息 + 各日期区间的对齐结果一并带出，
+     * 交由消费侧按当天选择，使跨日切换无需拾光在场重算。
+     */
+    private TimeSlotResolution loadTimeSlots(SQLiteDatabase db, String courseTableId) {
+        if (safeDbVersion(db) >= DB_VER_TIME_TABLE) {
+            return loadTimeSlotsV6(db, courseTableId);
+        }
         Map<Integer, String[]> slots = new HashMap<>();
+        queryTimeSlots(db, COL_COURSE_TABLE_ID, courseTableId, slots);
+        if (slots.isEmpty()) {
+            XposedBridge.log(TAG + ": 未读到任何节次时间(legacy) table=" + courseTableId);
+        }
+        return new TimeSlotResolution(slots, null);
+    }
+
+    /** v6 起：SINGLE 直接读目标作息；COMBO 读基准 + 全部规则区间；无绑定/失效回退专属作息。 */
+    private TimeSlotResolution loadTimeSlotsV6(SQLiteDatabase db, String courseTableId) {
+        String[] binding = readCourseTimeBinding(db, courseTableId);
+        if (binding != null && !binding[1].isEmpty() && "COMBO".equalsIgnoreCase(binding[0])) {
+            return loadComboResolution(db, courseTableId, binding[1]);
+        }
+        Map<Integer, String[]> slots = new HashMap<>();
+        if (binding != null && !binding[1].isEmpty()) {
+            queryTimeSlots(db, COL_TIME_TABLE_ID, binding[1], slots); // SINGLE
+        }
+        if (slots.isEmpty()) {
+            queryTimeSlots(db, COL_TIME_TABLE_ID, courseTableId, slots); // 专属作息(id==courseTableId)
+        }
+        if (slots.isEmpty()) {
+            XposedBridge.log(TAG + ": 未读到任何节次时间(v6) table=" + courseTableId);
+        }
+        return new TimeSlotResolution(slots, null);
+    }
+
+    /**
+     * 组合作息（仅 v6+）：以基准作息为默认，另把每条规则区间对齐后的节次时间一并带出。
+     * 对齐与拾光 alignTimeSlots 一致：保留基准的节次编号，命中规则的同号节次覆盖时间。
+     */
+    private TimeSlotResolution loadComboResolution(SQLiteDatabase db, String courseTableId, String comboId) {
+        String baseTableId = readComboBaseTimeTableId(db, comboId);
+        if (baseTableId.isEmpty()) baseTableId = courseTableId;
+
+        Map<Integer, String[]> baseSlots = new HashMap<>();
+        queryTimeSlots(db, COL_TIME_TABLE_ID, baseTableId, baseSlots);
+
+        List<ComboRuleSlots> rules = new ArrayList<>();
+        for (ComboRule rule : readComboRules(db, comboId)) {
+            if (rule.targetId.isEmpty() || rule.targetId.equals(baseTableId)) continue;
+            if (rule.startDate.isEmpty() || rule.endDate.isEmpty()) continue;
+            Map<Integer, String[]> target = new HashMap<>();
+            queryTimeSlots(db, COL_TIME_TABLE_ID, rule.targetId, target);
+            if (target.isEmpty()) continue;
+            rules.add(new ComboRuleSlots(rule.startDate, rule.endDate, alignSlots(baseSlots, target)));
+        }
+
+        if (baseSlots.isEmpty() && rules.isEmpty()) {
+            queryTimeSlots(db, COL_TIME_TABLE_ID, courseTableId, baseSlots); // 全空回退专属作息
+        }
+        return new TimeSlotResolution(baseSlots, rules);
+    }
+
+    /** 保留基准节次编号，target 中同号节次覆盖其时间；base 空则直接返回 target。 */
+    private static Map<Integer, String[]> alignSlots(Map<Integer, String[]> base, Map<Integer, String[]> target) {
+        if (base.isEmpty()) return target;
+        Map<Integer, String[]> aligned = new HashMap<>();
+        for (Map.Entry<Integer, String[]> e : base.entrySet()) {
+            String[] t = target.get(e.getKey());
+            aligned.put(e.getKey(), t != null ? t : e.getValue());
+        }
+        return aligned;
+    }
+
+    /** 课表→作息绑定，旧版本无此表时返回 null。 */
+    private String[] readCourseTimeBinding(SQLiteDatabase db, String courseTableId) {
         Cursor c = null;
         try {
             c = db.rawQuery(
-                    "SELECT number, startTime, endTime FROM time_slots WHERE courseTableId = ? ORDER BY number ASC",
-                    new String[]{tableId});
-            while (c.moveToNext()) {
-                int number = c.getInt(0);
-                String start = safeStr(c.getString(1));
-                String end = safeStr(c.getString(2));
-                slots.put(number, new String[]{start, end});
+                    "SELECT targetType, targetId FROM course_time_bindings WHERE courseTableId = ? LIMIT 1",
+                    new String[]{courseTableId});
+            if (c.moveToFirst()) {
+                return new String[]{safeStr(c.getString(0)), safeStr(c.getString(1))};
             }
         } catch (Throwable ignored) {
         } finally {
             if (c != null) c.close();
         }
-        return slots;
+        return null;
+    }
+
+    private String readComboBaseTimeTableId(SQLiteDatabase db, String comboId) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery("SELECT baseTimeTableId FROM time_table_combos WHERE id = ? LIMIT 1",
+                    new String[]{comboId});
+            if (c.moveToFirst()) return safeStr(c.getString(0));
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取 time_table_combos 失败 -> " + t.getMessage());
+        } finally {
+            if (c != null) c.close();
+        }
+        return "";
+    }
+
+    /** 读取组合作息全部规则（区间 + 目标作息），顺序与拾光 DAO 一致（无 ORDER BY，按行序）。 */
+    private List<ComboRule> readComboRules(SQLiteDatabase db, String comboId) {
+        List<ComboRule> out = new ArrayList<>();
+        Cursor c = null;
+        try {
+            c = db.rawQuery(
+                    "SELECT startDate, endDate, targetTimeTableId FROM time_table_combo_rules WHERE comboId = ?",
+                    new String[]{comboId});
+            while (c.moveToNext()) {
+                out.add(new ComboRule(safeStr(c.getString(0)), safeStr(c.getString(1)), safeStr(c.getString(2))));
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取 time_table_combo_rules 失败 -> " + t.getMessage());
+        } finally {
+            if (c != null) c.close();
+        }
+        return out;
+    }
+
+    private void queryTimeSlots(SQLiteDatabase db, String column, String timeTableId,
+                                Map<Integer, String[]> out) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery(
+                    "SELECT number, startTime, endTime FROM time_slots WHERE " + column
+                            + " = ? ORDER BY number ASC",
+                    new String[]{timeTableId});
+            while (c.moveToNext()) {
+                out.put(c.getInt(0), new String[]{safeStr(c.getString(1)), safeStr(c.getString(2))});
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取 time_slots 失败 column=" + column
+                    + " id=" + timeTableId + " -> " + t.getMessage());
+        } finally {
+            if (c != null) c.close();
+        }
+    }
+
+    /** 读取主库 schema 版本（PRAGMA user_version）；读失败按 legacy(0) 处理。 */
+    private static int safeDbVersion(SQLiteDatabase db) {
+        try {
+            return db.getVersion();
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 读取数据库版本失败，按 legacy 处理 -> " + t.getMessage());
+            return 0;
+        }
     }
 
     /**
@@ -541,6 +698,69 @@ public class ShiguangHook {
 
     private static String safeStr(String value) {
         return value == null ? "" : value;
+    }
+
+    /** 把组合规则区间转成镜像 JSON：[{s:startDate, e:endDate, t:[{i,s,e}...]}]，跳过非法节次时间。 */
+    private static JSONArray buildSectionTimeRules(List<ComboRuleSlots> rules) throws org.json.JSONException {
+        JSONArray arr = new JSONArray();
+        if (rules == null) return arr;
+        for (ComboRuleSlots rule : rules) {
+            JSONArray t = new JSONArray();
+            for (Map.Entry<Integer, String[]> e : rule.slots.entrySet()) {
+                String start = e.getValue()[0];
+                String end = e.getValue()[1];
+                if (isInvalidSectionTime(start, end)) continue;
+                JSONObject st = new JSONObject();
+                st.put("i", e.getKey());
+                st.put("s", start);
+                st.put("e", end);
+                t.put(st);
+            }
+            if (t.length() == 0) continue;
+            JSONObject obj = new JSONObject();
+            obj.put("s", rule.startDate);
+            obj.put("e", rule.endDate);
+            obj.put("t", t);
+            arr.put(obj);
+        }
+        return arr;
+    }
+
+    /** loadTimeSlots 结果：baseSlots 为默认作息，rules 为组合作息各日期区间的对齐结果（非组合为空）。 */
+    private static final class TimeSlotResolution {
+        final Map<Integer, String[]> baseSlots;
+        final List<ComboRuleSlots> rules;
+
+        TimeSlotResolution(Map<Integer, String[]> baseSlots, List<ComboRuleSlots> rules) {
+            this.baseSlots = baseSlots == null ? new HashMap<>() : baseSlots;
+            this.rules = rules == null ? java.util.Collections.<ComboRuleSlots>emptyList() : rules;
+        }
+    }
+
+    /** 单条组合规则对齐后的节次时间及其生效日期区间。 */
+    private static final class ComboRuleSlots {
+        final String startDate;
+        final String endDate;
+        final Map<Integer, String[]> slots;
+
+        ComboRuleSlots(String startDate, String endDate, Map<Integer, String[]> slots) {
+            this.startDate = safeStr(startDate);
+            this.endDate = safeStr(endDate);
+            this.slots = slots == null ? new HashMap<>() : slots;
+        }
+    }
+
+    /** time_table_combo_rules 原始行。 */
+    private static final class ComboRule {
+        final String startDate;
+        final String endDate;
+        final String targetId;
+
+        ComboRule(String startDate, String endDate, String targetId) {
+            this.startDate = safeStr(startDate);
+            this.endDate = safeStr(endDate);
+            this.targetId = safeStr(targetId);
+        }
     }
 
     private static final class TableConfig {

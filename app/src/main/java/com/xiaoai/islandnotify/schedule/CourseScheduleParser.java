@@ -84,6 +84,7 @@ final class CourseScheduleParser {
 
         JSONArray sectionTimesArray = parseSectionTimesArray(setting);
         java.util.Map<Integer, SectionTime> sectionTimes = buildSectionTimeMap(sectionTimesArray);
+        applyComboSectionTimeRules(setting, sectionTimes);
 
         JSONArray coursesArray = data.optJSONArray("courses");
         List<CourseSlot> courses = new ArrayList<>();
@@ -113,6 +114,7 @@ final class CourseScheduleParser {
 
             String stable = String.valueOf(data.optJSONArray("courses"))
                     + sectionTimesStableRaw(setting)
+                    + String.valueOf(setting.optJSONArray("sectionTimeRules"))
                     + setting.optString("totalWeek")
                     + setting.optString("weekStart")
                     + presentWeek
@@ -152,6 +154,37 @@ final class CourseScheduleParser {
             sectionTimes.put(sectionIndex, new SectionTime(startTime, endTime));
         }
         return sectionTimes;
+    }
+
+    /**
+     * 组合作息：若 sectionTimeRules 中存在覆盖当天的规则，按节次编号覆盖 base 时间。
+     * 取第一条覆盖当天的规则，与拾光按日期区间匹配的语义一致。日期均为 "yyyy-MM-dd"，可字典序比较。
+     */
+    private static void applyComboSectionTimeRules(JSONObject setting, java.util.Map<Integer, SectionTime> out) {
+        JSONArray rules = setting.optJSONArray("sectionTimeRules");
+        if (rules == null || rules.length() == 0) return;
+        String today = todayDateString();
+        for (int i = 0; i < rules.length(); i++) {
+            JSONObject rule = rules.optJSONObject(i);
+            if (rule == null) continue;
+            String start = safeStr(rule.optString("s", ""));
+            String end = safeStr(rule.optString("e", ""));
+            if (start.isEmpty() || end.isEmpty()) continue;
+            if (today.compareTo(start) < 0 || today.compareTo(end) > 0) continue;
+            JSONArray variant = rule.optJSONArray("t");
+            if (variant != null) {
+                out.putAll(buildSectionTimeMap(variant));
+            }
+            return; // 只应用第一条命中的规则
+        }
+    }
+
+    private static String todayDateString() {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        return String.format(java.util.Locale.US, "%04d-%02d-%02d",
+                c.get(java.util.Calendar.YEAR),
+                c.get(java.util.Calendar.MONTH) + 1,
+                c.get(java.util.Calendar.DAY_OF_MONTH));
     }
 
     private static CourseSlot parseCourseSlot(JSONObject course, java.util.Map<Integer, SectionTime> sectionTimes) {

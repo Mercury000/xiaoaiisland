@@ -97,6 +97,7 @@ public class DeskClockHook {
         }
 
         List<Long> createdIds = new ArrayList<>();
+        String wakeSummary = null;
 
         try {
             // 统一走 CourseScheduleParser：presentWeek 由它按 startDate 现算，
@@ -155,28 +156,33 @@ public class DeskClockHook {
                 if (rulesJson != null && !rulesJson.isEmpty()) {
                     try {
                         org.json.JSONArray rules = new org.json.JSONArray(rulesJson);
-                        for (int r = 0; r < rules.length(); r++) {
-                            org.json.JSONObject rule = rules.getJSONObject(r);
-                            if (rule.getInt("sec") == firstMorningSec) {
-                                int hour = rule.getInt("hour"); int minute = rule.getInt("minute");
-                                java.util.Calendar ac = java.util.Calendar.getInstance();
-                                ac.set(java.util.Calendar.HOUR_OF_DAY, hour);
-                                ac.set(java.util.Calendar.MINUTE,      minute);
-                                ac.set(java.util.Calendar.SECOND,      0);
-                                ac.set(java.util.Calendar.MILLISECOND, 0);
-                                if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + morningName);
-                                    if (id > 0) createdIds.add(id);
-                                } else {
-                                    XposedBridge.log(TAG + ": 上午叫醒时间已过 " + hour + ":" +
-                                            String.format(java.util.Locale.getDefault(), "%02d", minute) + "，跳过");
-                                }
-                                break;
+                        int[] rule = pickRule(rules, firstMorningSec);
+                        if (rule == null) {
+                            wakeLog("[上午] 无可用规则 sec=" + firstMorningSec + "，跳过");
+                        } else {
+                            int hour = rule[1], minute = rule[2];
+                            String hit = rule[0] == firstMorningSec
+                                    ? "精确命中 sec=" + rule[0]
+                                    : "回退到 sec=" + rule[0] + "（首节 sec=" + firstMorningSec + "）";
+                            java.util.Calendar ac = java.util.Calendar.getInstance();
+                            ac.set(java.util.Calendar.HOUR_OF_DAY, hour);
+                            ac.set(java.util.Calendar.MINUTE,      minute);
+                            ac.set(java.util.Calendar.SECOND,      0);
+                            ac.set(java.util.Calendar.MILLISECOND, 0);
+                            String hm = String.format(java.util.Locale.getDefault(), "%02d:%02d", hour, minute);
+                            if (ac.getTimeInMillis() > nowMs) {
+                                long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + morningName);
+                                if (id > 0) createdIds.add(id);
+                                wakeLog("[上午] " + hit + " → " + hm + " [" + morningName + "] id=" + id);
+                            } else {
+                                wakeLog("[上午] 叫醒时间已过 " + hm + "（" + hit + "），跳过");
                             }
                         }
                     } catch (org.json.JSONException e) {
-                        XposedBridge.log(TAG + ": morning_rules_json 解析失败 → " + e);
+                        wakeLog("[上午] morning_rules_json 解析失败 → " + e);
                     }
+                } else {
+                    wakeLog("[上午] 未下发规则表，跳过");
                 }
             }
 
@@ -186,42 +192,94 @@ public class DeskClockHook {
                 if (rulesJson != null && !rulesJson.isEmpty()) {
                     try {
                         org.json.JSONArray rules = new org.json.JSONArray(rulesJson);
-                        for (int r = 0; r < rules.length(); r++) {
-                            org.json.JSONObject rule = rules.getJSONObject(r);
-                            if (rule.getInt("sec") == firstAfternoonSec) {
-                                int hour = rule.getInt("hour"); int minute = rule.getInt("minute");
-                                java.util.Calendar ac = java.util.Calendar.getInstance();
-                                ac.set(java.util.Calendar.HOUR_OF_DAY, hour);
-                                ac.set(java.util.Calendar.MINUTE,      minute);
-                                ac.set(java.util.Calendar.SECOND,      0);
-                                ac.set(java.util.Calendar.MILLISECOND, 0);
-                                if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + afternoonName);
-                                    if (id > 0) createdIds.add(id);
-                                } else {
-                                    XposedBridge.log(TAG + ": 下午叫醒时间已过 " + hour + ":" +
-                                            String.format(java.util.Locale.getDefault(), "%02d", minute) + "，跳过");
-                                }
-                                break;
+                        int[] rule = pickRule(rules, firstAfternoonSec);
+                        if (rule == null) {
+                            wakeLog("[下午] 无可用规则 sec=" + firstAfternoonSec + "，跳过");
+                        } else {
+                            int hour = rule[1], minute = rule[2];
+                            String hit = rule[0] == firstAfternoonSec
+                                    ? "精确命中 sec=" + rule[0]
+                                    : "回退到 sec=" + rule[0] + "（首节 sec=" + firstAfternoonSec + "）";
+                            java.util.Calendar ac = java.util.Calendar.getInstance();
+                            ac.set(java.util.Calendar.HOUR_OF_DAY, hour);
+                            ac.set(java.util.Calendar.MINUTE,      minute);
+                            ac.set(java.util.Calendar.SECOND,      0);
+                            ac.set(java.util.Calendar.MILLISECOND, 0);
+                            String hm = String.format(java.util.Locale.getDefault(), "%02d:%02d", hour, minute);
+                            if (ac.getTimeInMillis() > nowMs) {
+                                long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + afternoonName);
+                                if (id > 0) createdIds.add(id);
+                                wakeLog("[下午] " + hit + " → " + hm + " [" + afternoonName + "] id=" + id);
+                            } else {
+                                wakeLog("[下午] 叫醒时间已过 " + hm + "（" + hit + "），跳过");
                             }
                         }
                     } catch (org.json.JSONException e) {
-                        XposedBridge.log(TAG + ": afternoon_rules_json 解析失败 → " + e);
+                        wakeLog("[下午] afternoon_rules_json 解析失败 → " + e);
                     }
                 }
             }
 
+            wakeSummary = "[完成] 星期" + todayDay + " 第" + currentWeek + "周 上午首节=" +
+                    (firstMorningSec == Integer.MAX_VALUE ? "无" : String.valueOf(firstMorningSec)) +
+                    " 下午首节=" +
+                    (firstAfternoonSec == Integer.MAX_VALUE ? "无" : String.valueOf(firstAfternoonSec)) +
+                    " → 共建 " + createdIds.size() + " 个闹钟 " + createdIds;
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": handleSchedule 课程解析失败 → " + e);
+            wakeSummary = "[失败] 课程解析异常 → " + e;
         }
 
         storeAlarmIds(ctx, createdIds);
-        XposedBridge.log(TAG + ": 叫醒闹钟调度完成，共 " + createdIds.size() + " 个");
+        wakeLog(wakeSummary != null ? wakeSummary : "[完成] 未建闹钟");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // 创建单个闹钟（反射 Alarm + AlarmHelper）
     // ─────────────────────────────────────────────────────────────────────────
+
+    // -------------------------------------------------------------------------
+    // 持久化诊断日志（不依赖 logcat / LSPosed 日志）
+    // -------------------------------------------------------------------------
+
+    private static final String DEBUG_LOG_PATH = "/sdcard/Download/island_wakeup.log";
+
+    private static void fileLog(String msg) {
+        try {
+            java.io.File f = new java.io.File(DEBUG_LOG_PATH);
+            java.io.FileWriter w = new java.io.FileWriter(f, true);
+            String ts = new java.text.SimpleDateFormat("MM-dd HH:mm:ss",
+                    java.util.Locale.US).format(new java.util.Date());
+            w.write(ts + "  " + msg + "\n");
+            w.close();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void wakeLog(String msg) {
+        XposedBridge.log(TAG + ": " + msg);
+        fileLog(msg);
+    }
+
+    /**
+     * 选规则：优先节次精确匹配；否则取不超过首节课节次里最大的一条；
+     * 都没有就用整张表里最小的节次。返回 {sec, hour, minute}。
+     */
+    private static int[] pickRule(org.json.JSONArray rules, int sec)
+            throws org.json.JSONException {
+        int[] exact = null, lower = null, lowest = null;
+        for (int i = 0; i < rules.length(); i++) {
+            org.json.JSONObject r = rules.getJSONObject(i);
+            int s = r.getInt("sec");
+            int h = r.getInt("hour");
+            int m = r.getInt("minute");
+            int[] v = new int[]{s, h, m};
+            if (s == sec) exact = v;
+            if (s <= sec && (lower == null || s > lower[0])) lower = v;
+            if (lowest == null || s < lowest[0]) lowest = v;
+        }
+        return exact != null ? exact : (lower != null ? lower : lowest);
+    }
 
     /**
      * 通过反射创建一个系统闹钟并写入数据库。

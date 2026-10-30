@@ -19,6 +19,7 @@ final class ConfigDefaults {
     static final int ISLAND_BUTTON_MODE = 0;
     static final int WAKEUP_MORNING_LAST_SEC = 4;
     static final int WAKEUP_AFTERNOON_FIRST_SEC = 5;
+    static final boolean WAKEUP_ALARM_VIBRATE = true;
     static final String WAKEUP_MORNING_RULES_JSON = "[{\"sec\":1,\"hour\":7,\"minute\":0}]";
     static final String WAKEUP_AFTERNOON_RULES_JSON = "[{\"sec\":5,\"hour\":12,\"minute\":0}]";
     static final String[] TEMPLATE_BASE_KEYS = {"tpl_a", "tpl_b", "tpl_ticker"};
@@ -107,6 +108,7 @@ final class ConfigDefaults {
             case "wakeup_morning_enabled":
             case "wakeup_afternoon_enabled":
             case "active_countdown_to_end": return SWITCH_DISABLED;
+            case "wakeup_alarm_vibrate": return WAKEUP_ALARM_VIBRATE;
             default: return fallback;
         }
     }

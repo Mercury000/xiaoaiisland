@@ -480,6 +480,7 @@ private class SettingsComposeState {
     var undndMinsAfter by mutableStateOf("0")
     var islandButtonMode by mutableIntStateOf(0)
     var wakeupMorningEnabled by mutableStateOf(false)
+    var wakeupAlarmVibrateEnabled by mutableStateOf(ConfigDefaults.WAKEUP_ALARM_VIBRATE)
     var wakeupMorningLastSec by mutableStateOf("4")
     val wakeupMorningRules = mutableStateListOf<WakeRule>()
     var wakeupAfternoonEnabled by mutableStateOf(false)
@@ -596,6 +597,11 @@ private class SettingsComposeState {
         undndMinsAfter = PrefsAccess.readConfigInt(prefs, "undnd_mins_after", 0).toString()
         islandButtonMode = PrefsAccess.readConfigInt(prefs, "island_button_mode", 0)
         wakeupMorningEnabled = PrefsAccess.readConfigBool(prefs, "wakeup_morning_enabled", false)
+        wakeupAlarmVibrateEnabled = PrefsAccess.readConfigBool(
+            prefs,
+            "wakeup_alarm_vibrate",
+            ConfigDefaults.WAKEUP_ALARM_VIBRATE,
+        )
         wakeupMorningLastSec =
             PrefsAccess.readConfigInt(prefs, "wakeup_morning_last_sec", 4).toString()
         wakeupAfternoonEnabled = PrefsAccess.readConfigBool(prefs, "wakeup_afternoon_enabled", false)
@@ -1978,6 +1984,7 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
         state.wakeupAfternoonFirstSec = afternoonFirst.toString()
         activity.uiEditConfigPrefs()
             .putBoolean("wakeup_morning_enabled", state.wakeupMorningEnabled)
+            .putBoolean("wakeup_alarm_vibrate", state.wakeupAlarmVibrateEnabled)
             .putInt("wakeup_morning_last_sec", morningLast)
             .putString("wakeup_morning_rules_json", toWakeRulesJson(state.wakeupMorningRules))
             .putBoolean("wakeup_afternoon_enabled", state.wakeupAfternoonEnabled)
@@ -2024,6 +2031,15 @@ private fun WakeupCard(activity: MainActivity, state: SettingsComposeState) {
                         return@SwitchPreference
                     }
                     state.wakeupAfternoonEnabled = it
+                    persistWakeupConfigNow()
+                },
+            )
+            SwitchPreference(
+                title = "闹钟震动",
+                summary = "控制自动创建的系统闹钟是否震动",
+                value = state.wakeupAlarmVibrateEnabled,
+                onCheckedChange = {
+                    state.wakeupAlarmVibrateEnabled = it
                     persistWakeupConfigNow()
                 },
             )
@@ -3650,5 +3666,4 @@ private fun AboutTab(
         }
     }
 }
-
 

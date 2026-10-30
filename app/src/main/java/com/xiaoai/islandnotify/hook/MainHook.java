@@ -169,6 +169,7 @@ public class MainHook {
     private static final String KEY_WAKEUP_AFTERNOON_ENABLED      = "wakeup_afternoon_enabled";
     private static final String KEY_WAKEUP_AFTERNOON_FIRST_SEC    = "wakeup_afternoon_first_sec";
     private static final String KEY_WAKEUP_AFTERNOON_RULES_JSON   = "wakeup_afternoon_rules_json";
+    private static final String KEY_WAKEUP_ALARM_VIBRATE          = "wakeup_alarm_vibrate";
     private static final String KEY_MIGRATION_DONE = "migration_config_v1_done";
     private static final String KEY_NOTIF_DISMISS_TRIGGER = ConfigDefaults.KEY_NOTIF_DISMISS_TRIGGER;
     private static final int    DEFAULT_WAKEUP_MORNING_LAST_SEC       = ConfigDefaults.WAKEUP_MORNING_LAST_SEC;
@@ -1798,6 +1799,9 @@ public class MainHook {
                     
                     // 原始课程数据（deskclock 侧自行解析）
                     schedIntent.putExtra("bean_json", beanJson);
+                    schedIntent.putExtra("alarm_vibrate",
+                            readConfigBool(prefs, KEY_WAKEUP_ALARM_VIBRATE,
+                                    ConfigDefaults.WAKEUP_ALARM_VIBRATE));
                     // 调休工作日：传入覆盖的 todayDay / currentWeek，供 DeskClockHook 使用
                     if (workSwap != null && workSwap.followWeek > 0 && workSwap.followWeekday > 0) {
                         schedIntent.putExtra("today_day_override",    workSwap.followWeekday);
@@ -2622,7 +2626,8 @@ public class MainHook {
                 || KEY_WAKEUP_MORNING_RULES_JSON.equals(key)
                 || KEY_WAKEUP_AFTERNOON_ENABLED.equals(key)
                 || KEY_WAKEUP_AFTERNOON_FIRST_SEC.equals(key)
-                || KEY_WAKEUP_AFTERNOON_RULES_JSON.equals(key);
+                || KEY_WAKEUP_AFTERNOON_RULES_JSON.equals(key)
+                || KEY_WAKEUP_ALARM_VIBRATE.equals(key);
     }
 
     /**

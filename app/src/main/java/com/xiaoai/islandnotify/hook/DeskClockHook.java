@@ -122,6 +122,7 @@ public class DeskClockHook {
 
             boolean morningEnabled   = intent.getBooleanExtra("morning_enabled",   false);
             boolean afternoonEnabled = intent.getBooleanExtra("afternoon_enabled", false);
+            boolean alarmVibrate = intent.getBooleanExtra("alarm_vibrate", true);
             int morningLastSec    = intent.getIntExtra("morning_last_sec",    4);
             int afternoonFirstSec = intent.getIntExtra("afternoon_first_sec", 5);
 
@@ -165,7 +166,8 @@ public class DeskClockHook {
                                 ac.set(java.util.Calendar.SECOND,      0);
                                 ac.set(java.util.Calendar.MILLISECOND, 0);
                                 if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + morningName);
+                                    long id = createAlarm(ctx, cl, hour, minute,
+                                            "课程提醒：" + morningName, alarmVibrate);
                                     if (id > 0) createdIds.add(id);
                                 } else {
                                     XposedBridge.log(TAG + ": 上午叫醒时间已过 " + hour + ":" +
@@ -196,7 +198,8 @@ public class DeskClockHook {
                                 ac.set(java.util.Calendar.SECOND,      0);
                                 ac.set(java.util.Calendar.MILLISECOND, 0);
                                 if (ac.getTimeInMillis() > nowMs) {
-                                    long id = createAlarm(ctx, cl, hour, minute, "课程提醒：" + afternoonName);
+                                    long id = createAlarm(ctx, cl, hour, minute,
+                                            "课程提醒：" + afternoonName, alarmVibrate);
                                     if (id > 0) createdIds.add(id);
                                 } else {
                                     XposedBridge.log(TAG + ": 下午叫醒时间已过 " + hour + ":" +
@@ -228,14 +231,14 @@ public class DeskClockHook {
      * @return 新闹钟的 id（>0），失败时返回 -1
      */
     private long createAlarm(Context ctx, ClassLoader cl,
-                             int hour, int minute, String label) {
+                             int hour, int minute, String label, boolean vibrate) {
         try {
             Class<?> alarmCls = Class.forName("com.android.deskclock.Alarm", false, cl);
             Object   alarm    = alarmCls.newInstance();
 
             setField(alarm, "hour",          hour);
             setField(alarm, "minutes",       minute);
-            setField(alarm, "vibrate",       true);
+            setField(alarm, "vibrate",       vibrate);
             setField(alarm, "enabled",       true);
             setField(alarm, "deleteAfterUse", true); // 用后即焚
 
